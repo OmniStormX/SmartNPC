@@ -3,15 +3,18 @@ name: Release
 # Triggered by pushing a semver tag, e.g.:
 #   git tag v0.2.0 && git push origin v0.2.0
 #
-# Builds:
-#   - smartnpc-mcp.exe         (windows/amd64)
-#   - smartnpc-agent.exe       (windows/amd64)
-#   - smartnpc-mcp-linux-amd64
-#   - smartnpc-agent-linux-amd64
-#   - StardewMCPBridge-<ver>.zip   (SMAPI mod, when csproj exists)
+# Builds Go binaries for windows + linux and publishes them as a GitHub
+# Release with auto-generated changelog and SHA256SUMS.
 #
-# Then creates a GitHub Release with all artifacts attached and an
-# auto-generated changelog.
+# The SMAPI mod zip is NOT built in CI: GitHub-hosted runners cannot install
+# Stardew Valley, and Pathoschild.Stardew.ModBuildConfig requires the game's
+# DLLs to be locally present. To attach the mod zip to a release, build it
+# locally and upload it manually:
+#
+#   task mod:build
+#   :: then drag-and-drop smapi-mod/bin/Debug/net6.0/StardewMCPBridge.dll +
+#   :: manifest.json (zipped) onto the GitHub Release page after this workflow
+#   :: completes.
 
 on:
   push:
@@ -31,13 +34,12 @@ env:
   GO_VERSION: '1.22'
 
 jobs:
-  # ── Pre-flight: extract version, decide if mod build is needed ──────────
+  # ── Pre-flight: extract version ─────────────────────────────────────────
   prepare:
     name: prepare
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
-      has_mod: ${{ steps.meta.outputs.has_mod }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,11 +54,6 @@ jobs:
           # Strip leading 'v' for inner artifact filenames
           VERSION_NUM="${VERSION#v}"
           echo "version=$VERSION_NUM" >> "$GITHUB_OUTPUT"
-          if ls smapi-mod/*.csproj >/dev/null 2>&1; then
-            echo "has_mod=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_mod=false" >> "$GITHUB_OUTPUT"
-          fi
 
   # ── Build Go binaries for windows + linux ───────────────────────────────
   build-go:
@@ -126,46 +123,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # ── Build the SMAPI mod zip (only when csproj exists) ───────────────────
-  build-mod:
-    name: build-mod
-    needs: prepare
-    if: needs.prepare.outputs.has_mod == 'true'
-    runs-on: windows-latest
-    env:
-      VERSION: ${{ needs.prepare.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '6.0.x'
-
-      - name: dotnet publish
-        shell: pwsh
-        run: |
-          $proj = Get-ChildItem -Path smapi-mod -Filter *.csproj | Select-Object -First 1
-          dotnet publish $proj.FullName -c Release -o smapi-mod\publish
-
-      - name: package mod zip
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $zipPath = "dist\StardewMCPBridge-$env:VERSION.zip"
-          Compress-Archive -Path smapi-mod\publish\* -DestinationPath $zipPath -Force
-          Get-Item $zipPath | Format-List
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mod-zip
-          path: dist/*.zip
-          if-no-files-found: error
-          retention-days: 7
-
   # ── Create the GitHub Release with all artifacts ────────────────────────
   release:
     name: github release
-    needs: [prepare, build-go, build-mod]
-    if: always() && needs.build-go.result == 'success' && (needs.build-mod.result == 'success' || needs.build-mod.result == 'skipped')
+    needs: [prepare, build-go]
+    if: always() && needs.build-go.result == 'success'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -199,5 +161,21 @@ jobs:
           name: v${{ env.VERSION }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+          body: |
+            ## Artifacts
+
+            Go binaries for Windows + Linux are attached. SHA256SUMS.txt
+            verifies their integrity.
+
+            **The SMAPI mod zip is not auto-built** — GitHub-hosted runners
+            cannot install Stardew Valley. To get the mod, either:
+
+            - clone the repo, run `task mod:build`, and use
+              `smapi-mod/bin/Debug/net6.0/{StardewMCPBridge.dll,manifest.json}`
+            - or wait for a maintainer to attach the zip manually below.
+
+            ---
+
+            ### Auto-generated changelog
           files: |
             release/*

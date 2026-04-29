@@ -63,15 +63,23 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-GitHub Actions builds Windows + Linux binaries and (when present) the SMAPI
-mod zip, then publishes a GitHub Release with auto-generated changelog and
-SHA256SUMS.
+GitHub Actions builds Windows + Linux Go binaries (`smartnpc-mcp.exe` and
+`smartnpc-agent.exe`) and publishes a GitHub Release with auto-generated
+changelog and `SHA256SUMS.txt`.
+
+> **The SMAPI mod zip is not built in CI.** GitHub-hosted runners cannot
+> install Stardew Valley, and `Pathoschild.Stardew.ModBuildConfig` requires
+> the game's DLLs to be locally present. Build the mod locally with
+> `task mod:build` and attach the resulting `StardewMCPBridge.dll` +
+> `manifest.json` zip to the GitHub Release manually if you want to publish
+> it. The same constraint is why CI has no `smapi-mod` job — local
+> `task ci` is the source of truth for mod changes.
 
 ## Status
 
 - [x] M1: Go workspace + stdio MCP server with `ping` tool + agent stdio client
 - [x] M1.5: Taskfile + GitHub Actions CI/Release + project rules + ci-doctor skill
-- [ ] M2: SMAPI mod skeleton + WebSocket bridge protocol
-- [ ] M3: NPC query / dialogue / movement tools (end-to-end)
-- [ ] M4: Persona loader + OpenAI integration + single NPC agent loop
+- [x] M2: SMAPI mod (HTTP + HUD), local auto-deploy hook
+- [x] M3: WebSocket bridge, in-game chat box, `chat_say` tool, echo agent
+- [ ] M4: OpenAI provider + persona loader + real Abigail dialogue
 - [ ] M5: Memory (SQLite+FTS5), scheduler, multi-NPC orchestration

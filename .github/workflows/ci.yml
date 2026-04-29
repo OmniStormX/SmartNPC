@@ -15,14 +15,22 @@ concurrency:
 env:
   GO_VERSION: '1.22'
 
+# Why no smapi-mod job?
+# ---------------------
+# The C# mod depends on Stardew Valley assemblies (Stardew Valley.dll,
+# 0Harmony.dll from SMAPI, etc.) that ModBuildConfig auto-discovers from a
+# local SDV install. GitHub-hosted runners cannot legally install SDV (paid
+# game), and stubbing every SDV API for CI is far more work than it's worth
+# for a single-developer project. We rely on `task ci` locally to validate
+# mod changes before push. See README and .codebuddy/rules/taskfile-usage.mdc.
+
 jobs:
-  # ── Detect what changed so we can skip unaffected jobs ──────────────────
+  # ── Detect what changed so we can skip the Go job for doc-only commits ──
   changes:
     name: detect changes
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.filter.outputs.go }}
-      mod: ${{ steps.filter.outputs.mod }}
       ci: ${{ steps.filter.outputs.ci }}
     steps:
       - uses: actions/checkout@v4
@@ -36,8 +44,6 @@ jobs:
               - 'go.work'
               - 'go.work.sum'
               - 'Taskfile.yml'
-            mod:
-              - 'smapi-mod/**'
             ci:
               - '.github/workflows/**'
 
@@ -85,59 +91,21 @@ jobs:
         working-directory: smartnpc-agent
         run: go build -v ./...
 
-  # ── C# SMAPI Mod (skipped until M2 lands actual project) ────────────────
-  mod:
-    name: smapi-mod (dotnet build)
-    needs: changes
-    if: needs.changes.outputs.mod == 'true' || needs.changes.outputs.ci == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '6.0.x'
-
-      - name: Detect csproj
-        id: detect
-        shell: pwsh
-        run: |
-          $proj = Get-ChildItem -Path smapi-mod -Filter *.csproj -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -eq $proj) {
-            Write-Host "no csproj yet (M2 placeholder), skipping"
-            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          } else {
-            Write-Host "found $($proj.FullName)"
-            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            "csproj=$($proj.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          }
-
-      - name: dotnet restore
-        if: steps.detect.outputs.skip == 'false'
-        run: dotnet restore "${{ steps.detect.outputs.csproj }}"
-
-      - name: dotnet build
-        if: steps.detect.outputs.skip == 'false'
-        run: dotnet build "${{ steps.detect.outputs.csproj }}" -c Release --no-restore
-
   # ── Aggregate gate so branch protection has a single required check ─────
   ci-pass:
     name: ci-pass
-    needs: [go, mod]
+    needs: [go]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Verify all required jobs succeeded
+      - name: Verify required jobs succeeded
         env:
           GO_RESULT: ${{ needs.go.result }}
-          MOD_RESULT: ${{ needs.mod.result }}
         run: |
-          echo "go=$GO_RESULT, mod=$MOD_RESULT"
+          echo "go=$GO_RESULT"
           # Allow 'skipped' (path filter said no relevant changes) and 'success'.
-          for r in "$GO_RESULT" "$MOD_RESULT"; do
-            case "$r" in
-              success|skipped) ;;
-              *) echo "::error::A required job failed (result=$r)"; exit 1;;
-            esac
-          done
+          case "$GO_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::go job failed (result=$GO_RESULT)"; exit 1;;
+          esac
           echo "CI PASS"
