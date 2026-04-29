@@ -17,7 +17,6 @@ includes:
   mod:
     taskfile: ./smapi-mod/Taskfile.yml
     dir: ./smapi-mod
-    optional: true   # M2 之前 smapi-mod 还没有 Taskfile, 缺失时不报错
 
 vars:
   GO_MODULES: ./smartnpc-mcp/... ./smartnpc-agent/...
@@ -35,13 +34,14 @@ tasks:
     cmds:
       - task: mcp:build
       - task: agent:build
-      # - task: mod:build       # 启用 of M2 完成后
+      - task: mod:build
 
   test:
     desc: Run all tests
     cmds:
       - task: mcp:test
       - task: agent:test
+      - task: mod:test
 
   lint:
     desc: Static checks across all Go modules
@@ -67,6 +67,26 @@ tasks:
     cmds:
       - task: mcp:clean
       - task: agent:clean
+      - task: mod:clean
+
+  # ── Git hooks (opt-in dev convenience) ──────────────────────────
+
+  hooks:enable:
+    desc: Enable repo-local git hooks (.githooks). Auto-deploys mod after commits that touch smapi-mod/.
+    cmds:
+      - cmd: git config core.hooksPath .githooks
+      - cmd: powershell -NoProfile -Command "Write-Host '[hooks] enabled — post-commit will auto-install mod when smapi-mod/ changes' -ForegroundColor Green"
+
+  hooks:disable:
+    desc: Restore default git hooks path
+    cmds:
+      - cmd: git config --unset core.hooksPath
+      - cmd: powershell -NoProfile -Command "Write-Host '[hooks] disabled' -ForegroundColor Yellow"
+
+  hooks:status:
+    desc: Show whether repo hooks are enabled
+    cmds:
+      - cmd: powershell -NoProfile -Command "$p = git config --get core.hooksPath; if ($p) { Write-Host \"[hooks] enabled, path=$p\" -ForegroundColor Green } else { Write-Host '[hooks] disabled (using default .git/hooks)' -ForegroundColor Yellow }"
 
   # ── Dev convenience ─────────────────────────────────────────────
 

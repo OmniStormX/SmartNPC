@@ -27,3 +27,6 @@ smartnpc-agent/data/*
 # C# build outputs
 smapi-mod/bin/
 smapi-mod/obj/
+
+# Taskfile runtime cache
+.task/

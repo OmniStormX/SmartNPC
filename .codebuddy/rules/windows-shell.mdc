@@ -2,7 +2,7 @@
 description: 
 alwaysApply: true
 enabled: true
-updatedAt: 2026-04-29T06:35:14.181Z
+updatedAt: 2026-04-29T08:41:30.036Z
 provider: 
 ---
 
@@ -37,16 +37,20 @@ provider:
 
 ## Device Guard / WDAC
 
-- 本机启用了应用控制策略，会拦截 `%USERPROFILE%\go\bin\` 下的所有可执行文件
-  - 影响：`go install` 装的工具（`task.exe`、`gopls.exe`、`smartnpc-mcp.exe` 等）直接执行被拦
-  - VS Code Go 扩展启动 `gopls` 时报 `Error: spawn UNKNOWN`，根因就是这个
-  - 不影响：`go.exe` 本体（在 `C:\Program Files\Go\`，签名）—— 所以 `go build` / `go test` / `go vet` 完全正常
-- **验证逻辑用 `go test ./...` + `mcp.NewInMemoryTransports()` 端到端测试**，不依赖 spawn 子进程
-- 实在要跑外部进程时：
-  - 优先方案：把工具装到 `C:\Program Files\Go\thirdparty\` 等受信任目录
+> 历史上此机器拦过 `%USERPROFILE%\go\bin\` 下的 exe（`task.exe`、`gopls.exe`、`go run` 临时产物等）。
+> **截至 2026-04-29 实测已不再拦截**——直接执行成功。但保留以下经验，万一未来策略变化能快速定位。
+
+- **第一时间用最便宜的命令实测**，不要预设拦截：
+  ```cmd
+  "%USERPROFILE%\go\bin\<tool>.exe" --version
+  ```
+  能正常打印就是没被拦；报"已被组织的 Device Guard 策略阻止"才是真拦了
+- 如果**历史行为**确认仍被拦（弹框报错、`Error: spawn UNKNOWN`）：
+  - 优先方案：把工具装到受信任目录（`C:\Program Files\Go\thirdparty\`）
   - 备选：联系 IT 把 `%USERPROFILE%\go\bin\` 加 WDAC 白名单
   - 临时绕：用签名版（如 `winget install Task.Task` 而非 `go install go-task/...`）
-- 创建可执行文件前先告知用户它会落在哪、能不能跑
+- `go.exe` 本体（在 `C:\Program Files\Go\`，签名）始终被信任 —— `go build` / `go test` / `go vet` 永远可用，不受策略影响
+- **不要预设拦截**写绕开代码或临时脚本——验证后再说
 
 ## 文件编码
 

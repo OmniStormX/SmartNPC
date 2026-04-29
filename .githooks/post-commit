@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# SmartNPC post-commit hook.
+#
+# When the just-completed commit changed any file under smapi-mod/, build the
+# mod and copy it into the local Stardew Valley Mods folder so the next game
+# launch picks it up. This is a developer convenience and runs locally only;
+# it has no effect on CI.
+#
+# Hook is opt-in: enabled via `task hooks:enable`, disabled via
+# `task hooks:disable`. The hook is intentionally non-blocking (errors print a
+# warning but never fail the commit, since the commit has already happened).
+#
+# To skip auto-install for a single commit, set SKIP_MOD_INSTALL=1:
+#   SKIP_MOD_INSTALL=1 git commit -m "wip"
+
+set +e
+
+if [ "${SKIP_MOD_INSTALL:-0}" = "1" ]; then
+  echo "[post-commit] SKIP_MOD_INSTALL=1, skipping mod install"
+  exit 0
+fi
+
+# Find files changed in the most recent commit (HEAD).
+changed=$(git diff-tree --no-commit-id --name-only -r HEAD)
+
+if ! echo "$changed" | grep -q '^smapi-mod/'; then
+  # Last commit didn't touch the mod; nothing to do.
+  exit 0
+fi
+
+echo "[post-commit] smapi-mod/ changed in HEAD — running 'task mod:install' …"
+
+# Resolve repo root and call task from there.
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root" || { echo "[post-commit] cannot cd to repo root"; exit 0; }
+
+# Detect task. Prefer it on PATH; fall back to %USERPROFILE%\go\bin.
+if command -v task >/dev/null 2>&1; then
+  task_bin=task
+elif [ -x "$USERPROFILE/go/bin/task.exe" ]; then
+  task_bin="$USERPROFILE/go/bin/task.exe"
+else
+  echo "[post-commit] WARNING: 'task' not found on PATH; install from https://taskfile.dev"
+  echo "[post-commit] mod was NOT auto-installed; run 'task mod:install' manually"
+  exit 0
+fi
+
+if "$task_bin" mod:install; then
+  echo "[post-commit] mod installed — restart Stardew Valley to pick up changes"
+else
+  rc=$?
+  echo "[post-commit] WARNING: 'task mod:install' failed (exit=$rc) — fix and run manually"
+fi
+
+exit 0

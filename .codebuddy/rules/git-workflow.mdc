@@ -2,7 +2,7 @@
 description: 
 alwaysApply: true
 enabled: true
-updatedAt: 2026-04-29T03:28:24.087Z
+updatedAt: 2026-04-29T08:13:29.387Z
 provider: 
 ---
 
@@ -24,6 +24,14 @@ provider:
 - 多文件改动尽量做成一个原子 commit（同一逻辑不要拆 N 个）
 - 不允许 `git push --force` 到主分支（除非用户明确要求）
 - 不允许跳过任何检查：禁用 `--no-verify`、`[skip ci]`、`--no-gpg-sign`
+
+## Git Hooks
+- **不**用 pre-commit / pre-push hook 做校验类工作（CI 已覆盖；防止本地阻塞 commit）
+- **允许** post-commit hook 做"开发体验"类副作用（如自动部署 mod 到本地游戏目录）
+  - 必须 opt-in：用户跑 `task hooks:enable` 才生效
+  - 必须非阻塞：错误只 print warning，绝不让 commit/push 失败
+  - 必须可单次跳过：支持 `SKIP_*=1 git commit ...` 形式
+  - hook 文件统一放 `.githooks/`，文档 `.githooks/README.md`
 
 ## 自动提交身份
 当用户明确要求"自动提交"或"帮我 commit + push"时，必须用 Claude 身份签名：
