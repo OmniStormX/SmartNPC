@@ -1,13 +1,14 @@
 // Command smartnpc-mcp is the MCP server bridging the Stardew Valley SMAPI mod
-// to MCP clients (e.g., the smartnpc-agent or Claude Desktop).
+// to MCP clients (smartnpc-agent or Claude Desktop).
 //
 // Transport: stdio (newline-delimited JSON-RPC over stdin/stdout).
 // IMPORTANT: never write logs to stdout — it would corrupt the MCP stream.
-// All logging must go through stderr (slog handler is wired accordingly).
+// All logging goes through stderr.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -22,17 +23,19 @@ import (
 	"github.com/smartnpc/smartnpc-mcp/internal/tools"
 )
 
-// Build-time variables (override via -ldflags).
-var (
-	version = "0.1.0-dev"
-)
+var version = "0.1.0-dev"
 
 func main() {
 	var (
 		showVersion = flag.Bool("version", false, "print version and exit")
 		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
-		modURL      = flag.String("mod-url", bridge.DefaultModURL,
-			"SMAPI mod HTTP endpoint (M2 mail experiment); empty disables mod-backed tools")
+		wsURL       = flag.String("ws-url", bridge.DefaultWSURL,
+			"SMAPI mod WebSocket URL; empty disables mod-backed tools")
+		echoMode = flag.Bool("echo-mode", false,
+			"forward chat_received events back as chat_say (built-in echo NPC, no LLM). "+
+				"Useful for verifying the round trip without spinning up smartnpc-agent.")
+		echoSpeaker = flag.String("echo-speaker", "SmartNPC",
+			"speaker name used when --echo-mode is on")
 	)
 	flag.Parse()
 
@@ -46,7 +49,8 @@ func main() {
 
 	logger.Info("smartnpc-mcp starting",
 		"version", version,
-		"mod_url", *modURL,
+		"ws_url", *wsURL,
+		"echo_mode", *echoMode,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(),
@@ -57,14 +61,23 @@ func main() {
 		Name:    "smartnpc-mcp",
 		Title:   "Stardew Valley NPC Bridge",
 		Version: version,
-	}, &mcp.ServerOptions{
-		Logger: logger,
-	})
+	}, &mcp.ServerOptions{Logger: logger})
 
-	var br *bridge.Client
-	if *modURL != "" {
-		br = bridge.NewClient(*modURL)
+	// Wire the ws bridge first so we can attach event forwarders during
+	// tool registration.
+	var br *bridge.WSClient
+	if *wsURL != "" {
+		// Construct first, then bind the handler — the handler needs to
+		// reference the client to issue chat_say in echo mode.
+		br = bridge.NewWSClient(bridge.WSClientOptions{URL: *wsURL, Logger: logger})
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker))
+		if err := br.Connect(ctx); err != nil {
+			// Mod may not be running yet. The ws client retries in the
+			// background; meanwhile non-mod tools (ping) still work.
+			logger.Warn("initial ws connect failed; will retry in background", "err", err)
+		}
 	}
+
 	tools.RegisterAll(server, br)
 
 	logger.Info("listening on stdio")
@@ -73,4 +86,44 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("smartnpc-mcp shut down cleanly")
+}
+
+// makeRouter constructs the bridge.EventHandler that combines:
+//   - forwarding every event to MCP clients as a logging notification
+//   - optional --echo-mode: when a chat_received event arrives, immediately
+//     issue a chat_say back through the same bridge.
+//
+// br may be nil during initial wiring; in that case echo-mode is a no-op.
+func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string) bridge.EventHandler {
+	forward := tools.MakeEventForwarder(server, logger)
+
+	return func(ctx context.Context, name string, data json.RawMessage) {
+		forward(ctx, name, data)
+
+		if !echo || br == nil || name != bridge.EventChatReceived {
+			return
+		}
+		var p struct {
+			Text   string `json:"text"`
+			Source string `json:"source"`
+		}
+		if err := json.Unmarshal(data, &p); err != nil || p.Text == "" {
+			return
+		}
+		// Don't echo our own messages back (defense in depth — the mod
+		// already filters info messages, but be safe).
+		if p.Source == speaker {
+			return
+		}
+		go func() {
+			_, err := br.Call(ctx, bridge.ActionChatSay, map[string]any{
+				"speaker": speaker,
+				"text":    "You said: " + p.Text,
+				"color":   "yellow",
+			})
+			if err != nil {
+				logger.Warn("echo chat_say failed", "err", err)
+			}
+		}()
+	}
 }

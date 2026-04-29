@@ -1,6 +1,4 @@
 // Package tools registers MCP tools on the server.
-//
-// Each functional group lives in its own file (mail.go, npc_query.go, ...).
 package tools
 
 import (
@@ -11,12 +9,12 @@ import (
 
 // RegisterAll wires every available tool group onto the given server.
 //
-// br may be nil; tools requiring it will fail at call time with a clear
-// "mod not configured" error. This makes it easy to use Claude Desktop just
-// for the meta `ping` tool without having the SMAPI mod running.
-func RegisterAll(s *mcp.Server, br *bridge.Client) {
+// br may be nil; mod-backed tools (mail_send, chat_say) are then omitted so
+// that the server is still usable for the meta `ping` tool alone.
+func RegisterAll(s *mcp.Server, br *bridge.WSClient) {
 	registerMeta(s)
 	if br != nil {
 		registerMail(s, br)
+		registerChat(s, br)
 	}
 }
