@@ -1,0 +1,48 @@
+version: '3'
+
+# Tasks for the C# SMAPI mod (StardewMCPBridge).
+#
+# Invoked from repo root as `task mod:<name>`.
+
+vars:
+  CONFIG: '{{default "Debug" .CONFIG}}'
+  # ModBuildConfig deploys to <SDV>\Mods\<AssemblyName>\ when EnableModDeploy
+  # is true and that Mods/ folder exists. We resolve the install path from the
+  # csproj <GamePath> tag for fallback manual copy.
+  GAME_PATH: 'D:\Stardew Valley'
+  MOD_NAME: StardewMCPBridge
+  DEPLOY_DIR: '{{.GAME_PATH}}\Mods\{{.MOD_NAME}}'
+  BUILD_OUT: bin\{{.CONFIG}}\net6.0
+  DOTNET: '{{default "C:\\Program Files\\dotnet\\dotnet.exe" .DOTNET}}'
+
+tasks:
+  build:
+    desc: Build the SMAPI mod
+    cmds:
+      - cmd: '"{{.DOTNET}}" build -c {{.CONFIG}}'
+    sources:
+      - '*.cs'
+      - '**/*.cs'
+      - '*.csproj'
+      - manifest.json
+    generates:
+      - '{{.BUILD_OUT}}\{{.MOD_NAME}}.dll'
+
+  install:
+    desc: Build and copy the mod to the local Stardew Valley Mods folder
+    deps: [build]
+    cmds:
+      # ModBuildConfig only deploys if Mods/ already exists; ensure it does.
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.DEPLOY_DIR}}' | Out-Null"
+      - cmd: powershell -NoProfile -Command "Copy-Item -Force -Path '{{.BUILD_OUT}}\{{.MOD_NAME}}.dll','{{.BUILD_OUT}}\{{.MOD_NAME}}.deps.json','{{.BUILD_OUT}}\manifest.json' -Destination '{{.DEPLOY_DIR}}\'"
+      - cmd: powershell -NoProfile -Command "Write-Host '[mod] installed to {{.DEPLOY_DIR}} — restart Stardew Valley to pick up changes' -ForegroundColor Green"
+
+  test:
+    desc: (placeholder) C# tests not yet introduced
+    cmds:
+      - cmd: powershell -NoProfile -Command "Write-Host '[mod] no tests yet' -ForegroundColor Yellow"
+
+  clean:
+    desc: Remove build outputs
+    cmds:
+      - cmd: powershell -NoProfile -Command "if (Test-Path bin) { Remove-Item -Recurse -Force bin }; if (Test-Path obj) { Remove-Item -Recurse -Force obj }"

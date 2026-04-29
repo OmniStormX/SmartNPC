@@ -9,7 +9,6 @@
         EnableModDeploy is true.
 
     If your game is in a non-standard location, set GamePath manually:
-      <GamePath>D:\Games\Stardew Valley</GamePath>
   -->
   <PropertyGroup>
     <Version>0.1.0</Version>
@@ -20,9 +19,11 @@
     <LangVersion>latest</LangVersion>
     <EnableModDeploy>true</EnableModDeploy>
     <EnableModZip>false</EnableModZip>
-    <!-- Uncomment + edit if ModBuildConfig fails to find your SDV install:
-    <GamePath>D:\Games\Stardew Valley</GamePath>
-    -->
+    <!-- Reference 0Harmony.dll shipped with SMAPI (needed for ChatInputCapture patch). -->
+    <EnableHarmony>true</EnableHarmony>
+    <!-- SDV install path on this machine. ModBuildConfig auto-locates SDV in
+         most setups; if it cannot, set GamePath explicitly here. -->
+    <GamePath>D:\Stardew Valley</GamePath>
   </PropertyGroup>
 
   <ItemGroup>
