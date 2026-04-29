@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    SmartNPC SMAPI Mod (M2 minimal: HTTP endpoint + HUD message).
+
+    Dependencies:
+      - Pathoschild.Stardew.ModBuildConfig: auto-discovers SDV install path
+        and references SMAPI / SDV / XNA assemblies. Also auto-deploys the
+        built mod to %APPDATA%\StardewValley\Mods\<ModName>\ when
+        EnableModDeploy is true.
+
+    If your game is in a non-standard location, set GamePath manually:
+      <GamePath>D:\Games\Stardew Valley</GamePath>
+  -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <TargetFramework>net6.0</TargetFramework>
+    <RootNamespace>SmartNPC.Bridge</RootNamespace>
+    <AssemblyName>StardewMCPBridge</AssemblyName>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnableModDeploy>true</EnableModDeploy>
+    <EnableModZip>false</EnableModZip>
+    <!-- Uncomment + edit if ModBuildConfig fails to find your SDV install:
+    <GamePath>D:\Games\Stardew Valley</GamePath>
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.3.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="manifest.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

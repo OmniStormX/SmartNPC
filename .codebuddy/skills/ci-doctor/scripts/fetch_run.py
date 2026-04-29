@@ -1,9 +1,9 @@
-"""Fetch the latest GitHub Actions run for the current repository as structured JSON.
+"""拉取当前仓库最近一次 GitHub Actions run，输出结构化 JSON。
 
-Usage:
+用法：
     python fetch_run.py [--limit N] [--workflow ci.yml] [--branch main]
 
-Output (single JSON object printed to stdout):
+输出（向 stdout 打印一个 JSON 对象）：
     {
       "runId": "12345",
       "status": "completed|in_progress|queued",
@@ -17,12 +17,12 @@ Output (single JSON object printed to stdout):
       "updatedAt": "2026-04-29T12:03:21Z"
     }
 
-Requires: `gh` CLI in PATH and authenticated (`gh auth status`).
-Exit codes:
-    0  ok
-    2  gh CLI missing or unauthenticated
-    3  no runs found
-    4  unexpected gh failure
+依赖：`gh` CLI 已在 PATH 中且已认证（`gh auth status`）。
+退出码：
+    0  成功
+    2  gh CLI 缺失或未认证
+    3  没有任何 run
+    4  gh 命令意外失败
 """
 from __future__ import annotations
 
@@ -56,12 +56,12 @@ def die(code: int, msg: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=1)
-    ap.add_argument("--workflow", default=None, help="workflow file name, e.g. ci.yml")
-    ap.add_argument("--branch", default=None, help="filter by branch")
+    ap.add_argument("--workflow", default=None, help="workflow 文件名，例如 ci.yml")
+    ap.add_argument("--branch", default=None, help="按分支过滤")
     args = ap.parse_args()
 
     if not shutil.which("gh"):
-        die(2, "gh CLI not found. Install with: winget install GitHub.cli")
+        die(2, "未找到 gh CLI。安装命令：winget install GitHub.cli")
 
     cmd = ["gh", "run", "list", "--limit", str(args.limit), "--json", ",".join(FIELDS)]
     if args.workflow:
@@ -72,18 +72,18 @@ def main() -> None:
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except FileNotFoundError:
-        die(2, "gh CLI not executable")
+        die(2, "gh CLI 不可执行")
 
     if proc.returncode != 0:
-        die(4, f"gh run list failed: {proc.stderr.strip()}")
+        die(4, f"gh run list 执行失败: {proc.stderr.strip()}")
 
     try:
         runs = json.loads(proc.stdout or "[]")
     except json.JSONDecodeError as e:
-        die(4, f"invalid JSON from gh: {e}")
+        die(4, f"gh 返回的不是合法 JSON: {e}")
 
     if not runs:
-        die(3, "no runs found")
+        die(3, "没有找到任何 run")
 
     if args.limit == 1:
         r = runs[0]

@@ -17,6 +17,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
 	"github.com/smartnpc/smartnpc-mcp/internal/log"
 	"github.com/smartnpc/smartnpc-mcp/internal/tools"
 )
@@ -30,8 +31,8 @@ func main() {
 	var (
 		showVersion = flag.Bool("version", false, "print version and exit")
 		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
-		// wsURL kept for future use; currently only the ping tool is wired up.
-		wsURL = flag.String("ws-url", "ws://localhost:8765/game", "SMAPI mod WebSocket URL (M2+)")
+		modURL      = flag.String("mod-url", bridge.DefaultModURL,
+			"SMAPI mod HTTP endpoint (M2 mail experiment); empty disables mod-backed tools")
 	)
 	flag.Parse()
 
@@ -45,7 +46,7 @@ func main() {
 
 	logger.Info("smartnpc-mcp starting",
 		"version", version,
-		"ws_url", *wsURL,
+		"mod_url", *modURL,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(),
@@ -60,8 +61,11 @@ func main() {
 		Logger: logger,
 	})
 
-	// Register all tool sets. M1 only ships the meta `ping` tool.
-	tools.RegisterAll(server)
+	var br *bridge.Client
+	if *modURL != "" {
+		br = bridge.NewClient(*modURL)
+	}
+	tools.RegisterAll(server, br)
 
 	logger.Info("listening on stdio")
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {

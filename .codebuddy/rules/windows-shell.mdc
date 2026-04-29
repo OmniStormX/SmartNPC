@@ -2,17 +2,59 @@
 description: 
 alwaysApply: true
 enabled: true
-updatedAt: 2026-04-29T03:06:21.409Z
+updatedAt: 2026-04-29T06:35:14.181Z
 provider: 
 ---
 
 # Windows 环境注意
 
+## Shell
+
 - 当前 shell 是 `cmd.exe`，不是 PowerShell
   - 跨盘切目录用 `d: && cd d:\path && <cmd>` 形式
   - 不要用 PowerShell 专属语法（`Set-Location`、`;` 链式、`$env:` 等）
-- 本机启用了 **Device Guard / WDAC**，会拦截本地编译产物执行
-  - `go run` / 直接执行 `.exe` 都可能被拦
-  - 验证逻辑用 `go test ./...` + `mcp.NewInMemoryTransports()` 端到端测试，不依赖 spawn 子进程
-  - 实在要跑外部进程，用临时目录 `%USERPROFILE%\go\bin` 之外的方式前先告知用户
-- 路径用反斜杠 `\` 或正斜杠 `/` 都可以，但写到 .go 文件里的 string literal 用 `\\` 或 raw string
+- 路径用反斜杠 `\` 或正斜杠 `/` 都可以；写到 .go 文件里的 string literal 用 `\\` 或 raw string
+- **环境变量改动后，当前 cmd 窗口 inherit 的还是旧值**：
+  - 用 `cmd /d /c "..."` 起干净子进程验证真实状态
+  - 让用户重开 cmd / 重启 VS Code 才会生效
+
+## Go 工具链
+
+- 此机器 `GOROOT=C:\Program Files\Go`，`GOPATH=C:\Users\synchen\go`（标准布局）
+- **如果看到 `warning: both GOPATH and GOROOT are the same directory`**：
+  - 不要直接 `go env -w GOPATH=...`——这写到 `%APPDATA%\go\env`，**优先级低于环境变量**，无效
+  - 必须先查 4 个位置确认 GOPATH 在哪被设：
+    ```cmd
+    reg query "HKCU\Environment" /v GOPATH 2>nul
+    reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v GOPATH 2>nul
+    type "%APPDATA%\go\env"
+    echo %GOPATH%
+    ```
+  - 用户级冲突：`reg delete "HKCU\Environment" /v GOPATH /f`
+  - 系统级冲突：需要管理员，让用户在 "系统属性 → 环境变量" 里删
+  - 修完用 `cmd /d /c "go version & go env GOPATH & go env GOROOT"` 验证（必须新进程）
+- Go 1.10+ 不需要手动设 `GOROOT`，自动从 `go.exe` 推导，**遇到设了 GOROOT 的也建议删**
+
+## Device Guard / WDAC
+
+- 本机启用了应用控制策略，会拦截 `%USERPROFILE%\go\bin\` 下的所有可执行文件
+  - 影响：`go install` 装的工具（`task.exe`、`gopls.exe`、`smartnpc-mcp.exe` 等）直接执行被拦
+  - VS Code Go 扩展启动 `gopls` 时报 `Error: spawn UNKNOWN`，根因就是这个
+  - 不影响：`go.exe` 本体（在 `C:\Program Files\Go\`，签名）—— 所以 `go build` / `go test` / `go vet` 完全正常
+- **验证逻辑用 `go test ./...` + `mcp.NewInMemoryTransports()` 端到端测试**，不依赖 spawn 子进程
+- 实在要跑外部进程时：
+  - 优先方案：把工具装到 `C:\Program Files\Go\thirdparty\` 等受信任目录
+  - 备选：联系 IT 把 `%USERPROFILE%\go\bin\` 加 WDAC 白名单
+  - 临时绕：用签名版（如 `winget install Task.Task` 而非 `go install go-task/...`）
+- 创建可执行文件前先告知用户它会落在哪、能不能跑
+
+## 文件编码
+
+- **所有文本文件统一 UTF-8（无 BOM）**：`.go` / `.md` / `.yml` / `.py` / `.cs` 等都不许 GBK
+- `write_to_file` 工具在 Windows 上偶发把含中文的文件写成 GBK；写完含中文的文件后必须自检：
+  ```cmd
+  python -c "open(r'PATH','rb').read().decode('utf-8'); print('utf-8 ok')"
+  ```
+  失败立刻用 `python -c "data=open(r'PATH','rb').read(); open(r'PATH','wb').write(data.decode('gbk').encode('utf-8'))"` 修正
+- 纯 ASCII 文件（无中文）不需要自检
+- 行尾不强制 LF；Windows CRLF 也接受，由 `.gitattributes` 后续统一

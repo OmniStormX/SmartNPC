@@ -1,0 +1,10 @@
+{
+  "Name": "StardewMCPBridge",
+  "Author": "SmartNPC",
+  "Version": "0.1.0",
+  "Description": "Exposes a tiny HTTP endpoint that SmartNPC's MCP server uses to send hello messages into the running game (M2 experiment).",
+  "UniqueID": "SmartNPC.StardewMCPBridge",
+  "EntryDll": "StardewMCPBridge.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}
