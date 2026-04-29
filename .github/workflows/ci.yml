@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.22'
+
+jobs:
+  # ── Detect what changed so we can skip unaffected jobs ──────────────────
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      mod: ${{ steps.filter.outputs.mod }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - 'smartnpc-mcp/**'
+              - 'smartnpc-agent/**'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'Taskfile.yml'
+            mod:
+              - 'smapi-mod/**'
+            ci:
+              - '.github/workflows/**'
+
+  # ── Go: lint + test + build, both modules in one job via go.work ────────
+  go:
+    name: go (lint + test + build)
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            smartnpc-mcp/go.sum
+            smartnpc-agent/go.sum
+
+      - name: go work sync
+        run: go work sync
+
+      - name: go vet (mcp)
+        working-directory: smartnpc-mcp
+        run: go vet ./...
+
+      - name: go vet (agent)
+        working-directory: smartnpc-agent
+        run: go vet ./...
+
+      - name: go test (mcp)
+        working-directory: smartnpc-mcp
+        run: go test -race -count=1 ./...
+
+      - name: go test (agent)
+        working-directory: smartnpc-agent
+        run: go test -race -count=1 ./...
+
+      - name: go build (mcp)
+        working-directory: smartnpc-mcp
+        run: go build -v ./...
+
+      - name: go build (agent)
+        working-directory: smartnpc-agent
+        run: go build -v ./...
+
+  # ── C# SMAPI Mod (skipped until M2 lands actual project) ────────────────
+  mod:
+    name: smapi-mod (dotnet build)
+    needs: changes
+    if: needs.changes.outputs.mod == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Detect csproj
+        id: detect
+        shell: pwsh
+        run: |
+          $proj = Get-ChildItem -Path smapi-mod -Filter *.csproj -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $proj) {
+            Write-Host "no csproj yet (M2 placeholder), skipping"
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            Write-Host "found $($proj.FullName)"
+            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "csproj=$($proj.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: dotnet restore
+        if: steps.detect.outputs.skip == 'false'
+        run: dotnet restore "${{ steps.detect.outputs.csproj }}"
+
+      - name: dotnet build
+        if: steps.detect.outputs.skip == 'false'
+        run: dotnet build "${{ steps.detect.outputs.csproj }}" -c Release --no-restore
+
+  # ── Aggregate gate so branch protection has a single required check ─────
+  ci-pass:
+    name: ci-pass
+    needs: [go, mod]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all required jobs succeeded
+        env:
+          GO_RESULT: ${{ needs.go.result }}
+          MOD_RESULT: ${{ needs.mod.result }}
+        run: |
+          echo "go=$GO_RESULT, mod=$MOD_RESULT"
+          # Allow 'skipped' (path filter said no relevant changes) and 'success'.
+          for r in "$GO_RESULT" "$MOD_RESULT"; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::A required job failed (result=$r)"; exit 1;;
+            esac
+          done
+          echo "CI PASS"

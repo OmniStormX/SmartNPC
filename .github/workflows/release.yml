@@ -1,0 +1,203 @@
+name: Release
+
+# Triggered by pushing a semver tag, e.g.:
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Builds:
+#   - smartnpc-mcp.exe         (windows/amd64)
+#   - smartnpc-agent.exe       (windows/amd64)
+#   - smartnpc-mcp-linux-amd64
+#   - smartnpc-agent-linux-amd64
+#   - StardewMCPBridge-<ver>.zip   (SMAPI mod, when csproj exists)
+#
+# Then creates a GitHub Release with all artifacts attached and an
+# auto-generated changelog.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'   # pre-releases (v0.2.0-rc1)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (must already exist)'
+        required: true
+
+permissions:
+  contents: write   # required to create releases / upload assets
+
+env:
+  GO_VERSION: '1.22'
+
+jobs:
+  # ── Pre-flight: extract version, decide if mod build is needed ──────────
+  prepare:
+    name: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      has_mod: ${{ steps.meta.outputs.has_mod }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          # Strip leading 'v' for inner artifact filenames
+          VERSION_NUM="${VERSION#v}"
+          echo "version=$VERSION_NUM" >> "$GITHUB_OUTPUT"
+          if ls smapi-mod/*.csproj >/dev/null 2>&1; then
+            echo "has_mod=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_mod=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Build Go binaries for windows + linux ───────────────────────────────
+  build-go:
+    name: build-go (${{ matrix.os }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-amd64
+            runner: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            ext: '.exe'
+          - os: linux-amd64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ext: ''
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            smartnpc-mcp/go.sum
+            smartnpc-agent/go.sum
+
+      - name: go work sync
+        run: go work sync
+
+      - name: build smartnpc-mcp
+        working-directory: smartnpc-mcp
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p ../dist
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o "../dist/smartnpc-mcp-${{ matrix.os }}${{ matrix.ext }}" \
+            ./cmd/smartnpc-mcp
+
+      - name: build smartnpc-agent
+        working-directory: smartnpc-agent
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o "../dist/smartnpc-agent-${{ matrix.os }}${{ matrix.ext }}" \
+            ./cmd/smartnpc-agent
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Build the SMAPI mod zip (only when csproj exists) ───────────────────
+  build-mod:
+    name: build-mod
+    needs: prepare
+    if: needs.prepare.outputs.has_mod == 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: dotnet publish
+        shell: pwsh
+        run: |
+          $proj = Get-ChildItem -Path smapi-mod -Filter *.csproj | Select-Object -First 1
+          dotnet publish $proj.FullName -c Release -o smapi-mod\publish
+
+      - name: package mod zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $zipPath = "dist\StardewMCPBridge-$env:VERSION.zip"
+          Compress-Archive -Path smapi-mod\publish\* -DestinationPath $zipPath -Force
+          Get-Item $zipPath | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod-zip
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Create the GitHub Release with all artifacts ────────────────────────
+  release:
+    name: github release
+    needs: [prepare, build-go, build-mod]
+    if: always() && needs.build-go.result == 'success' && (needs.build-mod.result == 'success' || needs.build-mod.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for changelog generation
+
+      - name: download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: assemble release tree
+        run: |
+          mkdir -p release
+          # Flatten all artifacts into release/
+          find artifacts -type f -exec cp {} release/ \;
+          ls -la release/
+
+      - name: generate checksums
+        working-directory: release
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*

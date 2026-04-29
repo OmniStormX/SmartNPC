@@ -1,0 +1,44 @@
+version: '3'
+
+# Tasks for the smartnpc-mcp Go module.
+# Invoke from repo root as `task mcp:<name>` or directly inside this dir.
+
+vars:
+  BIN_DIR: bin
+  BIN_NAME:
+    sh: 'echo smartnpc-mcp{{if eq OS "windows"}}.exe{{end}}'
+
+tasks:
+  build:
+    desc: Build smartnpc-mcp binary
+    cmds:
+      - go build -o {{.BIN_DIR}}/{{.BIN_NAME}} ./cmd/smartnpc-mcp
+    sources:
+      - '**/*.go'
+      - go.mod
+      - go.sum
+    generates:
+      - '{{.BIN_DIR}}/{{.BIN_NAME}}'
+
+  test:
+    desc: Run smartnpc-mcp tests
+    cmds:
+      - go test ./...
+
+  test-race:
+    desc: Run tests with -race
+    cmds:
+      - go test -race ./...
+
+  lint:
+    desc: go vet
+    cmds:
+      - go vet ./...
+
+  clean:
+    desc: Remove build outputs
+    cmds:
+      - cmd: powershell -NoProfile -Command "if (Test-Path '{{.BIN_DIR}}') { Remove-Item -Recurse -Force '{{.BIN_DIR}}' }"
+        platforms: [windows]
+      - cmd: rm -rf {{.BIN_DIR}}
+        platforms: [linux, darwin]

@@ -1,0 +1,78 @@
+version: '3'
+
+# SmartNPC root Taskfile.
+#
+# All build / test / lint / release work goes through `task <name>` so that
+# local invocations match CI exactly. See .codebuddy/rules/taskfile-usage.mdc.
+#
+# Install task: go install github.com/go-task/task/v3/cmd/task@latest
+
+includes:
+  mcp:
+    taskfile: ./smartnpc-mcp/Taskfile.yml
+    dir: ./smartnpc-mcp
+  agent:
+    taskfile: ./smartnpc-agent/Taskfile.yml
+    dir: ./smartnpc-agent
+  mod:
+    taskfile: ./smapi-mod/Taskfile.yml
+    dir: ./smapi-mod
+    optional: true   # M2 之前 smapi-mod 还没有 Taskfile, 缺失时不报错
+
+vars:
+  GO_MODULES: ./smartnpc-mcp/... ./smartnpc-agent/...
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  # ── Aggregated tasks ────────────────────────────────────────────
+
+  build:
+    desc: Build all subprojects
+    cmds:
+      - task: mcp:build
+      - task: agent:build
+      # - task: mod:build       # 启用 of M2 完成后
+
+  test:
+    desc: Run all tests
+    cmds:
+      - task: mcp:test
+      - task: agent:test
+
+  lint:
+    desc: Static checks across all Go modules
+    cmds:
+      - go work sync
+      - go vet {{.GO_MODULES}}
+
+  ci:
+    desc: Full local equivalent of GitHub Actions CI (lint + test + build)
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  ci-fast:
+    desc: Quick CI (lint + test, skip build)
+    cmds:
+      - task: lint
+      - task: test
+
+  clean:
+    desc: Remove all build artifacts
+    cmds:
+      - task: mcp:clean
+      - task: agent:clean
+
+  # ── Dev convenience ─────────────────────────────────────────────
+
+  tidy:
+    desc: Run go mod tidy in every Go module
+    cmds:
+      - cmd: cd smartnpc-mcp && go mod tidy
+      - cmd: cd smartnpc-agent && go mod tidy
+      - cmd: go work sync

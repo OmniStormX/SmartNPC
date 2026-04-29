@@ -1,0 +1,32 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-29T03:27:57.664Z
+provider: 
+---
+
+# 测试纪律
+
+## 强制要求
+- **新增任何 Go package 必须同时新增 `*_test.go`**，至少包含一个 `Test*` 函数（哪怕只是 smoke test）
+- **新增 MCP 工具必须配 `InMemoryTransport` 端到端测试**：注册 → ListTools 包含 → CallTool 拿到正确 StructuredContent（参考 `smartnpc-mcp/internal/tools/meta_test.go`）
+- **新增 C# 类**优先放在可测试的位置（hander、protocol、parser 等业务逻辑），与 SMAPI API 直接耦合的胶水类除外
+- 修改现有 package 时，若已有测试文件，必须保证测试仍然通过；若引入新行为，需要补对应测试
+
+## 命名 / 布局
+- Go 测试文件与被测代码同目录、同 package（不用 `_test` 后缀 package，除非必要）
+- 测试函数命名：`Test<被测函数>_<场景>`，例 `TestPing_EchoesMessage`
+- 端到端测试函数命名带 `EndToEnd` 后缀，例 `TestPingEndToEnd`
+- 表驱动测试用 `tests := []struct{ name string; ... }{...}` + `t.Run(tt.name, ...)`
+
+## 自动化
+- **改完任何代码必须立即跑一次 `task ci`**（Windows 上 `d: && cd d:\SmartNPC && task ci`）
+  - 失败禁止说"完成了"
+  - 失败 3 次还修不好要主动停下来问用户
+- 单测里禁止 sleep > 100ms；要等待异步用 channel 或 `eventually` 风格
+- 单测里禁止启动真实 MCP 子进程或真实 ws 连接，统一用 `InMemoryTransport` 或 mock
+
+## CI 覆盖
+- 所有 Go 子模块由根 Taskfile 的 `task test` 一键覆盖，不需要在 GitHub Actions 里逐个声明
+- 新增子项目（不在 `go.work` 里的）必须同时更新 `go.work` + `Taskfile.yml` + `.github/workflows/ci.yml` 的 path filter

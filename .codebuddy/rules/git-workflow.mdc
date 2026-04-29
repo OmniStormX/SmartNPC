@@ -1,0 +1,50 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-29T03:28:24.087Z
+provider: 
+---
+
+# Git 提交规范
+
+## Commit Message
+- 格式：`<type>(<scope>): <subject>`
+  - type: `feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `ci` / `build`
+  - scope: `mcp` / `agent` / `mod` / `docs` / `ci` / `tools` / `bridge` 等
+  - subject: 祈使句、小写开头、不加句号、≤ 60 字
+- 示例：
+  - `feat(mcp): add npc_speak tool with InMemoryTransport test`
+  - `fix(agent): handle nil InitializeResult on connect`
+  - `ci: enable Go matrix and dotnet job`
+- 涉及 milestone 收尾的 commit 在 body 里写一句 `Closes M2`
+
+## 流程
+- **每次自动 commit 前必须本地 `task ci` 通过**，禁止 push 红的代码上 GitHub
+- 多文件改动尽量做成一个原子 commit（同一逻辑不要拆 N 个）
+- 不允许 `git push --force` 到主分支（除非用户明确要求）
+- 不允许跳过任何检查：禁用 `--no-verify`、`[skip ci]`、`--no-gpg-sign`
+
+## 自动提交身份
+当用户明确要求"自动提交"或"帮我 commit + push"时，必须用 Claude 身份签名：
+
+- author name: `Claude (CodeBuddy)`
+- author email: `claude-codebuddy@smartnpc.local`
+- commit message 末尾追加固定 trailer 块：
+  ```
+  Co-Authored-By: Claude <claude-codebuddy@smartnpc.local>
+  Generated-By: CodeBuddy + Claude
+  ```
+
+实现命令（Windows cmd.exe）：
+```
+git -c user.name="Claude (CodeBuddy)" -c user.email="claude-codebuddy@smartnpc.local" commit -m "<type>(<scope>): <subject>" -m "Co-Authored-By: Claude <claude-codebuddy@smartnpc.local>" -m "Generated-By: CodeBuddy + Claude"
+```
+
+**禁止**：
+- 禁止用用户的 `git config user.name/email` 全局身份替代上述命令级覆盖
+- 禁止改用户全局 `~/.gitconfig`
+- 禁止在用户没有明确说"自动 commit"时主动 commit
+
+## 用户主动 commit 的场景
+若用户自己 `git commit`（没要求我做），我不参与签名/身份；只在用户喊我之后才介入。

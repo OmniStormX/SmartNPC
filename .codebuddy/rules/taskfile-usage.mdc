@@ -1,0 +1,39 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-29T03:28:33.792Z
+provider: 
+---
+
+# Taskfile 使用约定
+
+## 唯一入口
+所有构建 / 测试 / lint / 发布动作必须通过 `task <name>` 触发，不直接调底层命令。
+原因：保证本地与 CI 命令完全一致，避免"本地能过 CI 挂"。
+
+## 必须存在的根任务
+| 任务 | 含义 | 必须做的事 |
+|------|------|-----------|
+| `task build` | 构建所有 Go 二进制 + C# Mod | go build + dotnet build |
+| `task test` | 跑所有测试 | go test ./... + dotnet test（可选） |
+| `task lint` | 静态检查 | go vet + （可选 golangci-lint） |
+| `task ci` | 本地完整 CI 等价 | lint + test + build |
+| `task ci-fast` | 快速版（跳 build） | lint + test |
+| `task clean` | 清理产物 | rm bin/ dist/ |
+
+## 子项目任务命名空间
+根 Taskfile 通过 `includes:` 引用子项目，调用时用 `task <ns>:<task>` 形式：
+- `task mcp:build` → `smartnpc-mcp` 构建
+- `task agent:test` → `smartnpc-agent` 测试
+- `task mod:build` → C# Mod 构建
+
+## 新增子项目时
+必须同步：
+1. 在子项目根加 `Taskfile.yml`，至少实现 `build` / `test` / `clean`
+2. 在根 `Taskfile.yml` 的 `includes:` 注册命名空间
+3. 在 `.github/workflows/ci.yml` 的 path filter / job 中加入
+
+## 禁止
+- 禁止在 README 或文档里教用户用 `go build ...` / `dotnet build ...`，统一指向 `task build`
+- 禁止在 CI workflow 里写裸 `go test`，统一 `task test`，保证可复现

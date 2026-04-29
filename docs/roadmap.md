@@ -10,6 +10,7 @@
 | Milestone | 目标 | 状态 |
 |-----------|------|------|
 | **M1** | Go workspace + stdio MCP server 骨架 + agent 客户端能调 `ping` | ✅ 已完成 |
+| **M1.5** | 工程化外壳：Taskfile + GitHub Actions CI + Release workflow + Rules/Skill | ✅ 已完成 |
 | **M2** | SMAPI Mod 骨架 + WebSocket 桥接协议 + `bridge_ping` 端到端 | ⬜ 未开始 |
 | **M3** | NPC 行为工具集（query / dialogue / movement / friendship） | ⬜ 未开始 |
 | **M4** | OpenAI Provider 实现 + 单 NPC Agent loop（Abigail 可对话） | ⬜ 未开始 |
@@ -36,12 +37,39 @@ d: && cd d:\SmartNPC && go test ./smartnpc-mcp/... ./smartnpc-agent/...
 
 ---
 
+## M1.5 — 工程化外壳 ✅
+
+**产出**：
+
+- `Taskfile.yml`（根 + `smartnpc-mcp` + `smartnpc-agent`），统一入口 `task ci`
+- `.github/workflows/ci.yml`：path filter + Go matrix + C# job + ci-pass 聚合 gate
+- `.github/workflows/release.yml`：tag 触发，构建 windows/linux 二进制 + Mod zip + 自动 GitHub Release + SHA256SUMS
+- 4 条新 Rule：`testing-discipline` / `ci-feedback-loop` / `git-workflow` / `taskfile-usage`
+- 1 个 Skill：`ci-doctor`（诊断 GitHub Actions 失败的 SOP，含 `fetch_run.py` 脚本和失败模式 catalog）
+
+**已知遗留**：
+
+- M1 部分 Go package 没有 `*_test.go`（`internal/log`, `internal/llm`, `internal/mcpclient`, `cmd/...`），违反 `testing-discipline` 规则。M2 启动时**第一件事**是补齐这些 smoke test。
+- 本地 `task` 二进制被 Device Guard 拦截。后续尝试 `winget install Task.Task` 装签名版；若仍不行，本地用 `go test ./...` 直跑，CI 上正常。
+
+**发版方式**：
+
+```cmd
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+GitHub Actions 自动构建 + 创建 Release。
+
+---
+
 ## M2 — SMAPI Mod 骨架 + WS 桥接
 
 **目标**：游戏内 Mod 与 `smartnpc-mcp` 双向通信跑通，新增一个 `bridge_ping` 工具透传 ws ping 到 Mod。
 
 | # | 任务 | 关键产物 |
 |---|------|---------|
+| 2.0 | 补齐 M1 遗留的 smoke test | `internal/log/logger_test.go`、`internal/mcpclient/client_test.go` 等 |
 | 2.1 | C# 项目骨架 | `smapi-mod/StardewMCPBridge.csproj`、`manifest.json`、`ModEntry.cs` |
 | 2.2 | 内嵌 WebSocket Server | `smapi-mod/Bridge/WebSocketServer.cs`（`System.Net.WebSockets`，监听 `:8765`） |
 | 2.3 | 协议 DTO（C# 侧） | `smapi-mod/Bridge/Protocol.cs`（Request/Response/Event） |

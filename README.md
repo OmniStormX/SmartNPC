@@ -28,23 +28,49 @@ AI-driven NPC system for Stardew Valley, built on the Model Context Protocol (MC
 | `smapi-mod/`       | C# SMAPI mod that exposes game APIs via WebSocket              |
 | `smartnpc-mcp/`    | Go MCP server, bridges WebSocket -> MCP tools                  |
 | `smartnpc-agent/`  | Go agent orchestrator, drives NPC personas via OpenAI + MCP    |
-| `docs/`            | Design docs, protocol spec, tool catalog                       |
+| `docs/`            | Design docs, protocol spec, tool catalog (`roadmap.md`)        |
+| `.codebuddy/`      | Project rules + skills consumed by CodeBuddy AI assistant      |
+| `.github/`         | GitHub Actions: `ci.yml` (PR/push) + `release.yml` (tag)       |
 
-## Quick Start (M1 skeleton)
+## Quick Start
 
-```powershell
-# 1. Build both Go binaries
-cd smartnpc-mcp;   go build ./...
-cd ..\smartnpc-agent; go build ./...
+Install [Task](https://taskfile.dev) once:
 
-# 2. Smoke test: agent spawns mcp via stdio and calls the `ping` tool
-cd ..\smartnpc-agent
-go run ./cmd/smartnpc-agent --mcp-bin ..\smartnpc-mcp\smartnpc-mcp.exe ping
+```cmd
+go install github.com/go-task/task/v3/cmd/task@latest
 ```
+
+Then everything goes through `task`:
+
+```cmd
+task --list           :: show all tasks
+task ci               :: lint + test + build (local equivalent of CI)
+task ci-fast          :: lint + test (skip build)
+task mcp:build        :: build only smartnpc-mcp
+task agent:test       :: run only smartnpc-agent tests
+task tidy             :: go mod tidy across modules
+```
+
+> See `docs/roadmap.md` for the milestone breakdown and `.codebuddy/rules/`
+> for the project conventions enforced during AI-assisted development.
+
+## Releases
+
+Push a semver tag to trigger `release.yml`:
+
+```cmd
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+GitHub Actions builds Windows + Linux binaries and (when present) the SMAPI
+mod zip, then publishes a GitHub Release with auto-generated changelog and
+SHA256SUMS.
 
 ## Status
 
 - [x] M1: Go workspace + stdio MCP server with `ping` tool + agent stdio client
+- [x] M1.5: Taskfile + GitHub Actions CI/Release + project rules + ci-doctor skill
 - [ ] M2: SMAPI mod skeleton + WebSocket bridge protocol
 - [ ] M3: NPC query / dialogue / movement tools (end-to-end)
 - [ ] M4: Persona loader + OpenAI integration + single NPC agent loop

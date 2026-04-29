@@ -1,0 +1,33 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-29T03:28:10.325Z
+provider: 
+---
+
+# CI 反馈循环
+
+## 协议
+代码 push 之后（无论是用户手动 push 还是我自动 commit + push），用户 ping 我"看 CI"或"check ci" 时，我必须执行下列流程：
+
+1. **拉取最近一次运行结果**：`gh run list --limit 1` → 拿到 `runId` 和 status
+2. **若 SUCCESS**：一句话汇报 PASS + 关键指标（耗时、跑了哪些 job），结束
+3. **若 FAILURE / CANCELLED**：
+   - `gh run view <runId> --log-failed` 拉失败 job 的日志
+   - 解析根因（编译错？lint？测试 assertion？环境？）
+   - 用一段话总结："CI 失败 / 失败 job: xxx / 根因: yyy / 修复方案: zzz"
+   - 等用户点头后再改代码（除非根因明显且修复 < 5 行）
+4. **修复后**：`task ci` 本地验证 PASS → commit → push → 重新走第 1 步直至 SUCCESS
+5. **3 次仍未 PASS**：停止自动修复，把所有失败信息汇总给用户
+
+## 工具优先级
+- 优先用 `gh` CLI（用户已 `gh auth login`）
+- 没装 `gh` 时，让用户安装：`winget install GitHub.cli` 然后 `gh auth login`
+- 实在不行让用户贴 Actions 失败日志的关键片段
+
+## 禁止
+- 禁止盲目猜测失败原因，必须看到日志才下结论
+- 禁止用 `git push --force` 覆盖失败的提交（除非用户明确要求）
+- 禁止跳过 CI（不允许 `[skip ci]` / `--no-verify` 等绕过手段）
+- 禁止改 `.github/workflows/` 让 CI"看起来过"（例如禁用某个 job、`continue-on-error: true`）来"修复"问题
