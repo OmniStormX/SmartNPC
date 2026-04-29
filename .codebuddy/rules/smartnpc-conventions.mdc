@@ -1,0 +1,32 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-29T03:06:07.726Z
+provider: 
+---
+
+# SmartNPC 项目约定
+
+## 模块边界
+- C# SMAPI Mod 只放 SMAPI 直调的胶水代码（事件订阅、Harmony patch、API 调用、ws 消息编解码），业务逻辑全部在 Go 侧
+- `smartnpc-mcp` 不持久化任何业务状态，只做协议桥（WebSocket ↔ MCP）
+- `smartnpc-agent` 通过 stdio spawn `smartnpc-mcp`；不要引入 HTTP 直连方案（除非用户明确要求）
+- LLM Provider 固定 OpenAI 优先；Anthropic / 其他 provider 后续再加
+
+## Go 代码规范
+- 目标 Go 1.22+，可用 `log/slog`、`for range int`、泛型
+- **stdio MCP server 的所有日志必须走 stderr**，禁止 `fmt.Println`、禁止 `log` 包默认输出（会污染 MCP 协议流）
+- 所有 package 注释、导出符号注释用英文；TODO/FIXME 注明 milestone（M2/M3/...）
+- 错误返回用 `fmt.Errorf("...: %w", err)` 包装，不要丢失原 err
+- 包路径前缀统一 `github.com/smartnpc/<module>`
+- 工具注册按"一类一文件"放在 `internal/tools/`，新增后必须在 `registry.go` 的 `RegisterAll` 里注册
+
+## 测试
+- 涉及 MCP 协议的工具一律配 `InMemoryTransport` 端到端测试，不依赖 spawn 子进程
+- C# Mod 端代码至少要可手动 ws 连测；条件允许时加单元测试
+
+## 工作流
+- 每个 milestone（M1/M2/...）完成后**等用户验证**再进入下一个，不要自动连推
+- 不主动创建 README / docs 之外的 markdown 文件
+- 修改文件前若距上次 read_file 超过 5 条消息，先重新读

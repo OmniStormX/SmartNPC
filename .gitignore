@@ -1,0 +1,29 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work.sum
+bin/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Env / secrets
+.env
+.env.local
+*.local
+
+# Runtime data
+smartnpc-agent/data/*
+!smartnpc-agent/data/.gitkeep
+
+# C# build outputs
+smapi-mod/bin/
+smapi-mod/obj/

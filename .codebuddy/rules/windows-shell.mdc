@@ -1,0 +1,18 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-29T03:06:21.409Z
+provider: 
+---
+
+# Windows 环境注意
+
+- 当前 shell 是 `cmd.exe`，不是 PowerShell
+  - 跨盘切目录用 `d: && cd d:\path && <cmd>` 形式
+  - 不要用 PowerShell 专属语法（`Set-Location`、`;` 链式、`$env:` 等）
+- 本机启用了 **Device Guard / WDAC**，会拦截本地编译产物执行
+  - `go run` / 直接执行 `.exe` 都可能被拦
+  - 验证逻辑用 `go test ./...` + `mcp.NewInMemoryTransports()` 端到端测试，不依赖 spawn 子进程
+  - 实在要跑外部进程，用临时目录 `%USERPROFILE%\go\bin` 之外的方式前先告知用户
+- 路径用反斜杠 `\` 或正斜杠 `/` 都可以，但写到 .go 文件里的 string literal 用 `\\` 或 raw string

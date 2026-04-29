@@ -1,0 +1,65 @@
+---
+description: 设计、新增或修改 MCP 工具（`smartnpc-mcp/internal/tools/` 下任何工具）时拉取此规则。涵盖：工具命名规范、Input/Output 类型设计、jsonschema tag 写法、错误处理、事件通知模式、注册流程、对应的 ws 协议消息约定。
+alwaysApply: false
+enabled: true
+updatedAt: 2026-04-29T03:06:46.874Z
+provider: 
+---
+
+# MCP 工具设计规范
+
+## 命名
+- 工具名格式：`<domain>_<verb>`，全小写下划线
+  - `npc_speak` / `npc_move_to` / `friendship_get` / `friendship_change`
+  - 查询类用 `get` / `list` / `find`，写入类用动词原形（`speak` / `move_to` / `change`）
+- 文件按 domain 拆分：`tools/npc_dialogue.go`、`tools/friendship.go`，**不要**把所有工具堆一个文件
+
+## Input / Output 类型
+- 每个工具定义两个独立 struct：`<Tool>Input` / `<Tool>Output`，导出
+- 字段必须有 `json` tag 和 `jsonschema` tag（前者控线协议，后者控 schema 描述）
+  ```go
+  type SpeakInput struct {
+      Name    string   `json:"name"               jsonschema:"NPC internal name (e.g. \"Abigail\")"`
+      Text    string   `json:"text"               jsonschema:"dialogue body, plain text"`
+      Choices []string `json:"choices,omitempty"  jsonschema:"optional player choices, max 4"`
+  }
+  ```
+- 可选字段加 `,omitempty`；必填字段不加
+- Output 第一个字段固定为 `OK bool`，便于 LLM 快速判断成功
+
+## Handler 签名
+统一使用泛型 `mcp.AddTool`：
+```go
+func handler(ctx context.Context, req *mcp.CallToolRequest, in XxxInput) (*mcp.CallToolResult, XxxOutput, error) {
+    // 业务错误：返回 (nil, zero, err) 或 result.SetError(err)
+    // 协议错误（参数无法处理）：return nil, zero, fmt.Errorf("invalid xxx: %w", err)
+    return nil, XxxOutput{OK: true, ...}, nil
+}
+```
+- 第一个返回值（`*mcp.CallToolResult`）一律传 `nil`，让 SDK 用 Output 自动填充结构化内容
+- 业务错误 vs 协议错误：能让 LLM 自我修正的（参数错、目标不存在）用 `IsError=true` + 文本描述；MCP 协议级错误（工具不存在、序列化失败）用 Go error 返回
+
+## 注册
+新加工具必须在 `internal/tools/registry.go` 的 `RegisterAll` 里调用注册函数：
+```go
+func RegisterAll(s *mcp.Server, br *bridge.Client) {
+    registerMeta(s)
+    registerNpcQuery(s, br)
+    registerNpcDialogue(s, br)
+    // ...
+}
+```
+- 不要让外部直接拿到 `*mcp.Server`，统一从 `RegisterAll` 走
+- 凡是要调 SMAPI 的工具，handler 通过传入的 `*bridge.Client` 调用 `br.Call(ctx, action, params)`，不要在 tools 包里直接持有全局 client
+
+## 测试
+- 每个工具至少配一个 `InMemoryTransport` 测试：注册 → ListTools 包含 → CallTool 拿到正确 StructuredContent
+- 涉及 SMAPI 调用的，bridge.Client 用 mock 实现（`bridge/mock.go`），不要起真 ws
+
+## 事件通知
+- 单向事件（玩家点击 NPC、收礼）通过 MCP `notifications/message` 推送，**不**做成 tool
+- 长耗时工具（NPC 跨地图寻路）用 `req.Session.NotifyProgress(ctx, ...)` 推进度
+- "异步等回调" 类（如 `npc_ask_choice` 等玩家选）首选**同步阻塞 + ctx 超时**，简单优先；除非证明卡顿不可接受再换异步事件方案
+
+## ws 协议对应
+新增工具时必须同步更新 `docs/protocol.md`（M2 起）：列出对应的 ws action 名、请求/响应字段。**MCP 工具名 ↔ ws action 名一一对应**，避免心智负担。
