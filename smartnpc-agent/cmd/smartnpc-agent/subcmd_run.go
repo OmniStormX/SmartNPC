@@ -13,7 +13,7 @@ import (
 
 func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	speaker := fs.String("speaker", "SmartNPC", "NPC display name in chat")
+	speaker := fs.String("speaker", "Abigail", "NPC display name (must match a game NPC for dialogue box)")
 	baseURL := fs.String("llm-url", "http://192.168.59.118:8642/v1", "OpenAI-compatible API base URL")
 	model := fs.String("model", "hermes-agent", "LLM model name")
 	apiKey := fs.String("api-key", "", "LLM API key (defaults to OPENAI_API_KEY env var)")

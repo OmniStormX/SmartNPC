@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Menus;
 
 namespace SmartNPC.Bridge
 {
@@ -37,16 +38,26 @@ namespace SmartNPC.Bridge
 
         public void PumpOnGameTick()
         {
-            if (_pending.IsEmpty || !Context.IsWorldReady || Game1.chatBox is null) return;
-            while (_pending.TryDequeue(out ChatSayParams? p))
+            if (_pending.IsEmpty || !Context.IsWorldReady) return;
+
+            // If a dialogue is already on screen, wait until the player dismisses it.
+            if (Game1.activeClickableMenu is StardewValley.Menus.DialogueBox) return;
+
+            if (!_pending.TryDequeue(out ChatSayParams? p) || p is null) return;
+
+            // Try to show a proper NPC dialogue box with portrait.
+            NPC? npc = Game1.getCharacterFromName(p.Speaker);
+            if (npc != null)
             {
-                if (p is null) continue;
-                Color color = ResolveColor(p.Color);
-                // Format: "<speaker> text" so the speaker is visually attributed.
-                // Using addInfoMessage so it doesn't show a fake player name.
-                Game1.chatBox.addInfoMessage($"<{p.Speaker}> {p.Text}");
+                var dialogue = new Dialogue(npc, "SmartNPC:response", p.Text!);
+                Game1.DrawDialogue(dialogue);
+                _log.Log($"dialogue: <{p.Speaker}> {p.Text}", LogLevel.Trace);
+            }
+            else
+            {
+                // Fallback: speaker is not a known NPC, use chat box.
+                Game1.chatBox?.addInfoMessage($"<{p.Speaker}> {p.Text}");
                 _log.Log($"chat: <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                _ = color; // color is reserved for future styling; addInfoMessage uses a fixed color
             }
         }
 
