@@ -30,4 +30,5 @@ smapi-mod/obj/
 
 # Taskfile runtime cache
 .task/
-.claude
+# Claude Code (keep commands, ignore local settings)
+.claude/settings.local.json
