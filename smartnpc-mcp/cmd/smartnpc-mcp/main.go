@@ -1,20 +1,31 @@
 // Command smartnpc-mcp is the MCP server bridging the Stardew Valley SMAPI mod
-// to MCP clients (smartnpc-agent or Claude Desktop).
+// to MCP clients (smartnpc-agent, Claude Desktop, Hermes, ...).
 //
-// Transport: stdio (newline-delimited JSON-RPC over stdin/stdout).
-// IMPORTANT: never write logs to stdout — it would corrupt the MCP stream.
-// All logging goes through stderr.
+// Two transports are supported:
+//
+//   - stdio (default): newline-delimited JSON-RPC over stdin/stdout. The
+//     usual case for desktop MCP clients that spawn the server as a child
+//     process.
+//   - streamable HTTP (--http :PORT): exposes the same MCP server over HTTP
+//     so a client on a different host (e.g. Hermes inside WSL while SDV +
+//     mcp run on the Windows host) can connect remotely.
+//
+// IMPORTANT: in stdio mode, never write logs to stdout — it would corrupt
+// the MCP stream. All logging goes through stderr.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -33,9 +44,16 @@ func main() {
 			"SMAPI mod WebSocket URL; empty disables mod-backed tools")
 		echoMode = flag.Bool("echo-mode", false,
 			"forward chat_received events back as chat_say (built-in echo NPC, no LLM). "+
-				"Useful for verifying the round trip without spinning up smartnpc-agent.")
+				"Useful for verifying the round trip without an LLM agent.")
 		echoSpeaker = flag.String("echo-speaker", "SmartNPC",
 			"speaker name used when --echo-mode is on")
+		httpAddr = flag.String("http", "",
+			"if set (e.g. ':3000'), expose the MCP server over Streamable HTTP "+
+				"on this address instead of stdio. Use for cross-host clients "+
+				"like Hermes in WSL.")
+		httpAllowAnyOrigin = flag.Bool("http-allow-any-origin", true,
+			"in --http mode, disable origin / localhost restrictions so cross-host "+
+				"clients can connect (set false if exposing to a hostile network)")
 	)
 	flag.Parse()
 
@@ -51,6 +69,7 @@ func main() {
 		"version", version,
 		"ws_url", *wsURL,
 		"echo_mode", *echoMode,
+		"http_addr", *httpAddr,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(),
@@ -80,9 +99,66 @@ func main() {
 
 	tools.RegisterAll(server, br)
 
+	if *httpAddr != "" {
+		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin)
+	} else {
+		runStdio(ctx, logger, server)
+	}
+}
+
+// runStdio is the default mode: serve MCP over stdin/stdout.
+func runStdio(ctx context.Context, logger *slog.Logger, server *mcp.Server) {
 	logger.Info("listening on stdio")
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		logger.Error("server terminated with error", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("smartnpc-mcp shut down cleanly")
+}
+
+// runHTTP serves the MCP server over Streamable HTTP at /mcp. Suitable for
+// remote MCP clients (e.g. Hermes inside WSL connecting to the Windows host).
+func runHTTP(ctx context.Context, logger *slog.Logger, server *mcp.Server, addr string, allowAnyOrigin bool) {
+	mcpHandler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{
+			// Make cross-host access work out of the box. We listen on
+			// :PORT (all interfaces) so DNS-rebinding protection only
+			// triggers when the listener resolves to a loopback address;
+			// passing this flag also keeps Hermes-from-WSL hitting the
+			// Windows host IP from being rejected.
+			DisableLocalhostProtection: allowAnyOrigin,
+			// CrossOriginProtection: leave nil so the SDK's default
+			// (zero-value http.CrossOriginProtection) is used. If a remote
+			// MCP client gets blocked by Origin checks, set the env var
+			// GODEBUG=disablecrossoriginprotection=1 when launching mcp.
+		},
+	)
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/mcp/", mcpHandler)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+
+	logger.Info("listening on streamable HTTP", "addr", addr, "endpoint", "/mcp")
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("http server terminated with error", "err", err)
 		os.Exit(1)
 	}
 	logger.Info("smartnpc-mcp shut down cleanly")
