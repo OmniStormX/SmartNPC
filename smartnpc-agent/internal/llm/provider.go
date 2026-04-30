@@ -26,6 +26,8 @@ type Message struct {
 	Name string `json:"name,omitempty"`
 	// ToolCallID correlates a tool result with the assistant's tool_call.
 	ToolCallID string `json:"toolCallId,omitempty"`
+	// ToolCalls is populated when an assistant message requests tool invocations.
+	ToolCalls []ToolCall `json:"toolCalls,omitempty"`
 }
 
 // ToolSpec describes a callable tool exposed to the model. The actual JSON

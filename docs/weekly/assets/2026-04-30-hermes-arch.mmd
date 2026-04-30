@@ -1,0 +1,27 @@
+flowchart TB
+    GW["Gateway 层<br/>CLI · Telegram · Discord · Slack"]
+
+    subgraph CORE["Reasoning Core"]
+        direction LR
+        Planner["Planner"]
+        Router["Tool Router"]
+        Reflex["Reflexion Loop"]
+    end
+
+    subgraph MEM["Memory Layer"]
+        direction LR
+        Sess["Session<br/>(in-mem)"]
+        Pers["Persistent<br/>(SQLite + FTS5)"]
+        Sema["Semantic<br/>(vector)"]
+    end
+
+    TOOL["Built-in Tools<br/>exec / fs / web ..."]
+    MCP["MCP Adapter<br/>(HTTP / stdio)"]
+    SmartNPC[("smartnpc-mcp")]
+
+    GW --> CORE
+    CORE -->|read / write| MEM
+    MEM -->|recall| CORE
+    CORE --> TOOL
+    CORE --> MCP
+    MCP --> SmartNPC

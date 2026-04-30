@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/smartnpc/smartnpc-agent/internal/agent/chat"
 	"github.com/smartnpc/smartnpc-agent/internal/llm"
@@ -18,6 +19,8 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 	model := fs.String("model", "hermes-agent", "LLM model name")
 	apiKey := fs.String("api-key", "", "LLM API key (defaults to OPENAI_API_KEY env var)")
 	system := fs.String("system", "", "custom system prompt (optional)")
+	persona := fs.String("persona", "", "path to persona JSON file (overrides --system)")
+	timeout := fs.Duration("llm-timeout", 90*time.Second, "timeout per LLM request")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -32,15 +35,30 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 		APIKey:  key,
 		BaseURL: *baseURL,
 		Model:   *model,
+		Timeout: *timeout,
 	})
 	if err != nil {
 		return fmt.Errorf("create LLM provider: %w", err)
 	}
 
+	// Resolve system prompt: persona file > --system flag > default
+	systemPrompt := *system
+	if *persona != "" {
+		p, err := chat.LoadPersona(*persona)
+		if err != nil {
+			return fmt.Errorf("load persona: %w", err)
+		}
+		systemPrompt = p.SystemPrompt
+		if *speaker == "Abigail" && p.Speaker != "" {
+			*speaker = p.Speaker
+		}
+	}
+
 	agent := chat.New(chat.Config{
 		Provider:     provider,
 		Speaker:      *speaker,
-		SystemPrompt: *system,
+		SystemPrompt: systemPrompt,
+		Timeout:      *timeout,
 	})
 
 	cli, err := mcpclient.Spawn(ctx, mcpclient.Options{
@@ -53,10 +71,14 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 	}
 	defer cli.Close()
 
-	// Wire the live session into the agent so it can call tools.
+	// Wire session and load available tools for the LLM.
 	agent.SetSession(cli.Session())
+	if err := agent.LoadTools(ctx); err != nil {
+		// Non-fatal: agent works without tools, just can't call them.
+		fmt.Fprintf(os.Stderr, "warning: failed to load tools: %v\n", err)
+	}
 
-	fmt.Fprintf(os.Stderr, "SmartNPC chat agent running (speaker=%s, model=%s)\n", *speaker, *model)
+	fmt.Fprintf(os.Stderr, "SmartNPC chat agent running (speaker=%s, model=%s, timeout=%s)\n", *speaker, *model, *timeout)
 	fmt.Fprintf(os.Stderr, "Waiting for chat events... (Ctrl+C to stop)\n")
 
 	<-ctx.Done()

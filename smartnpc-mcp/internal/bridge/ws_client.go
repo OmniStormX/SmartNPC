@@ -84,8 +84,9 @@ func NewWSClient(opts WSClientOptions) *WSClient {
 // auto-reconnect with backoff until ctx is cancelled.
 func (c *WSClient) Connect(ctx context.Context) error {
 	if err := c.dial(ctx); err != nil {
-		// First connect failure is fatal so callers can react. Subsequent
-		// reconnects are background and only logged.
+		// First connect failure is returned so callers can log it, but the
+		// background reconnect loop still starts.
+		go c.readLoopForever(ctx)
 		return err
 	}
 	go c.readLoopForever(ctx)

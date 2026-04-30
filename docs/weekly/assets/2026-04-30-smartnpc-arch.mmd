@@ -1,0 +1,18 @@
+flowchart LR
+    subgraph WIN["Windows 主机"]
+        SDV["Stardew Valley.exe"]
+        Mod["SMAPI Mod<br/>(C# .NET 6)"]
+        MCP["smartnpc-mcp<br/>(Go)"]
+        SDV --- Mod
+    end
+
+    subgraph CLIENT["MCP Client（任选）"]
+        Hermes["Hermes Agent<br/>(WSL)"]
+        Self["smartnpc-agent<br/>(Go)"]
+        Claude["Claude Desktop"]
+    end
+
+    Mod -- "WebSocket :18745<br/>JSON envelope" --> MCP
+    MCP -- "MCP stdio" --> Self
+    MCP -- "MCP HTTP :3000" --> Hermes
+    MCP -- "MCP stdio" --> Claude
