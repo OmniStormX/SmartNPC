@@ -33,26 +33,30 @@ provider:
   - 必须可单次跳过：支持 `SKIP_*=1 git commit ...` 形式
   - hook 文件统一放 `.githooks/`，文档 `.githooks/README.md`
 
-## 自动提交身份
-当用户明确要求"自动提交"或"帮我 commit + push"时，必须用 Claude 身份签名：
+## 自动提交身份（对齐 Anthropic Claude Code 官方惯例）
+当用户明确要求"自动提交"或"帮我 commit + push"时：
 
-- author name: `Claude (CodeBuddy)`
-- author email: `claude-codebuddy@smartnpc.local`
-- commit message 末尾追加固定 trailer 块：
+- **author / committer 用用户本人的 git 默认身份**（不要 `-c user.name/user.email` 覆盖）
+  - 这样 GitHub 上点头像跳转到用户本人账号，仓库贡献者列表干净
+- **AI 协作通过 commit message trailer 体现**，末尾追加固定两行：
   ```
-  Co-Authored-By: Claude <claude-codebuddy@smartnpc.local>
+  Co-Authored-By: Claude <noreply@anthropic.com>
   Generated-By: CodeBuddy + Claude
   ```
+  - `noreply@anthropic.com` 是 Anthropic 官方使用的 AI 协作邮箱后缀，业内通用
+  - GitHub 会把这条 trailer 渲染成 co-author 头像（Anthropic 占位），点击不会跳到任何个人账号
 
 实现命令（Windows cmd.exe）：
 ```
-git -c user.name="Claude (CodeBuddy)" -c user.email="claude-codebuddy@smartnpc.local" commit -m "<type>(<scope>): <subject>" -m "Co-Authored-By: Claude <claude-codebuddy@smartnpc.local>" -m "Generated-By: CodeBuddy + Claude"
+git commit -m "<type>(<scope>): <subject>" -m "Co-Authored-By: Claude <noreply@anthropic.com>" -m "Generated-By: CodeBuddy + Claude"
 ```
 
 **禁止**：
-- 禁止用用户的 `git config user.name/email` 全局身份替代上述命令级覆盖
+- 禁止用 `Claude (CodeBuddy) <claude-codebuddy@smartnpc.local>` 这种本地伪域名做 author（点头像是灰头像 + 明文邮箱，看着像野鸡）
+- 禁止伪造他人 GitHub 账号已验证的 email（例如 `<id>+claude@users.noreply.github.com`）让 commit "看起来像" 某个真实账号 —— 这是冒充身份，违反 GitHub ToS
 - 禁止改用户全局 `~/.gitconfig`
 - 禁止在用户没有明确说"自动 commit"时主动 commit
+- 禁止把 `Generated-By` 写成 `🤖 Generated with ...` 之类带 emoji 的形式
 
 ## 用户主动 commit 的场景
 若用户自己 `git commit`（没要求我做），我不参与签名/身份；只在用户喊我之后才介入。

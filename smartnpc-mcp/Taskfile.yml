@@ -35,6 +35,47 @@ tasks:
     cmds:
       - go vet ./...
 
+  run:
+    desc: 'Build & launch smartnpc-mcp HTTP mode on :PORT (default 3000) in a new window.
+      Args: PORT=3000 WS_URL= ECHO=0. Example: task mcp:run PORT=3000 WS_URL=ws://localhost:18745/ws'
+    deps: [build]
+    vars:
+      PORT: '{{default "3000" .PORT}}'
+      WS_URL: '{{default "" .WS_URL}}'
+      ECHO: '{{default "0" .ECHO}}'
+      ECHO_FLAG: '{{if eq .ECHO "1"}}--echo-mode{{end}}'
+    cmds:
+      # Launch in a detached visible cmd window so the dev can see logs and
+      # Ctrl+C to stop. Stays alive after this task returns.
+      - cmd: cmd /c start "smartnpc-mcp :{{.PORT}}" cmd /k "cd /d {{.USER_WORKING_DIR}} && {{.BIN_DIR}}\{{.BIN_NAME}} --http :{{.PORT}} --log-level=debug --ws-url=\"{{.WS_URL}}\" {{.ECHO_FLAG}}"
+        platforms: [windows]
+
+  run-echo:
+    desc: Shortcut for `task mcp:run ECHO=1 WS_URL=ws://localhost:18745/ws` — echo NPC, no LLM.
+    cmds:
+      - task: run
+        vars:
+          ECHO: '1'
+          WS_URL: 'ws://localhost:18745/ws'
+
+  stop:
+    desc: Kill any running smartnpc-mcp.exe on this machine
+    cmds:
+      - cmd: powershell -NoProfile -Command "Get-Process smartnpc-mcp -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host '[mcp] stopped' -ForegroundColor Yellow"
+        platforms: [windows]
+      - cmd: pkill -f 'smartnpc-mcp --http' || true
+        platforms: [linux, darwin]
+
+  health:
+    desc: 'Probe local mcp /healthz. Args: PORT=3000'
+    vars:
+      PORT: '{{default "3000" .PORT}}'
+    cmds:
+      - cmd: powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:{{.PORT}}/healthz -TimeoutSec 2).Content } catch { Write-Host '[mcp] not reachable on :{{.PORT}}' -ForegroundColor Red; exit 1 }"
+        platforms: [windows]
+      - cmd: curl -fsS http://127.0.0.1:{{.PORT}}/healthz
+        platforms: [linux, darwin]
+
   clean:
     desc: Remove build outputs
     cmds:
