@@ -41,6 +41,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "\nFlags:")
 		flag.PrintDefaults()
 		fmt.Fprintln(os.Stderr, "\nSubcommands:")
+		fmt.Fprintln(os.Stderr, "  run        start NPC chat agent (LLM-backed)")
 		fmt.Fprintln(os.Stderr, "  ping       call the MCP `ping` tool")
 		fmt.Fprintln(os.Stderr, "  tools      list MCP tools exposed by the server")
 	}
@@ -65,24 +66,30 @@ func main() {
 		os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cli, err := mcpclient.Spawn(ctx, mcpclient.Options{
-		Binary: *mcpBin,
-		Args:   splitArgs(*mcpArgs),
-		Logger: logger,
-	})
-	if err != nil {
-		logger.Error("failed to spawn smartnpc-mcp", "err", err)
-		os.Exit(1)
-	}
-	defer cli.Close()
-
 	switch sub {
+	case "run":
+		if err := runAgent(ctx, *mcpBin, splitArgs(*mcpArgs), subArgs); err != nil {
+			logger.Error("agent failed", "err", err)
+			os.Exit(1)
+		}
 	case "ping":
+		cli, err := spawnDefaultClient(ctx, *mcpBin, *mcpArgs)
+		if err != nil {
+			logger.Error("failed to spawn smartnpc-mcp", "err", err)
+			os.Exit(1)
+		}
+		defer cli.Close()
 		if err := runPing(ctx, cli, subArgs); err != nil {
 			logger.Error("ping failed", "err", err)
 			os.Exit(1)
 		}
 	case "tools":
+		cli, err := spawnDefaultClient(ctx, *mcpBin, *mcpArgs)
+		if err != nil {
+			logger.Error("failed to spawn smartnpc-mcp", "err", err)
+			os.Exit(1)
+		}
+		defer cli.Close()
 		if err := runListTools(ctx, cli); err != nil {
 			logger.Error("listing tools failed", "err", err)
 			os.Exit(1)
@@ -92,6 +99,13 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+}
+
+func spawnDefaultClient(ctx context.Context, bin, args string) (*mcpclient.Client, error) {
+	return mcpclient.Spawn(ctx, mcpclient.Options{
+		Binary: bin,
+		Args:   splitArgs(args),
+	})
 }
 
 func splitArgs(s string) []string {

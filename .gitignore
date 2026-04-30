@@ -30,3 +30,4 @@ smapi-mod/obj/
 
 # Taskfile runtime cache
 .task/
+.claude

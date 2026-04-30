@@ -20,6 +20,9 @@ type Options struct {
 	Args []string
 	// Logger is used for client-side logging (process lifecycle, etc.).
 	Logger *slog.Logger
+	// LoggingHandler receives MCP logging notifications from the server.
+	// If nil, logging notifications are silently dropped.
+	LoggingHandler func(context.Context, *mcp.LoggingMessageRequest)
 }
 
 // Client is a thin wrapper that owns the MCP session + the underlying process.
@@ -45,12 +48,17 @@ func Spawn(ctx context.Context, opts Options) (*Client, error) {
 
 	transport := &mcp.CommandTransport{Command: cmd}
 
+	clientOpts := &mcp.ClientOptions{
+		Logger: opts.Logger,
+	}
+	if opts.LoggingHandler != nil {
+		clientOpts.LoggingMessageHandler = opts.LoggingHandler
+	}
+
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "smartnpc-agent",
 		Version: "0.1.0",
-	}, &mcp.ClientOptions{
-		Logger: opts.Logger,
-	})
+	}, clientOpts)
 
 	opts.Logger.Info("spawning smartnpc-mcp", "binary", opts.Binary, "args", opts.Args)
 	session, err := client.Connect(ctx, transport, nil)
@@ -65,6 +73,14 @@ func Spawn(ctx context.Context, opts Options) (*Client, error) {
 			"version", init.ServerInfo.Version,
 			"protocol", init.ProtocolVersion,
 		)
+	}
+
+	// Subscribe to server logging notifications. Without this call the server
+	// silently drops all Log() messages (MCP spec behavior).
+	if opts.LoggingHandler != nil {
+		if err := session.SetLoggingLevel(ctx, &mcp.SetLoggingLevelParams{Level: "info"}); err != nil {
+			opts.Logger.Warn("failed to set logging level", "err", err)
+		}
 	}
 
 	return &Client{session: session, logger: opts.Logger}, nil
