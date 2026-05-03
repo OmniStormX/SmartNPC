@@ -13,12 +13,13 @@ import (
 
 // OpenAIConfig configures the OpenAI-compatible provider.
 type OpenAIConfig struct {
-	// APIKey is the bearer token. Optional for self-hosted endpoints (e.g. Hermes).
+	// APIKey is the bearer token. Optional for self-hosted endpoints.
 	APIKey string
-	// BaseURL is the API base (e.g. "http://192.168.59.118:8642/v1").
+	// BaseURL is the API base (e.g. "https://api.openai.com/v1" or a
+	// self-hosted gateway like "http://localhost:8642/v1").
 	// Defaults to "https://api.openai.com/v1".
 	BaseURL string
-	// Model name to use (e.g. "hermes-agent", "gpt-4o-mini").
+	// Model name to use (e.g. "gpt-4o-mini", "hermes-agent").
 	Model string
 	// Timeout for HTTP requests. Defaults to 30s.
 	Timeout time.Duration

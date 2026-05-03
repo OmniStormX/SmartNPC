@@ -3,21 +3,31 @@ version: '3'
 # Tasks for the C# SMAPI mod (StardewMCPBridge).
 #
 # Invoked from repo root as `task mod:<name>`.
+#
+# Per-machine config (all optional, override via .env at repo root):
+#   SMARTNPC_GAME_PATH - SDV install dir. Leave unset to let ModBuildConfig
+#                        auto-discover (works for standard Steam installs on
+#                        Windows / Linux / macOS).
+#   DOTNET             - dotnet executable. Defaults to `dotnet` on PATH.
 
 vars:
   CONFIG: '{{default "Debug" .CONFIG}}'
-  # ModBuildConfig deploys to <SDV>\Mods\<AssemblyName>\ when EnableModDeploy
-  # is true and that Mods/ folder exists. We resolve the install path from the
-  # csproj <GamePath> tag for fallback manual copy.
-  GAME_PATH: 'D:\Stardew Valley'
   MOD_NAME: StardewMCPBridge
-  DEPLOY_DIR: '{{.GAME_PATH}}\Mods\{{.MOD_NAME}}'
-  BUILD_OUT: bin\{{.CONFIG}}\net6.0
-  DOTNET: '{{default "C:\\Program Files\\dotnet\\dotnet.exe" .DOTNET}}'
+  # dotnet: prefer env DOTNET → otherwise `dotnet` on PATH (works on Linux /
+  # macOS / Windows with .NET 6 SDK installed).
+  DOTNET: '{{default "dotnet" .DOTNET}}'
+  # Build output dir (relative to this Taskfile). TargetFramework comes from
+  # the csproj; kept in sync here for the install copy step.
+  BUILD_OUT_WIN: 'bin\{{.CONFIG}}\net6.0'
+  BUILD_OUT_NIX: 'bin/{{.CONFIG}}/net6.0'
+  # ModBuildConfig auto-deploys to <SDV>/Mods/<AssemblyName>/ when
+  # EnableModDeploy is true. The manual install task below is only needed
+  # when auto-deploy is disabled or the env has a non-default SDV path.
+  SMARTNPC_GAME_PATH: '{{default "" .SMARTNPC_GAME_PATH}}'
 
 tasks:
   build:
-    desc: Build the SMAPI mod
+    desc: Build the SMAPI mod (dotnet build)
     cmds:
       - cmd: '"{{.DOTNET}}" build -c {{.CONFIG}}'
     sources:
@@ -25,24 +35,37 @@ tasks:
       - '**/*.cs'
       - '*.csproj'
       - manifest.json
-    generates:
-      - '{{.BUILD_OUT}}\{{.MOD_NAME}}.dll'
 
   install:
-    desc: Build and copy the mod to the local Stardew Valley Mods folder
+    desc: Build the mod and copy outputs to <SMARTNPC_GAME_PATH>/Mods/<ModName>/
     deps: [build]
+    preconditions:
+      - sh: 'test -n "{{.SMARTNPC_GAME_PATH}}"'
+        msg: 'SMARTNPC_GAME_PATH is unset. Set it in .env or rely on ModBuildConfig EnableModDeploy auto-copy.'
     cmds:
-      # ModBuildConfig only deploys if Mods/ already exists; ensure it does.
-      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.DEPLOY_DIR}}' | Out-Null"
-      - cmd: powershell -NoProfile -Command "Copy-Item -Force -Path '{{.BUILD_OUT}}\{{.MOD_NAME}}.dll','{{.BUILD_OUT}}\{{.MOD_NAME}}.deps.json','{{.BUILD_OUT}}\manifest.json' -Destination '{{.DEPLOY_DIR}}\'"
-      - cmd: powershell -NoProfile -Command "Write-Host '[mod] installed to {{.DEPLOY_DIR}} — restart Stardew Valley to pick up changes' -ForegroundColor Green"
+      # Windows branch
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' | Out-Null; Copy-Item -Force -Path '{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.dll','{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.deps.json','{{.BUILD_OUT_WIN}}\manifest.json' -Destination '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}\'; Write-Host '[mod] installed to {{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' -ForegroundColor Green"
+        platforms: [windows]
+      # Linux / macOS branch
+      - cmd: |
+          set -e
+          dest="{{.SMARTNPC_GAME_PATH}}/Mods/{{.MOD_NAME}}"
+          mkdir -p "$dest"
+          cp -f "{{.BUILD_OUT_NIX}}/{{.MOD_NAME}}.dll" "$dest/"
+          cp -f "{{.BUILD_OUT_NIX}}/{{.MOD_NAME}}.deps.json" "$dest/"
+          cp -f "{{.BUILD_OUT_NIX}}/manifest.json" "$dest/"
+          echo "[mod] installed to $dest"
+        platforms: [linux, darwin]
 
   test:
     desc: (placeholder) C# tests not yet introduced
     cmds:
-      - cmd: powershell -NoProfile -Command "Write-Host '[mod] no tests yet' -ForegroundColor Yellow"
+      - cmd: echo '[mod] no tests yet'
 
   clean:
     desc: Remove build outputs
     cmds:
       - cmd: powershell -NoProfile -Command "if (Test-Path bin) { Remove-Item -Recurse -Force bin }; if (Test-Path obj) { Remove-Item -Recurse -Force obj }"
+        platforms: [windows]
+      - cmd: rm -rf bin obj
+        platforms: [linux, darwin]

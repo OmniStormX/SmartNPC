@@ -36,12 +36,13 @@ tasks:
       - go vet ./...
 
   run:
-    desc: 'Build & launch smartnpc-mcp HTTP mode on :PORT (default 3000) in a new window.
-      Args: PORT=3000 WS_URL= ECHO=0. Example: task mcp:run PORT=3000 WS_URL=ws://localhost:18745/ws'
+    desc: 'Build & launch smartnpc-mcp HTTP mode on :PORT (default $SMARTNPC_HTTP_PORT or 3000).
+      Args: PORT=3000 WS_URL=$SMARTNPC_WS_URL ECHO=0. Example: task mcp:run PORT=3000 WS_URL=ws://localhost:18745/ws.
+      Windows launches in a detached window; Linux/macOS runs in the foreground (Ctrl+C to stop).'
     deps: [build]
     vars:
-      PORT: '{{default "3000" .PORT}}'
-      WS_URL: '{{default "" .WS_URL}}'
+      PORT: '{{default (default "3000" .SMARTNPC_HTTP_PORT) .PORT}}'
+      WS_URL: '{{default (default "" .SMARTNPC_WS_URL) .WS_URL}}'
       ECHO: '{{default "0" .ECHO}}'
       ECHO_FLAG: '{{if eq .ECHO "1"}}--echo-mode{{end}}'
     cmds:
@@ -49,6 +50,9 @@ tasks:
       # Ctrl+C to stop. Stays alive after this task returns.
       - cmd: cmd /c start "smartnpc-mcp :{{.PORT}}" cmd /k "cd /d {{.USER_WORKING_DIR}} && {{.BIN_DIR}}\{{.BIN_NAME}} --http :{{.PORT}} --log-level=debug --ws-url=\"{{.WS_URL}}\" {{.ECHO_FLAG}}"
         platforms: [windows]
+      # Foreground run on Linux/macOS. Ctrl+C stops it; no detached window.
+      - cmd: ./{{.BIN_DIR}}/{{.BIN_NAME}} --http :{{.PORT}} --log-level=debug --ws-url="{{.WS_URL}}" {{.ECHO_FLAG}}
+        platforms: [linux, darwin]
 
   run-echo:
     desc: Shortcut for `task mcp:run ECHO=1 WS_URL=ws://localhost:18745/ws` — echo NPC, no LLM.
@@ -56,7 +60,7 @@ tasks:
       - task: run
         vars:
           ECHO: '1'
-          WS_URL: 'ws://localhost:18745/ws'
+          WS_URL: '{{default "ws://localhost:18745/ws" .SMARTNPC_WS_URL}}'
 
   stop:
     desc: Kill any running smartnpc-mcp.exe on this machine
