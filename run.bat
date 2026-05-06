@@ -1,0 +1,1 @@
+start "" "D:\Stardew Valley\StardewModdingAPI.exe"

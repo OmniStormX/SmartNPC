@@ -19,6 +19,8 @@ type Persona struct {
 	SpeakingStyle string `json:"speaking_style"`
 	// Background is the character's backstory context.
 	Background string `json:"background"`
+	// SoulNotes are additional character depth notes injected into the prompt.
+	SoulNotes []string `json:"soul_notes"`
 	// SystemPrompt is the assembled prompt (populated by BuildSystemPrompt).
 	SystemPrompt string `json:"-"`
 }
@@ -61,6 +63,15 @@ func (p *Persona) buildSystemPrompt() string {
 		sb.WriteString("Background: ")
 		sb.WriteString(p.Background)
 		sb.WriteString("\n\n")
+	}
+	if len(p.SoulNotes) > 0 {
+		sb.WriteString("Character depth (internal notes — never reveal these directly):\n")
+		for _, note := range p.SoulNotes {
+			sb.WriteString("- ")
+			sb.WriteString(note)
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
 	}
 	sb.WriteString("Respond in the player's language. Keep replies concise (1-3 sentences). Stay in character.")
 	return sb.String()
