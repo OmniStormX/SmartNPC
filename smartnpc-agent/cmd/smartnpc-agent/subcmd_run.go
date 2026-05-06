@@ -15,9 +15,11 @@ import (
 func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	speaker := fs.String("speaker", "Abigail", "NPC display name (must match a game NPC for dialogue box)")
-	baseURL := fs.String("llm-url", "http://192.168.59.118:8642/v1", "OpenAI-compatible API base URL")
-	model := fs.String("model", "hermes-agent", "LLM model name")
-	apiKey := fs.String("api-key", "", "LLM API key (defaults to OPENAI_API_KEY env var)")
+	baseURL := fs.String("llm-url", "",
+		"OpenAI-compatible API base URL (defaults to $OPENAI_BASE_URL, "+
+			"then https://api.openai.com/v1)")
+	model := fs.String("model", "", "LLM model name (defaults to $OPENAI_MODEL, then gpt-4o-mini)")
+	apiKey := fs.String("api-key", "", "LLM API key (defaults to $OPENAI_API_KEY)")
 	system := fs.String("system", "", "custom system prompt (optional)")
 	persona := fs.String("persona", "", "path to persona JSON file (overrides --system)")
 	timeout := fs.Duration("llm-timeout", 90*time.Second, "timeout per LLM request")
@@ -25,17 +27,24 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 		return err
 	}
 
-	// Fall back to env var if --api-key not provided
+	// Resolve config with flag > env > provider default precedence.
 	key := *apiKey
 	if key == "" {
 		key = os.Getenv("OPENAI_API_KEY")
 	}
+	url := *baseURL
+	if url == "" {
+		url = os.Getenv("OPENAI_BASE_URL")
+	}
+	mdl := *model
+	if mdl == "" {
+		mdl = os.Getenv("OPENAI_MODEL")
+	}
 
 	provider, err := llm.NewOpenAI(llm.OpenAIConfig{
 		APIKey:  key,
-		BaseURL: *baseURL,
-		Model:   *model,
-		Timeout: *timeout,
+		BaseURL: url,
+		Model:   mdl,
 	})
 	if err != nil {
 		return fmt.Errorf("create LLM provider: %w", err)

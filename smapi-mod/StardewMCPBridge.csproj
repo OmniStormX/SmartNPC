@@ -5,10 +5,10 @@
     Dependencies:
       - Pathoschild.Stardew.ModBuildConfig: auto-discovers SDV install path
         and references SMAPI / SDV / XNA assemblies. Also auto-deploys the
-        built mod to %APPDATA%\StardewValley\Mods\<ModName>\ when
-        EnableModDeploy is true.
+        built mod to <SDV>/Mods/<ModName>/ when EnableModDeploy is true.
 
-    If your game is in a non-standard location, set GamePath manually:
+    If ModBuildConfig cannot find your SDV install, set SMARTNPC_GAME_PATH
+    in the repo-root .env file (see .env.example).
   -->
   <PropertyGroup>
     <Version>0.1.0</Version>
@@ -21,9 +21,15 @@
     <EnableModZip>false</EnableModZip>
     <!-- Reference 0Harmony.dll shipped with SMAPI (needed for ChatInputCapture patch). -->
     <EnableHarmony>true</EnableHarmony>
-    <!-- SDV install path on this machine. ModBuildConfig auto-locates SDV in
-         most setups; if it cannot, set GamePath explicitly here. -->
-    <GamePath>D:\Stardew Valley</GamePath>
+    <!--
+      GamePath resolution order:
+        1. Explicit MSBuild property: `dotnet build /p:GamePath=...`
+        2. Env var SMARTNPC_GAME_PATH (set in .env at repo root)
+        3. Empty → ModBuildConfig auto-discovers standard Steam install paths
+           (Windows / Linux / macOS). This is the common case; set the env
+           var only if your SDV is in a non-default location.
+    -->
+    <GamePath Condition="'$(GamePath)' == '' AND '$(SMARTNPC_GAME_PATH)' != ''">$(SMARTNPC_GAME_PATH)</GamePath>
   </PropertyGroup>
 
   <ItemGroup>

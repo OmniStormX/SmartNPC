@@ -6,6 +6,12 @@ version: '3'
 # local invocations match CI exactly. See .codebuddy/rules/taskfile-usage.mdc.
 #
 # Install task: go install github.com/go-task/task/v3/cmd/task@latest
+#
+# Per-machine config: copy `.env.example` to `.env` and edit.
+# `dotenv:` auto-loads it for every task (and propagates to included
+# Taskfiles / subprocesses).
+
+dotenv: ['.env']
 
 includes:
   mcp:
@@ -76,17 +82,28 @@ tasks:
     cmds:
       - cmd: git config core.hooksPath .githooks
       - cmd: powershell -NoProfile -Command "Write-Host '[hooks] enabled — post-commit will auto-install mod when smapi-mod/ changes' -ForegroundColor Green"
+        platforms: [windows]
+      - cmd: echo '[hooks] enabled — post-commit will auto-install mod when smapi-mod/ changes'
+        platforms: [linux, darwin]
 
   hooks:disable:
     desc: Restore default git hooks path
     cmds:
       - cmd: git config --unset core.hooksPath
       - cmd: powershell -NoProfile -Command "Write-Host '[hooks] disabled' -ForegroundColor Yellow"
+        platforms: [windows]
+      - cmd: echo '[hooks] disabled'
+        platforms: [linux, darwin]
 
   hooks:status:
     desc: Show whether repo hooks are enabled
     cmds:
       - cmd: powershell -NoProfile -Command "$p = git config --get core.hooksPath; if ($p) { Write-Host \"[hooks] enabled, path=$p\" -ForegroundColor Green } else { Write-Host '[hooks] disabled (using default .git/hooks)' -ForegroundColor Yellow }"
+        platforms: [windows]
+      - cmd: |
+          p=$(git config --get core.hooksPath || true)
+          if [ -n "$p" ]; then echo "[hooks] enabled, path=$p"; else echo "[hooks] disabled (using default .git/hooks)"; fi
+        platforms: [linux, darwin]
 
   # ── Dev convenience ─────────────────────────────────────────────
 

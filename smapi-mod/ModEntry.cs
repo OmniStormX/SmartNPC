@@ -17,7 +17,7 @@ namespace SmartNPC.Bridge
 {
     public sealed class ModEntry : Mod
     {
-        private const string ListenPrefix = "http://127.0.0.1:18745/";
+        private ModConfig _config = null!;
 
         private WebSocketServer? _ws;
         private MessageRouter?   _router;
@@ -27,6 +27,7 @@ namespace SmartNPC.Bridge
 
         public override void Entry(IModHelper helper)
         {
+            this._config = helper.ReadConfig<ModConfig>();
             helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
             helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
         }
@@ -42,11 +43,12 @@ namespace SmartNPC.Bridge
                 _router.Register("mail_send", _mail.Handle);
                 _router.Register("chat_say",  _chat.Handle);
 
-                _ws = new WebSocketServer(ListenPrefix, _router, this.Monitor);
+                string prefix = this._config.ListenPrefix();
+                _ws = new WebSocketServer(prefix, _router, this.Monitor);
                 _ws.Start();
 
                 _chatInput = new ChatInputCapture(this, this.ForwardPlayerMessage);
-                this.Monitor.Log("StardewMCPBridge ready (ws + chat + mail)", LogLevel.Info);
+                this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat + mail)", LogLevel.Info);
             }
             catch (Exception ex)
             {
