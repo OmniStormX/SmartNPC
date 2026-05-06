@@ -40,14 +40,62 @@ Install [Task](https://taskfile.dev) once:
 go install github.com/go-task/task/v3/cmd/task@latest
 ```
 
-Then everything goes through `task`:
+Build everything:
+
+```cmd
+task ci               :: lint + test + build (local equivalent of CI)
+```
+
+### Run the full stack (Windows)
+
+**Prerequisites:**
+- Go 1.22+, .NET SDK 6.0, Stardew Valley + SMAPI installed
+- Hermes Agent (`v0.11+`) in WSL Ubuntu-22.04 with API Server enabled
+
+**Step 1 — Start Hermes LLM backend (WSL terminal):**
+
+```bash
+hermes gateway run --accept-hooks
+# verify: curl http://localhost:8642/health → {"status":"ok"}
+```
+
+**Step 2 — Start Stardew Valley via SMAPI:**
+
+```cmd
+"D:\Stardew Valley\StardewModdingAPI.exe"
+```
+
+**Step 3 — Start the NPC agent (Windows cmd):**
+
+```cmd
+cd /d d:\SmartNPC\smartnpc-agent
+bin\smartnpc-agent.exe ^
+  -mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
+  -mcp-args="--ws-url=ws://127.0.0.1:18745/ws" ^
+  -log-level debug ^
+  run ^
+  -llm-url http://localhost:8642/v1 ^
+  -api-key smartnpc-test-key ^
+  -model hermes-agent ^
+  -speaker XiaMi
+```
+
+The agent spawns `smartnpc-mcp` as a child process (stdio MCP) which connects
+to the SMAPI mod via WebSocket. In-game press `Ctrl+T` to chat — the NPC will
+respond through the Hermes LLM.
+
+> **Important:** Do NOT run `task mcp:run` at the same time as the agent.
+> The mod only accepts one WebSocket client; two mcp instances will fight
+> over the connection.
+
+### Other useful commands
 
 ```cmd
 task --list           :: show all tasks
-task ci               :: lint + test + build (local equivalent of CI)
 task ci-fast          :: lint + test (skip build)
 task mcp:build        :: build only smartnpc-mcp
 task agent:test       :: run only smartnpc-agent tests
+task mod:install      :: build + deploy mod to game folder (game must be closed)
 task tidy             :: go mod tidy across modules
 ```
 

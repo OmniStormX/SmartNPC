@@ -1,22 +1,20 @@
-# CODEBUDDY.md
-
-This file provides guidance to CodeBuddy Code when working with code in this repository.
+# CODEBUDDY.md This file provides guidance to CodeBuddy when working with code in this repository.
 
 ## 项目定位
 
-SmartNPC — 星露谷物语 AI NPC 系统。三段式流水线，全部通过 `task` 入口构建：
+SmartNPC — 星露谷物语 AI NPC 系统。每个 NPC 对应一个独立的 Hermes Agent profile（隔离 SOUL / 记忆 / API 端口）。
 
 ```
-Stardew Valley (SMAPI) ── ws :18745 ── smartnpc-mcp (Go) ── stdio MCP ── smartnpc-agent (Go) ── OpenAI 兼容 LLM
+Stardew Valley (SMAPI) ── ws :18745 ── smartnpc-mcp (Go) ── stdio MCP ── smartnpc-agent (Go) ── Hermes Profile (OpenAI 兼容)
 ```
 
 | 模块 | 语言 | 角色 |
 |------|------|------|
-| `smapi-mod/` (`StardewMCPBridge`) | C# .NET 6 | SMAPI Mod，在游戏内起 ws server，暴露 `chat_say` / `mail_send` 等动作 + 推 `chat_received` 事件 |
-| `smartnpc-mcp/` | Go 1.22+ | MCP Server（stdio 或 `--http :PORT` Streamable HTTP），把 ws 协议翻译成 MCP 工具 |
-| `smartnpc-agent/` | Go 1.22+ | NPC 编排器，stdio spawn `smartnpc-mcp`，驱动 OpenAI 兼容 LLM 生成回复 |
+| `smapi-mod/` (`StardewMCPBridge`) | C# .NET 6 | SMAPI Mod，ws server + NPC spawn/移动/交互 + Harmony patch 聊天框 |
+| `smartnpc-mcp/` | Go 1.22+ | MCP Server（stdio 或 `--http :PORT`），ws↔MCP 工具桥 |
+| `smartnpc-agent/` | Go 1.22+ | NPC 编排器，stdio spawn mcp，驱动 OpenAI 兼容 LLM，支持 persona JSON |
 
-Go 两个模块通过根 `go.work` 联动（`github.com/smartnpc/smartnpc-mcp` + `github.com/smartnpc/smartnpc-agent`）。
+Go 两模块通过根 `go.work` 联动。
 
 ## 命令（全部走 Taskfile）
 
@@ -98,7 +96,38 @@ CI 本地复现：`task ci`（**任何提交前必须通过**；失败禁止说"
 - 入口 `smapi-mod/ModEntry.cs:18`，ws 监听 `http://127.0.0.1:18745/`（`ListenPrefix` 常量）
 - `Bridge/WebSocketServer.cs` + `Bridge/MessageRouter.cs` 做协议分发
 - `Chat/ChatInputCapture.cs` 用 Harmony patch `ChatBox.receiveChatMessage`，Ctrl+T 捕获玩家输入并推 `chat_received` 事件
-- **`.csproj` 里 `<GamePath>` 是硬编码机器本地路径**（当前指向 Linux Steam 路径），换机器必须改或改走环境变量 —— 见下文「跨平台建议」
+- `NPC/XiaMiData.cs` 负责自定义 NPC 的完整生命周期：精灵图注册、NPC Dispositions、对话、日程表、SaveLoaded 时 spawn 实例到农场
+- **`.csproj` 里 `<GamePath>` 通过环境变量 `SMARTNPC_GAME_PATH` 设置**，缺省让 `ModBuildConfig` 自动探测
+
+### NPC 精灵系统
+
+自定义 NPC 精灵图放在 `smapi-mod/assets/<npc_name>/`：
+- `XiaMi.png` — RGBA spritesheet（已去背景），通过 `AssetRequested` hook 注入 `Characters/<NpcName>`
+- `XiaMi_Portrait.png` — 肖像图，注入 `Portraits/<NpcName>`
+- `sprite_actions_positions_*.json` — 动画帧坐标元数据（开发参考，游戏不读）
+- `process_sprite.py` — 辅助脚本：去背景 + 透明化
+
+**SDV 精灵帧尺寸**：`AnimatedSprite` 构造参数 `spriteWidth` / `spriteHeight` 必须和 spritesheet 网格对齐。SDV 原版是 16×32；自定义高清图要按实际帧大小设。
+
+### Hermes Agent Profile 隔离
+
+每个 NPC 对应一个独立 Hermes profile，完全隔离：
+
+| 配置项 | 路径 | 说明 |
+|--------|------|------|
+| SOUL.md | `~/.hermes/profiles/<npc>/SOUL.md` | NPC 人格（替代 Hermes 默认人格） |
+| .env | `~/.hermes/profiles/<npc>/.env` | 独立 API key、端口、host |
+| 记忆 | `~/.hermes/profiles/<npc>/memories/` | 自动隔离，不跨 profile |
+| 端口 | `API_SERVER_PORT=864x` | 每个 NPC 不同端口 |
+
+创建新 NPC profile：
+```bash
+hermes profile create <npc_name> --clone
+# 编辑 SOUL.md + .env（设置 API_SERVER_PORT / API_SERVER_KEY / OPENAI_API_KEY）
+hermes -p <npc_name> gateway run --accept-hooks
+```
+
+Agent 启动时 `-llm-url` 指向对应 profile 的端口，`-model` 用 profile 名。
 
 ### 协议
 
@@ -193,7 +222,37 @@ SMARTNPC_HTTP_PORT=3000
 | M1.5 Taskfile + GitHub Actions CI/Release | ✅ |
 | M2 SMAPI Mod + HTTP bridge | ✅ |
 | M3 WebSocket bridge + 游戏内聊天框 + echo agent | ✅ |
-| M4 OpenAI provider + persona + 真实对话 | 🔧 进行中 |
+| M4 OpenAI provider + persona + Hermes 隔离 + NPC spawn | 🔧 进行中 |
 | M5 SQLite 记忆 + 调度 + 多 NPC 编排 | ⬜ |
 
 每个 milestone 做完**等用户验证**再进下一个，不要自动连推。
+
+## 启动全栈（Windows）
+
+```cmd
+:: 1. 构建全部
+task ci
+
+:: 2. 启动 Hermes xiami profile（WSL 终端）
+hermes -p xiami gateway run --accept-hooks
+:: 验证: curl http://localhost:8643/health
+
+:: 3. 安装 mod + 启动游戏（游戏关闭状态下）
+task mod:install
+"D:\Stardew Valley\StardewModdingAPI.exe"
+
+:: 4. 启动 agent（新 cmd 窗口）
+cd /d d:\SmartNPC\smartnpc-agent
+bin\smartnpc-agent.exe ^
+  -mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
+  -mcp-args="--ws-url=ws://127.0.0.1:18745/ws" ^
+  -log-level debug ^
+  run ^
+  -llm-url http://localhost:8643/v1 ^
+  -api-key xiami-npc-key ^
+  -model xiami ^
+  -speaker XiaMi ^
+  -persona ..\smartnpc-agent\personas\xiami.json
+```
+
+⚠️ **不要同时跑 `task mcp:run` 和 agent** — mod ws 只接受一个客户端，两个 mcp 会互踢。
