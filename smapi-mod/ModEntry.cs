@@ -24,10 +24,15 @@ namespace SmartNPC.Bridge
         private MailHandler?     _mail;
         private ChatHandler?     _chat;
         private ChatInputCapture? _chatInput;
+        private XiaMiData?       _xiami;
 
         public override void Entry(IModHelper helper)
         {
             this._config = helper.ReadConfig<ModConfig>();
+
+            _xiami = new XiaMiData(helper, this.Monitor);
+            _xiami.Register(helper.Events);
+
             helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
             helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
         }

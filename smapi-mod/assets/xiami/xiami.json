@@ -1,0 +1,898 @@
+{
+  "source_image": {
+    "file_name": "xiami(2).png",
+    "width": 1448,
+    "height": 1086
+  },
+  "layout": {
+    "cols": 8,
+    "rows": 6,
+    "cell_width": 181,
+    "cell_height": 181,
+    "row_frame_counts": [
+      8,
+      8,
+      8,
+      8,
+      8,
+      9
+    ],
+    "bbox_mode": "tight_visible_bounds",
+    "note": "cols/cell_width/cell_height 为原图名义网格；实际裁切请以每帧 bbox 为准。第 6 行实际有 9 个独立姿态。"
+  },
+  "coordinate_system": {
+    "origin": "top_left",
+    "unit": "pixel",
+    "bbox_format": "x, y, w, h"
+  },
+  "notes": [
+    "此 JSON 坐标基于 1448x1086 尺寸的 xiami(2).png。",
+    "已将每帧 bbox 从固定 181x181 单元格修正为可见像素的紧包围盒，裁切时应直接使用 frames.*.bbox。",
+    "第 6 行实际包含 9 个独立姿态；已补充 hold_chicken_01，表情帧位置相应后移。",
+    "第 5 行第 1 帧更像工具/锄地动作，已作为 hoe_09；watering_can 从第 5 行第 2 帧开始，共 7 帧。",
+    "背景为棋盘格（RGB 模式），如需透明图，请在裁切后移除近白/浅灰背景像素。",
+    "右侧待机/行走没有独立帧，使用 left 帧加 flip_x=true。"
+  ],
+  "animations": {
+    "idle_front": {
+      "name_zh": "正面待机",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "front_01"
+      ]
+    },
+    "walk_front": {
+      "name_zh": "正面行走",
+      "direction": "front",
+      "fps": 8,
+      "loop": true,
+      "frames": [
+        "front_01",
+        "front_02",
+        "front_03",
+        "front_04",
+        "front_05",
+        "front_06",
+        "front_07",
+        "front_08"
+      ]
+    },
+    "idle_back": {
+      "name_zh": "背面待机",
+      "direction": "back",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "back_01"
+      ]
+    },
+    "walk_back": {
+      "name_zh": "背面行走",
+      "direction": "back",
+      "fps": 8,
+      "loop": true,
+      "frames": [
+        "back_01",
+        "back_02",
+        "back_03",
+        "back_04",
+        "back_05",
+        "back_06",
+        "back_07",
+        "back_08"
+      ]
+    },
+    "idle_left": {
+      "name_zh": "左侧待机",
+      "direction": "left",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "side_left_01"
+      ]
+    },
+    "walk_left": {
+      "name_zh": "左侧行走",
+      "direction": "left",
+      "fps": 8,
+      "loop": true,
+      "frames": [
+        "side_left_01",
+        "side_left_02",
+        "side_left_03",
+        "side_left_04",
+        "side_left_05",
+        "side_left_06",
+        "side_left_07",
+        "side_left_08"
+      ]
+    },
+    "idle_right": {
+      "name_zh": "右侧待机",
+      "direction": "right",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "side_left_01"
+      ],
+      "transform": {
+        "flip_x": true
+      },
+      "note": "水平翻转 left 帧。"
+    },
+    "walk_right": {
+      "name_zh": "右侧行走",
+      "direction": "right",
+      "fps": 8,
+      "loop": true,
+      "frames": [
+        "side_left_01",
+        "side_left_02",
+        "side_left_03",
+        "side_left_04",
+        "side_left_05",
+        "side_left_06",
+        "side_left_07",
+        "side_left_08"
+      ],
+      "transform": {
+        "flip_x": true
+      },
+      "note": "水平翻转 left 帧。"
+    },
+    "hoe_action": {
+      "name_zh": "锄地/工具动作",
+      "direction": "mixed",
+      "fps": 10,
+      "loop": false,
+      "frames": [
+        "hoe_01",
+        "hoe_02",
+        "hoe_03",
+        "hoe_04",
+        "hoe_05",
+        "hoe_06",
+        "hoe_07",
+        "hoe_08",
+        "hoe_09"
+      ]
+    },
+    "watering_can": {
+      "name_zh": "浇水动作",
+      "direction": "mixed",
+      "fps": 10,
+      "loop": false,
+      "frames": [
+        "watering_01",
+        "watering_02",
+        "watering_03",
+        "watering_04",
+        "watering_05",
+        "watering_06",
+        "watering_07"
+      ]
+    },
+    "hold_pumpkin": {
+      "name_zh": "手持南瓜",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "hold_pumpkin_01"
+      ]
+    },
+    "hold_crop": {
+      "name_zh": "手持作物",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "hold_crop_01"
+      ]
+    },
+    "hold_flower": {
+      "name_zh": "手持花朵",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "hold_flower_01"
+      ]
+    },
+    "idle_stand": {
+      "name_zh": "坐姿/手持蓝色物品",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "idle_stand_01"
+      ]
+    },
+    "hold_chicken": {
+      "name_zh": "手持小鸡",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "hold_chicken_01"
+      ]
+    },
+    "emote_cheer": {
+      "name_zh": "欢呼",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "emote_cheer_01"
+      ]
+    },
+    "emote_heart": {
+      "name_zh": "爱心/害羞",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "emote_heart_01"
+      ]
+    },
+    "emote_surprised": {
+      "name_zh": "惊讶",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "emote_surprised_01"
+      ]
+    },
+    "emote_sleepy": {
+      "name_zh": "困倦/悲伤",
+      "direction": "front",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        "emote_sleepy_01"
+      ]
+    }
+  },
+  "frames": {
+    "front_01": {
+      "index": 1,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 1,
+      "direction": "front",
+      "bbox": {
+        "x": 110,
+        "y": 35,
+        "w": 89,
+        "h": 137
+      }
+    },
+    "front_02": {
+      "index": 2,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 2,
+      "direction": "front",
+      "bbox": {
+        "x": 290,
+        "y": 34,
+        "w": 89,
+        "h": 138
+      }
+    },
+    "front_03": {
+      "index": 3,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 3,
+      "direction": "front",
+      "bbox": {
+        "x": 462,
+        "y": 34,
+        "w": 90,
+        "h": 138
+      }
+    },
+    "front_04": {
+      "index": 4,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 4,
+      "direction": "front",
+      "bbox": {
+        "x": 635,
+        "y": 31,
+        "w": 90,
+        "h": 141
+      }
+    },
+    "front_05": {
+      "index": 5,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 5,
+      "direction": "front",
+      "bbox": {
+        "x": 806,
+        "y": 32,
+        "w": 90,
+        "h": 142
+      }
+    },
+    "front_06": {
+      "index": 6,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 6,
+      "direction": "front",
+      "bbox": {
+        "x": 969,
+        "y": 31,
+        "w": 92,
+        "h": 143
+      }
+    },
+    "front_07": {
+      "index": 7,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 7,
+      "direction": "front",
+      "bbox": {
+        "x": 1135,
+        "y": 31,
+        "w": 91,
+        "h": 143
+      }
+    },
+    "front_08": {
+      "index": 8,
+      "action_zh": "正面待机/行走",
+      "row": 1,
+      "col": 8,
+      "direction": "front",
+      "bbox": {
+        "x": 1286,
+        "y": 30,
+        "w": 92,
+        "h": 142
+      }
+    },
+    "back_01": {
+      "index": 9,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 1,
+      "direction": "back",
+      "bbox": {
+        "x": 103,
+        "y": 197,
+        "w": 88,
+        "h": 140
+      }
+    },
+    "back_02": {
+      "index": 10,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 2,
+      "direction": "back",
+      "bbox": {
+        "x": 284,
+        "y": 196,
+        "w": 88,
+        "h": 141
+      }
+    },
+    "back_03": {
+      "index": 11,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 3,
+      "direction": "back",
+      "bbox": {
+        "x": 457,
+        "y": 198,
+        "w": 90,
+        "h": 139
+      }
+    },
+    "back_04": {
+      "index": 12,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 4,
+      "direction": "back",
+      "bbox": {
+        "x": 627,
+        "y": 196,
+        "w": 90,
+        "h": 141
+      }
+    },
+    "back_05": {
+      "index": 13,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 5,
+      "direction": "back",
+      "bbox": {
+        "x": 800,
+        "y": 197,
+        "w": 90,
+        "h": 137
+      }
+    },
+    "back_06": {
+      "index": 14,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 6,
+      "direction": "back",
+      "bbox": {
+        "x": 967,
+        "y": 197,
+        "w": 89,
+        "h": 137
+      }
+    },
+    "back_07": {
+      "index": 15,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 7,
+      "direction": "back",
+      "bbox": {
+        "x": 1132,
+        "y": 197,
+        "w": 89,
+        "h": 140
+      }
+    },
+    "back_08": {
+      "index": 16,
+      "action_zh": "背面待机/行走",
+      "row": 2,
+      "col": 8,
+      "direction": "back",
+      "bbox": {
+        "x": 1291,
+        "y": 196,
+        "w": 89,
+        "h": 141
+      }
+    },
+    "side_left_01": {
+      "index": 17,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 1,
+      "direction": "left",
+      "bbox": {
+        "x": 106,
+        "y": 355,
+        "w": 85,
+        "h": 136
+      }
+    },
+    "side_left_02": {
+      "index": 18,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 2,
+      "direction": "left",
+      "bbox": {
+        "x": 286,
+        "y": 354,
+        "w": 86,
+        "h": 137
+      }
+    },
+    "side_left_03": {
+      "index": 19,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 3,
+      "direction": "left",
+      "bbox": {
+        "x": 463,
+        "y": 354,
+        "w": 87,
+        "h": 137
+      }
+    },
+    "side_left_04": {
+      "index": 20,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 4,
+      "direction": "left",
+      "bbox": {
+        "x": 635,
+        "y": 354,
+        "w": 85,
+        "h": 136
+      }
+    },
+    "side_left_05": {
+      "index": 21,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 5,
+      "direction": "left",
+      "bbox": {
+        "x": 809,
+        "y": 353,
+        "w": 86,
+        "h": 138
+      }
+    },
+    "side_left_06": {
+      "index": 22,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 6,
+      "direction": "left",
+      "bbox": {
+        "x": 975,
+        "y": 353,
+        "w": 84,
+        "h": 138
+      }
+    },
+    "side_left_07": {
+      "index": 23,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 7,
+      "direction": "left",
+      "bbox": {
+        "x": 1138,
+        "y": 353,
+        "w": 85,
+        "h": 138
+      }
+    },
+    "side_left_08": {
+      "index": 24,
+      "action_zh": "左侧待机/行走",
+      "row": 3,
+      "col": 8,
+      "direction": "left",
+      "bbox": {
+        "x": 1298,
+        "y": 354,
+        "w": 85,
+        "h": 137
+      }
+    },
+    "hoe_01": {
+      "index": 25,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 1,
+      "direction": "mixed",
+      "bbox": {
+        "x": 98,
+        "y": 516,
+        "w": 99,
+        "h": 149
+      }
+    },
+    "hoe_02": {
+      "index": 26,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 2,
+      "direction": "mixed",
+      "bbox": {
+        "x": 251,
+        "y": 514,
+        "w": 134,
+        "h": 152
+      }
+    },
+    "hoe_03": {
+      "index": 27,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 3,
+      "direction": "mixed",
+      "bbox": {
+        "x": 434,
+        "y": 514,
+        "w": 110,
+        "h": 156
+      }
+    },
+    "hoe_04": {
+      "index": 28,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 4,
+      "direction": "mixed",
+      "bbox": {
+        "x": 606,
+        "y": 514,
+        "w": 112,
+        "h": 156
+      }
+    },
+    "hoe_05": {
+      "index": 29,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 5,
+      "direction": "mixed",
+      "bbox": {
+        "x": 766,
+        "y": 524,
+        "w": 140,
+        "h": 146
+      }
+    },
+    "hoe_06": {
+      "index": 30,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 6,
+      "direction": "mixed",
+      "bbox": {
+        "x": 938,
+        "y": 515,
+        "w": 139,
+        "h": 155
+      }
+    },
+    "hoe_07": {
+      "index": 31,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 7,
+      "direction": "mixed",
+      "bbox": {
+        "x": 1113,
+        "y": 517,
+        "w": 124,
+        "h": 153
+      }
+    },
+    "hoe_08": {
+      "index": 32,
+      "action_zh": "锄地/工具动作",
+      "row": 4,
+      "col": 8,
+      "direction": "mixed",
+      "bbox": {
+        "x": 1268,
+        "y": 517,
+        "w": 130,
+        "h": 153
+      }
+    },
+    "hoe_09": {
+      "index": 33,
+      "action_zh": "锄地/工具动作",
+      "row": 5,
+      "col": 1,
+      "direction": "mixed",
+      "bbox": {
+        "x": 91,
+        "y": 688,
+        "w": 105,
+        "h": 175
+      }
+    },
+    "watering_01": {
+      "index": 34,
+      "action_zh": "浇水动作",
+      "row": 5,
+      "col": 2,
+      "direction": "mixed",
+      "bbox": {
+        "x": 226,
+        "y": 687,
+        "w": 159,
+        "h": 177
+      }
+    },
+    "watering_02": {
+      "index": 35,
+      "action_zh": "浇水动作",
+      "row": 5,
+      "col": 3,
+      "direction": "mixed",
+      "bbox": {
+        "x": 405,
+        "y": 688,
+        "w": 146,
+        "h": 172
+      }
+    },
+    "watering_03": {
+      "index": 36,
+      "action_zh": "浇水动作",
+      "row": 5,
+      "col": 4,
+      "direction": "mixed",
+      "bbox": {
+        "x": 582,
+        "y": 686,
+        "w": 147,
+        "h": 178
+      }
+    },
+    "watering_04": {
+      "index": 37,
+      "action_zh": "浇水动作",
+      "row": 5,
+      "col": 5,
+      "direction": "mixed",
+      "bbox": {
+        "x": 773,
+        "y": 689,
+        "w": 115,
+        "h": 174
+      }
+    },
+    "watering_05": {
+      "index": 38,
+      "action_zh": "浇水动作",
+      "row": 5,
+      "col": 6,
+      "direction": "mixed",
+      "bbox": {
+        "x": 930,
+        "y": 689,
+        "w": 139,
+        "h": 175
+      }
+    },
+    "watering_06": {
+      "index": 39,
+      "action_zh": "浇水动作",
+      "row": 5,
+      "col": 7,
+      "direction": "mixed",
+      "bbox": {
+        "x": 1090,
+        "y": 691,
+        "w": 137,
+        "h": 172
+      }
+    },
+    "watering_07": {
+      "index": 40,
+      "action_zh": "浇水动作",
+      "row": 5,
+      "col": 8,
+      "direction": "mixed",
+      "bbox": {
+        "x": 1248,
+        "y": 690,
+        "w": 138,
+        "h": 174
+      }
+    },
+    "hold_pumpkin_01": {
+      "index": 41,
+      "action_zh": "手持南瓜",
+      "row": 6,
+      "col": 1,
+      "direction": "front",
+      "bbox": {
+        "x": 82,
+        "y": 887,
+        "w": 99,
+        "h": 159
+      }
+    },
+    "hold_crop_01": {
+      "index": 42,
+      "action_zh": "手持作物",
+      "row": 6,
+      "col": 2,
+      "direction": "front",
+      "bbox": {
+        "x": 260,
+        "y": 887,
+        "w": 96,
+        "h": 159
+      }
+    },
+    "hold_flower_01": {
+      "index": 43,
+      "action_zh": "手持花朵",
+      "row": 6,
+      "col": 3,
+      "direction": "front",
+      "bbox": {
+        "x": 427,
+        "y": 887,
+        "w": 97,
+        "h": 159
+      }
+    },
+    "idle_stand_01": {
+      "index": 44,
+      "action_zh": "坐姿/手持蓝色物品",
+      "row": 6,
+      "col": 4,
+      "direction": "front",
+      "bbox": {
+        "x": 591,
+        "y": 887,
+        "w": 97,
+        "h": 159
+      }
+    },
+    "hold_chicken_01": {
+      "index": 45,
+      "action_zh": "手持小鸡",
+      "row": 6,
+      "col": 5,
+      "direction": "front",
+      "bbox": {
+        "x": 738,
+        "y": 887,
+        "w": 97,
+        "h": 160
+      }
+    },
+    "emote_cheer_01": {
+      "index": 46,
+      "action_zh": "欢呼",
+      "row": 6,
+      "col": 6,
+      "direction": "front",
+      "bbox": {
+        "x": 847,
+        "y": 884,
+        "w": 141,
+        "h": 160
+      }
+    },
+    "emote_heart_01": {
+      "index": 47,
+      "action_zh": "爱心/害羞",
+      "row": 6,
+      "col": 7,
+      "direction": "front",
+      "bbox": {
+        "x": 1009,
+        "y": 880,
+        "w": 104,
+        "h": 164
+      }
+    },
+    "emote_surprised_01": {
+      "index": 48,
+      "action_zh": "惊讶",
+      "row": 6,
+      "col": 8,
+      "direction": "front",
+      "bbox": {
+        "x": 1147,
+        "y": 882,
+        "w": 110,
+        "h": 164
+      }
+    },
+    "emote_sleepy_01": {
+      "index": 49,
+      "action_zh": "困倦/悲伤",
+      "row": 6,
+      "col": 9,
+      "direction": "front",
+      "bbox": {
+        "x": 1296,
+        "y": 877,
+        "w": 106,
+        "h": 171
+      }
+    }
+  }
+}

@@ -34,7 +34,7 @@ func NewOpenAI(cfg OpenAIConfig) (Provider, error) {
 		cfg.BaseURL = "https://api.openai.com/v1"
 	}
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 30 * time.Second
+		cfg.Timeout = 90 * time.Second
 	}
 	return &openaiProvider{
 		cfg:    cfg,
@@ -150,12 +150,24 @@ func (p *openaiProvider) buildRequest(req ChatRequest) oaiRequest {
 
 	msgs := make([]oaiMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
-		msgs = append(msgs, oaiMessage{
+		om := oaiMessage{
 			Role:       string(m.Role),
 			Content:    m.Content,
 			Name:       m.Name,
 			ToolCallID: m.ToolCallID,
-		})
+		}
+		for _, tc := range m.ToolCalls {
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			om.ToolCalls = append(om.ToolCalls, oaiToolCall{
+				ID:   tc.ID,
+				Type: "function",
+				Function: oaiToolCallFunc{
+					Name:      tc.Name,
+					Arguments: string(argsJSON),
+				},
+			})
+		}
+		msgs = append(msgs, om)
 	}
 
 	var tools []oaiTool

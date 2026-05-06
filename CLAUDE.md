@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## 回复风格
 
 - 中文回复；技术术语、API 名、文件路径保留英文 + 反引号
@@ -38,6 +40,14 @@ C:\Users\synchen\go\bin\task.exe ci-fast     # lint + test
 C:\Users\synchen\go\bin\task.exe mcp:build   # 构建 mcp
 C:\Users\synchen\go\bin\task.exe agent:build # 构建 agent
 C:\Users\synchen\go\bin\task.exe mod:install # 编译+部署 mod 到游戏目录
+C:\Users\synchen\go\bin\task.exe tidy        # go mod tidy 全模块
+C:\Users\synchen\go\bin\task.exe --list      # 列出所有可用 task
+```
+
+**运行单个测试：**
+```cmd
+cd D:\SmartNPC\smartnpc-mcp && go test -run TestPing ./internal/tools/...
+cd D:\SmartNPC\smartnpc-agent && go test -run TestAgent_RunLoop ./internal/agent/...
 ```
 
 **启动 agent 对话模式：**
@@ -45,6 +55,13 @@ C:\Users\synchen\go\bin\task.exe mod:install # 编译+部署 mod 到游戏目录
 cd D:\SmartNPC\smartnpc-agent
 bin\smartnpc-agent.exe --mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
   --mcp-args "--ws-url ws://127.0.0.1:18745/ws" --log-level debug run --api-key smartnpc-test-key
+```
+注意：agent 会 spawn mcp 子进程连 ws，不要同时跑独立的 `task mcp:run`，mod 只接受一个 ws 客户端。
+
+**启动 LLM 后端（WSL 终端）：**
+```bash
+hermes gateway run --accept-hooks
+# 验证: curl http://localhost:8642/health
 ```
 
 **启动游戏：** 必须通过 `D:\Stardew Valley\StardewModdingAPI.exe`（不能直接用 `Stardew Valley.exe`）
@@ -62,6 +79,33 @@ bin\smartnpc-agent.exe --mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
 - `smartnpc-mcp` 不持久化状态，只做协议桥
 - `smartnpc-agent` 通过 stdio spawn mcp；不引入 HTTP 直连
 - LLM Provider 固定 OpenAI 兼容优先（当前用 Hermes gateway `192.168.59.118:8642`）
+
+**关键目录：**
+- `smartnpc-mcp/internal/tools/` — MCP 工具实现，按 domain 一文件
+- `smartnpc-mcp/internal/bridge/` — ws 客户端 + mock
+- `smartnpc-agent/internal/agent/` — NPC agent loop 核心
+- `smartnpc-agent/internal/llm/` — LLM provider 抽象 + OpenAI 实现
+- `smartnpc-agent/personas/` — NPC 人格模板（如 `xiami_soul.md`）
+- `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
+- `smapi-mod/assets/xiami/` — NPC sprite 资产 + 构建脚本
+
+## Sprite 资产管线
+
+原始素材经 `build_spritesheet.py` 加工为 SDV 兼容的 spritesheet：
+
+```
+xiami.png (1448×1086 原始大图，棋盘格背景)
+    ↓  xiami.json (tight bbox 坐标)
+    ↓  build_spritesheet.py (裁切 + 缩放 + 去背 + 拼合)
+XiaMi_spritesheet.png (64×416, 4列×13行, 每帧 16×32, RGBA 透明)
+```
+
+**关键约束：**
+- `AnimatedSprite` 构造参数 `(textureName, startFrame, spriteWidth, spriteHeight)` 必须与 spritesheet 的帧尺寸一致（当前 16×32）
+- C# 加载的是 `assets/xiami/XiaMi_spritesheet.png`，不是原始 `xiami.png`
+- 修改原始素材后必须重跑 `python smapi-mod/assets/xiami/build_spritesheet.py` 再部署
+- `xiami.json` 中 `frames.*.bbox` 是可见像素的紧包围盒，不是固定网格
+- `crop_test.py` 可验证 bbox 裁切是否正确（输出到 `test_crops/`）
 
 **WebSocket 协议（`docs/protocol.md`）：**
 - `ws://127.0.0.1:18745/ws`，JSON 文本帧
@@ -105,6 +149,11 @@ bin\smartnpc-agent.exe --mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
 - 用户本人 git 身份 + trailer：`Co-Authored-By: Claude <noreply@anthropic.com>`
 - 禁止 `--force` 到主分支、`--no-verify`、`[skip ci]`
 - 不主动 commit（除非用户明确要求）
+
+**发版：** push semver tag → `release.yml` 自动构建 windows/linux Go 二进制 + GitHub Release
+```cmd
+git tag v0.x.0 && git push origin v0.x.0
+```
 
 ## CI 反馈循环
 

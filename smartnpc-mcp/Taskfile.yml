@@ -48,7 +48,7 @@ tasks:
     cmds:
       # Launch in a detached visible cmd window so the dev can see logs and
       # Ctrl+C to stop. Stays alive after this task returns.
-      - cmd: cmd /c start "smartnpc-mcp :{{.PORT}}" cmd /k "cd /d {{.USER_WORKING_DIR}} && {{.BIN_DIR}}\{{.BIN_NAME}} --http :{{.PORT}} --log-level=debug --ws-url=\"{{.WS_URL}}\" {{.ECHO_FLAG}}"
+      - cmd: cmd /c start "smartnpc-mcp :{{.PORT}}" cmd /k "cd /d %CD% && {{.BIN_DIR}}\{{.BIN_NAME}} --http :{{.PORT}} --log-level=debug --ws-url=\"{{.WS_URL}}\" {{.ECHO_FLAG}}"
         platforms: [windows]
       # Foreground run on Linux/macOS. Ctrl+C stops it; no detached window.
       - cmd: ./{{.BIN_DIR}}/{{.BIN_NAME}} --http :{{.PORT}} --log-level=debug --ws-url="{{.WS_URL}}" {{.ECHO_FLAG}}
