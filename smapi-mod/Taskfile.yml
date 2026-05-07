@@ -27,9 +27,13 @@ vars:
 
 tasks:
   build:
-    desc: Build the SMAPI mod (dotnet build)
+    desc: Build the SMAPI mod (compile only; no auto-deploy to game Mods/)
     cmds:
-      - cmd: '"{{.DOTNET}}" build -c {{.CONFIG}}'
+      # EnableModDeploy=false → dotnet compiles the DLL but does not copy
+      # into <SDV>/Mods. Deployment is driven by `task mod:install`, which
+      # also kills a running game process to release the DLL lock. This lets
+      # `task ci` stay green while the game is running.
+      - cmd: '"{{.DOTNET}}" build -c {{.CONFIG}} /p:EnableModDeploy=false'
     sources:
       - '*.cs'
       - '**/*.cs'
@@ -43,12 +47,19 @@ tasks:
       - sh: 'test -n "{{.SMARTNPC_GAME_PATH}}"'
         msg: 'SMARTNPC_GAME_PATH is unset. Set it in .env or rely on ModBuildConfig EnableModDeploy auto-copy.'
     cmds:
-      # Windows branch
+      # Windows: kill game process if running, then deploy
+      - cmd: powershell -NoProfile -Command "Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 500"
+        platforms: [windows]
       - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' | Out-Null; Copy-Item -Force -Path '{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.dll','{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.deps.json','{{.BUILD_OUT_WIN}}\manifest.json' -Destination '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}\'; Write-Host '[mod] installed to {{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' -ForegroundColor Green"
         platforms: [windows]
-      # Linux / macOS branch
+      # Linux / macOS: kill game process if running, then deploy
       - cmd: |
           set -e
+          if pgrep -f "StardewModdingAPI|Stardew Valley" >/dev/null 2>&1; then
+            echo "[mod] killing game process..."
+            pkill -f "StardewModdingAPI|Stardew Valley" || true
+            sleep 1
+          fi
           dest="{{.SMARTNPC_GAME_PATH}}/Mods/{{.MOD_NAME}}"
           mkdir -p "$dest"
           cp -f "{{.BUILD_OUT_NIX}}/{{.MOD_NAME}}.dll" "$dest/"

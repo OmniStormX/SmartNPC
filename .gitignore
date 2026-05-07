@@ -33,5 +33,7 @@ smapi-mod/assets/xiami/test_crops/
 
 # Taskfile runtime cache
 .task/
+# Go test build tmpdir (GOTMPDIR) — used by mcp:test to dodge WDAC on %TEMP%
+.gotmp/
 # Claude Code (keep commands, ignore local settings)
 .claude/settings.local.json

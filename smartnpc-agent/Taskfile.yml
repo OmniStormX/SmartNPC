@@ -21,12 +21,24 @@ tasks:
 
   test:
     desc: Run smartnpc-agent tests
+    env:
+      GOTMPDIR: '{{.ROOT_DIR}}/.gotmp'
     cmds:
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force .gotmp | Out-Null"
+        platforms: [windows]
+      - cmd: mkdir -p .gotmp
+        platforms: [linux, darwin]
       - go test ./...
 
   test-race:
     desc: Run tests with -race
+    env:
+      GOTMPDIR: '{{.ROOT_DIR}}/.gotmp'
     cmds:
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force .gotmp | Out-Null"
+        platforms: [windows]
+      - cmd: mkdir -p .gotmp
+        platforms: [linux, darwin]
       - go test -race ./...
 
   lint:
