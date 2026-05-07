@@ -108,6 +108,63 @@ func TestChat_ToolCallResponse(t *testing.T) {
 	}
 }
 
+func TestChat_ForwardsTools(t *testing.T) {
+	var captured oaiRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		json.NewEncoder(w).Encode(oaiResponse{
+			Choices: []oaiChoice{{
+				Message:      oaiMessage{Role: "assistant", Content: "ok"},
+				FinishReason: "stop",
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	p, _ := NewOpenAI(OpenAIConfig{BaseURL: srv.URL, Model: "test"})
+	_, err := p.Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Tools: []ToolSpec{{
+			Name:        "chat_say",
+			Description: "send chat",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"text": map[string]any{"type": "string"},
+				},
+				"required": []any{"text"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(captured.Tools) != 1 {
+		t.Fatalf("expected 1 tool on the wire, got %d", len(captured.Tools))
+	}
+	tool := captured.Tools[0]
+	if tool.Type != "function" {
+		t.Errorf("tool.Type = %q, want function", tool.Type)
+	}
+	if tool.Function.Name != "chat_say" {
+		t.Errorf("tool name = %q, want chat_say", tool.Function.Name)
+	}
+	if tool.Function.Description != "send chat" {
+		t.Errorf("tool description = %q", tool.Function.Description)
+	}
+	if tool.Function.Parameters["type"] != "object" {
+		t.Errorf("parameters.type = %v, want object", tool.Function.Parameters["type"])
+	}
+	props, ok := tool.Function.Parameters["properties"].(map[string]any)
+	if !ok || props["text"] == nil {
+		t.Errorf("properties.text missing; parameters=%v", tool.Function.Parameters)
+	}
+}
+
 func TestChat_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)

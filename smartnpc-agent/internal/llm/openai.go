@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -87,12 +88,13 @@ func (p *openaiProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 // --- OpenAI wire format types ---
 
 type oaiRequest struct {
-	Model       string       `json:"model"`
-	Messages    []oaiMessage `json:"messages"`
-	Tools       []oaiTool    `json:"tools,omitempty"`
-	Temperature *float64     `json:"temperature,omitempty"`
-	MaxTokens   *int         `json:"max_tokens,omitempty"`
-	Stream      bool         `json:"stream"`
+	Model               string       `json:"model"`
+	Messages            []oaiMessage `json:"messages"`
+	Tools               []oaiTool    `json:"tools,omitempty"`
+	Temperature         *float64     `json:"temperature,omitempty"`
+	MaxTokens           *int         `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int         `json:"max_completion_tokens,omitempty"`
+	Stream              bool         `json:"stream"`
 }
 
 type oaiMessage struct {
@@ -194,9 +196,28 @@ func (p *openaiProvider) buildRequest(req ChatRequest) oaiRequest {
 	}
 	if req.MaxTokens > 0 {
 		mt := req.MaxTokens
-		r.MaxTokens = &mt
+		// GPT-5.5 and newer models require max_completion_tokens instead of
+		// max_tokens. Use max_completion_tokens for models that start with
+		// "gpt-5", "o1", "o3", or when the base URL is not the default OpenAI
+		// endpoint (assumes newer API).
+		if needsMaxCompletionTokens(model) {
+			r.MaxCompletionTokens = &mt
+		} else {
+			r.MaxTokens = &mt
+		}
 	}
 	return r
+}
+
+// needsMaxCompletionTokens returns true for models that reject max_tokens and
+// require max_completion_tokens instead (GPT-5.x, o1, o3, etc.).
+func needsMaxCompletionTokens(model string) bool {
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "gpt-5") ||
+		strings.HasPrefix(m, "o1") ||
+		strings.HasPrefix(m, "o3") ||
+		strings.HasPrefix(m, "gpt-4.5") ||
+		strings.Contains(m, "preview")
 }
 
 func (p *openaiProvider) parseResponse(body []byte) (*ChatResponse, error) {

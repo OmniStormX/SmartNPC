@@ -2,10 +2,12 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -18,6 +20,9 @@ type mockProvider struct {
 	calls   []llm.ChatRequest
 	replies []llm.ChatResponse
 	idx     int
+	// err, when non-nil, is returned from every Chat call so tests can
+	// exercise error-handling paths (e.g. decision-stage failure fallbacks).
+	err error
 }
 
 func (m *mockProvider) Name() string { return "mock" }
@@ -26,6 +31,9 @@ func (m *mockProvider) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatRe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, req)
+	if m.err != nil {
+		return nil, m.err
+	}
 	if m.idx < len(m.replies) {
 		r := m.replies[m.idx]
 		m.idx++
@@ -219,4 +227,398 @@ func containsHelper(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestConvertMCPTools_TableDriven(t *testing.T) {
+	cases := []struct {
+		name  string
+		tools []*mcp.Tool
+		want  []llm.ToolSpec
+	}{
+		{
+			name:  "nil input returns empty slice",
+			tools: nil,
+			want:  []llm.ToolSpec{},
+		},
+		{
+			name:  "skips tool with empty name",
+			tools: []*mcp.Tool{{Name: "", Description: "no-op"}},
+			want:  []llm.ToolSpec{},
+		},
+		{
+			name: "map schema passed through",
+			tools: []*mcp.Tool{{
+				Name:        "chat_say",
+				Description: "send chat",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{"type": "string"},
+					},
+					"required": []any{"text"},
+				},
+			}},
+			want: []llm.ToolSpec{{
+				Name:        "chat_say",
+				Description: "send chat",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{"type": "string"},
+					},
+					"required": []any{"text"},
+				},
+			}},
+		},
+		{
+			name: "json.RawMessage schema is normalized to map",
+			tools: []*mcp.Tool{{
+				Name:        "game_get_time",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+			}},
+			want: []llm.ToolSpec{{
+				Name: "game_get_time",
+				InputSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			}},
+		},
+		{
+			name: "nil schema falls back to permissive object",
+			tools: []*mcp.Tool{{
+				Name:        "ping",
+				InputSchema: nil,
+			}},
+			want: []llm.ToolSpec{{
+				Name: "ping",
+				InputSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := convertMCPTools(tc.tools)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len mismatch: got %d, want %d (%+v)", len(got), len(tc.want), got)
+			}
+			for i := range got {
+				if got[i].Name != tc.want[i].Name {
+					t.Errorf("name[%d]: got %q, want %q", i, got[i].Name, tc.want[i].Name)
+				}
+				if got[i].Description != tc.want[i].Description {
+					t.Errorf("desc[%d]: got %q, want %q", i, got[i].Description, tc.want[i].Description)
+				}
+				gotJSON, _ := json.Marshal(got[i].InputSchema)
+				wantJSON, _ := json.Marshal(tc.want[i].InputSchema)
+				if string(gotJSON) != string(wantJSON) {
+					t.Errorf("schema[%d]: got %s, want %s", i, gotJSON, wantJSON)
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeSchema_TableDriven(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want string // JSON representation for easy comparison
+	}{
+		{"nil", nil, `{"properties":{},"type":"object"}`},
+		{
+			"map passthrough",
+			map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "number"}}},
+			`{"properties":{"x":{"type":"number"}},"type":"object"}`,
+		},
+		{
+			"raw message",
+			json.RawMessage(`{"type":"object","required":["a"]}`),
+			`{"properties":{},"required":["a"],"type":"object"}`,
+		},
+		{
+			"struct with json tags",
+			struct {
+				Type string `json:"type"`
+			}{Type: "object"},
+			`{"properties":{},"type":"object"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeSchema(tc.in)
+			b, _ := json.Marshal(got)
+			if string(b) != tc.want {
+				t.Errorf("got %s, want %s", b, tc.want)
+			}
+		})
+	}
+}
+
+// newEventRequest builds an MCP logging notification carrying a
+// `stardew/event`-shaped payload, matching what tools.MakeEventForwarder
+// actually produces on the wire.
+func newEventRequest(name string, data map[string]any) *mcp.LoggingMessageRequest {
+	return &mcp.LoggingMessageRequest{
+		Params: &mcp.LoggingMessageParams{
+			Data: map[string]any{
+				"kind": "stardew/event",
+				"name": name,
+				"data": data,
+			},
+		},
+	}
+}
+
+func TestExtractChatMessage_TableDriven(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     *mcp.LoggingMessageRequest
+		wantNpc string
+		wantTxt string
+		wantOk  bool
+	}{
+		{
+			name:    "valid",
+			req:     newEventRequest("chat_message", map[string]any{"npc": "Abigail", "text": "hi"}),
+			wantNpc: "Abigail",
+			wantTxt: "hi",
+			wantOk:  true,
+		},
+		{
+			name:   "wrong event name",
+			req:    newEventRequest("chat_received", map[string]any{"npc": "Abigail", "text": "hi"}),
+			wantOk: false,
+		},
+		{
+			name:   "missing text",
+			req:    newEventRequest("chat_message", map[string]any{"npc": "Abigail"}),
+			wantOk: false,
+		},
+		{
+			name:   "missing npc",
+			req:    newEventRequest("chat_message", map[string]any{"text": "hi"}),
+			wantOk: false,
+		},
+		{
+			name:   "nil request",
+			req:    nil,
+			wantOk: false,
+		},
+		{
+			name: "json.RawMessage data payload",
+			req: &mcp.LoggingMessageRequest{
+				Params: &mcp.LoggingMessageParams{
+					Data: map[string]any{
+						"kind": "stardew/event",
+						"name": "chat_message",
+						"data": json.RawMessage(`{"npc":"Xiami","text":"hello"}`),
+					},
+				},
+			},
+			wantNpc: "Xiami",
+			wantTxt: "hello",
+			wantOk:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			npc, text, ok := extractChatMessage(tc.req)
+			if ok != tc.wantOk || npc != tc.wantNpc || text != tc.wantTxt {
+				t.Errorf("got (%q,%q,%v), want (%q,%q,%v)",
+					npc, text, ok, tc.wantNpc, tc.wantTxt, tc.wantOk)
+			}
+		})
+	}
+}
+
+func TestExtractNpcInteract_TableDriven(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     *mcp.LoggingMessageRequest
+		wantNpc string
+		wantOk  bool
+	}{
+		{
+			name:    "valid",
+			req:     newEventRequest("npc_interact", map[string]any{"npc": "Xiami"}),
+			wantNpc: "Xiami",
+			wantOk:  true,
+		},
+		{
+			name:   "wrong event",
+			req:    newEventRequest("chat_message", map[string]any{"npc": "Xiami"}),
+			wantOk: false,
+		},
+		{
+			name:   "missing npc",
+			req:    newEventRequest("npc_interact", map[string]any{}),
+			wantOk: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			npc, ok := extractNpcInteract(tc.req)
+			if ok != tc.wantOk || npc != tc.wantNpc {
+				t.Errorf("got (%q,%v), want (%q,%v)", npc, ok, tc.wantNpc, tc.wantOk)
+			}
+		})
+	}
+}
+
+// waitFor blocks until ch fires or the deadline expires. Keeps event-driven
+// tests deterministic without sleep loops.
+func waitFor(t *testing.T, ch <-chan struct{}, d time.Duration, why string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(d):
+		t.Fatalf("timeout waiting for %s", why)
+	}
+}
+
+// TestHandleNotification_ChatMessage verifies the full event path:
+// MCP notification -> HandleNotification -> respond() -> chat_say tool call.
+// Uses an in-memory MCP session + mock LLM so no sleep / real process is needed.
+func TestHandleNotification_ChatMessage(t *testing.T) {
+	agent, calls := newInMemoryAgent(t, "chat_say")
+	mp := &mockProvider{replies: []llm.ChatResponse{
+		{Content: "hi back", FinishReason: "stop"},
+	}}
+	agent.cfg.Provider = mp
+
+	done := make(chan struct{}, 1)
+	agent.mu.Lock()
+	agent.replyDone = done
+	agent.mu.Unlock()
+
+	handler := agent.HandleNotification()
+	handler(context.Background(), newEventRequest("chat_message", map[string]any{
+		"npc": "NPC", "text": "hello there",
+	}))
+
+	waitFor(t, done, 2*time.Second, "chat_message dispatch")
+
+	if len(mp.calls) != 1 {
+		t.Fatalf("expected 1 LLM call, got %d", len(mp.calls))
+	}
+	lastUser := mp.calls[0].Messages[len(mp.calls[0].Messages)-1]
+	if lastUser.Role != llm.RoleUser || lastUser.Content != "hello there" {
+		t.Errorf("expected final user msg = 'hello there', got %+v", lastUser)
+	}
+	got := calls["chat_say"]
+	if got == nil {
+		t.Fatal("chat_say was not invoked on the MCP server")
+	}
+	if got["speaker"] != "NPC" || got["text"] != "hi back" {
+		t.Errorf("chat_say args = %v", got)
+	}
+}
+
+// TestHandleNotification_NpcInteract verifies clicking on an NPC triggers a
+// proactive greeting (respond() + chat_say), without the player typing.
+func TestHandleNotification_NpcInteract(t *testing.T) {
+	agent, calls := newInMemoryAgent(t, "chat_say")
+	mp := &mockProvider{replies: []llm.ChatResponse{
+		{Content: "hey farmer", FinishReason: "stop"},
+	}}
+	agent.cfg.Provider = mp
+
+	done := make(chan struct{}, 1)
+	agent.mu.Lock()
+	agent.replyDone = done
+	agent.mu.Unlock()
+
+	handler := agent.HandleNotification()
+	handler(context.Background(), newEventRequest("npc_interact", map[string]any{
+		"npc": "NPC",
+	}))
+
+	waitFor(t, done, 2*time.Second, "npc_interact dispatch")
+
+	if len(mp.calls) != 1 {
+		t.Fatalf("expected 1 LLM call, got %d", len(mp.calls))
+	}
+	if calls["chat_say"] == nil {
+		t.Fatal("chat_say was not invoked after npc_interact")
+	}
+	if calls["chat_say"]["speaker"] != "NPC" || calls["chat_say"]["text"] != "hey farmer" {
+		t.Errorf("chat_say args = %v", calls["chat_say"])
+	}
+}
+
+// TestHandleNotification_IgnoresOtherNpcs verifies the agent drops events
+// targeted at a different NPC (critical once multi-NPC support lands).
+func TestHandleNotification_IgnoresOtherNpcs(t *testing.T) {
+	agent, calls := newInMemoryAgent(t, "chat_say")
+	mp := &mockProvider{}
+	agent.cfg.Provider = mp
+
+	done := make(chan struct{}, 1)
+	agent.mu.Lock()
+	agent.replyDone = done
+	agent.mu.Unlock()
+
+	handler := agent.HandleNotification()
+	// Target a different NPC; handler should return before dispatching.
+	handler(context.Background(), newEventRequest("chat_message", map[string]any{
+		"npc": "OtherNPC", "text": "hey",
+	}))
+
+	// Give the goroutine a chance to run (if it was wrongly spawned).
+	select {
+	case <-done:
+		t.Fatal("respondAndSay was dispatched for a non-matching NPC")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if len(mp.calls) != 0 {
+		t.Errorf("expected 0 LLM calls, got %d", len(mp.calls))
+	}
+	if calls["chat_say"] != nil {
+		t.Errorf("chat_say should not fire for other NPC, got %v", calls["chat_say"])
+	}
+}
+
+// TestHandleNotification_MultiTurnHistory verifies conversation history
+// accumulates across separate chat_message events dispatched to the same agent.
+func TestHandleNotification_MultiTurnHistory(t *testing.T) {
+	agent, _ := newInMemoryAgent(t, "chat_say")
+	mp := &mockProvider{replies: []llm.ChatResponse{
+		{Content: "first", FinishReason: "stop"},
+		{Content: "second", FinishReason: "stop"},
+	}}
+	agent.cfg.Provider = mp
+
+	done := make(chan struct{}, 2)
+	agent.mu.Lock()
+	agent.replyDone = done
+	agent.mu.Unlock()
+
+	handler := agent.HandleNotification()
+	handler(context.Background(), newEventRequest("chat_message", map[string]any{
+		"npc": "NPC", "text": "turn1",
+	}))
+	waitFor(t, done, 2*time.Second, "first dispatch")
+	handler(context.Background(), newEventRequest("chat_message", map[string]any{
+		"npc": "NPC", "text": "turn2",
+	}))
+	waitFor(t, done, 2*time.Second, "second dispatch")
+
+	if len(mp.calls) != 2 {
+		t.Fatalf("expected 2 LLM calls, got %d", len(mp.calls))
+	}
+	// Second call must contain turn1's user+assistant history plus turn2.
+	second := mp.calls[1].Messages
+	// system + user(turn1) + assistant(first) + user(turn2)
+	if len(second) != 4 {
+		t.Fatalf("expected 4 messages in 2nd LLM call, got %d: %+v", len(second), second)
+	}
+	if second[1].Content != "turn1" || second[2].Content != "first" || second[3].Content != "turn2" {
+		t.Errorf("history order wrong: %+v", second)
+	}
 }
