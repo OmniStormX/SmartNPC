@@ -10,206 +10,135 @@
 | Milestone | 目标 | 状态 |
 |-----------|------|------|
 | **M1** | Go workspace + stdio MCP server 骨架 + agent 客户端能调 `ping` | ✅ 已完成 |
-| **M1.5** | 工程化外壳：Taskfile + GitHub Actions CI + Release workflow + Rules/Skill | ✅ 已完成 |
-| **M2** | SMAPI Mod 骨架 + WebSocket 桥接协议 + `bridge_ping` 端到端 | ⬜ 未开始 |
-| **M3** | NPC 行为工具集（query / dialogue / movement / friendship） | ⬜ 未开始 |
-| **M4** | OpenAI Provider 实现 + 单 NPC Agent loop（Abigail 可对话） | ⬜ 未开始 |
-| **M5** | SQLite+FTS5 记忆 + Cron 调度 + 多 NPC 编排 | ⬜ 未开始 |
+| **M1.5** | 工程化外壳：Taskfile + GitHub Actions CI + Release workflow | ✅ 已完成 |
+| **M2** | SMAPI Mod + WebSocket 桥接 + 游戏内聊天 | ✅ 已完成 |
+| **M3** | NPC 精灵系统 + 自定义 NPC 注册 | ✅ 已完成 |
+| **M4** | Agent 对话系统 + 聊天 UI + 游戏状态工具 | 🔧 进行中 |
+| **M5** | SQLite 记忆 + 调度 + 多 NPC 编排 | ⬜ 未开始 |
 
 ---
 
-## M1 — 基础骨架 ✅
+## M4 — Agent 对话系统 + 聊天 UI + 游戏状态工具 🔧
 
-**产出**：
+**目标**：玩家能通过自定义聊天窗口与 AI NPC 自由对话；Agent 能感知游戏状态（时间/天气/好感度）。
 
-- `go.work` 联动 `smartnpc-mcp` + `smartnpc-agent` 两个 module
-- `smartnpc-mcp` stdio server，注册 `ping` 工具，日志走 stderr
-- `smartnpc-agent` CLI（`tools` / `ping` 子命令），通过 `CommandTransport` spawn mcp 子进程
-- `internal/llm/` provider 抽象 + OpenAI stub（M4 实装）
-- `tools/meta_test.go` 用 `InMemoryTransport` 端到端验证 PASS
-- `.codebuddy/rules/` 4 条项目规则
+### 已完成
 
-**验证方式**：
+| # | 任务 | 状态 | 关键产物 |
+|---|------|------|---------|
+| 4.1 | OpenAI 兼容 provider + Hermes 后端 | ✅ | `smartnpc-agent/internal/llm/openai.go` |
+| 4.2 | Persona JSON loader + soul_notes | ✅ | `smartnpc-agent/internal/agent/chat/persona.go` |
+| 4.3 | XiaMi NPC 注册 + 精灵管线 | ✅ | `smapi-mod/NPC/XiaMiData.cs`, `build_spritesheet.py` |
+| 4.4 | Agent NPC Registry + 对话限制移除 | ✅ | `AgentNpcRegistry.cs`, `NpcDialoguePatch.cs` |
+| 4.5 | `npc_interact` event 广播 | ✅ | Mod → ws → mcp → agent notification |
+| 4.6 | `chat_message` event（ChatWindow → Agent） | ✅ | agent 侧 `extractChatMessage()` |
+| 4.7 | ChatWindow 聊天窗口 UI | ✅ | `smapi-mod/UI/ChatWindow.cs` |
+| 4.8 | FriendListWindow 好友列表 UI | ✅ | `smapi-mod/UI/FriendListWindow.cs` (F2 快捷键) |
+| 4.9 | ChatMessageStore 消息存储 | ✅ | `smapi-mod/UI/ChatMessageStore.cs` |
+| 4.10 | 游戏状态查询工具 (MCP) | ✅ | `game_get_time`, `game_get_weather`, `friendship_get` |
+| 4.11 | ChatHandler 路由到 UI / DrawDialogue | ✅ | `chat_say` 回复自动追加到聊天窗口 |
 
-```cmd
-d: && cd d:\SmartNPC && go test ./smartnpc-mcp/... ./smartnpc-agent/...
+### 待验证
+
+| # | 任务 | 状态 | 说明 |
+|---|------|------|------|
+| 4.12 | 全栈端到端验证 | ⏳ 待测 | 点击 NPC → 聊天窗口 → AI 回复 |
+| 4.13 | F2 好友列表远程聊天验证 | ⏳ 待测 | 不面对面也能聊天 |
+| 4.14 | 游戏状态工具 LLM 调用验证 | ⏳ 待测 | 问"几点了"NPC 能回答正确时间 |
+
+### 已知问题 / 待修复
+
+| 问题 | 优先级 | 说明 |
+|------|--------|------|
+| `npc_interact` 直接点击可能不触发 agent | P1 | 需验证完整链路：mod → ws → mcp → agent → LLM → chat_say |
+| ChatWindow 文本输入中文可能不work | P2 | SDV TextBox 对中文 IME 支持有限 |
+| 好感度注入 system prompt | P3 | Agent 回复前先查 friendship，M4 后期或 M5 实现 |
+
+---
+
+## M4 文件清单
+
+### C# Mod 新增/修改
+
+```
+smapi-mod/
+├── UI/
+│   ├── ChatWindow.cs           ← 聊天窗口（TextBox + 消息历史）
+│   ├── FriendListWindow.cs     ← 好友列表（F2 打开）
+│   └── ChatMessageStore.cs     ← 消息存储
+├── Query/
+│   └── GameQueryHandler.cs     ← game_get_time / weather / friendship
+├── Patches/
+│   └── NpcDialoguePatch.cs     ← 点击 NPC → 打开聊天窗口
+├── NPC/
+│   ├── XiaMiData.cs            ← NPC 注册 + 精灵加载
+│   └── AgentNpcRegistry.cs     ← Agent NPC 注册表
+├── Chat/
+│   └── ChatHandler.cs          ← 路由 chat_say 到 UI 或 DrawDialogue
+└── ModEntry.cs                 ← F2 快捷键 + 全部注册
+```
+
+### Go MCP 新增/修改
+
+```
+smartnpc-mcp/internal/
+├── tools/
+│   ├── game_query.go           ← game_get_time / weather / friendship 工具
+│   └── registry.go             ← 注册新工具
+└── bridge/
+    └── protocol.go             ← 新 action 常量
+```
+
+### Go Agent 修改
+
+```
+smartnpc-agent/internal/agent/chat/
+└── chat.go                     ← 处理 chat_message / npc_interact event
 ```
 
 ---
 
-## M1.5 — 工程化外壳 ✅
-
-**产出**：
-
-- `Taskfile.yml`（根 + `smartnpc-mcp` + `smartnpc-agent`），统一入口 `task ci`
-- `.github/workflows/ci.yml`：path filter + Go matrix + C# job + ci-pass 聚合 gate
-- `.github/workflows/release.yml`：tag 触发，构建 windows/linux 二进制 + Mod zip + 自动 GitHub Release + SHA256SUMS
-- 4 条新 Rule：`testing-discipline` / `ci-feedback-loop` / `git-workflow` / `taskfile-usage`
-- 1 个 Skill：`ci-doctor`（诊断 GitHub Actions 失败的 SOP，含 `fetch_run.py` 脚本和失败模式 catalog）
-
-**已知遗留**：
-
-- M1 部分 Go package 没有 `*_test.go`（`internal/log`, `internal/llm`, `internal/mcpclient`, `cmd/...`），违反 `testing-discipline` 规则。M2 启动时**第一件事**是补齐这些 smoke test。
-- 本地 `task` 二进制被 Device Guard 拦截。后续尝试 `winget install Task.Task` 装签名版；若仍不行，本地用 `go test ./...` 直跑，CI 上正常。
-
-**发版方式**：
-
-```cmd
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-GitHub Actions 自动构建 + 创建 Release。
-
----
-
-## M2 — SMAPI Mod 骨架 + WS 桥接
-
-**目标**：游戏内 Mod 与 `smartnpc-mcp` 双向通信跑通，新增一个 `bridge_ping` 工具透传 ws ping 到 Mod。
-
-| # | 任务 | 关键产物 |
-|---|------|---------|
-| 2.0 | 补齐 M1 遗留的 smoke test | `internal/log/logger_test.go`、`internal/mcpclient/client_test.go` 等 |
-| 2.1 | C# 项目骨架 | `smapi-mod/StardewMCPBridge.csproj`、`manifest.json`、`ModEntry.cs` |
-| 2.2 | 内嵌 WebSocket Server | `smapi-mod/Bridge/WebSocketServer.cs`（`System.Net.WebSockets`，监听 `:8765`） |
-| 2.3 | 协议 DTO（C# 侧） | `smapi-mod/Bridge/Protocol.cs`（Request/Response/Event） |
-| 2.4 | 协议文档 | `docs/protocol.md`（JSON schema、action 命名规范、错误码） |
-| 2.5 | Go ws 客户端 | `smartnpc-mcp/internal/bridge/client.go`（`coder/websocket`，含重连） |
-| 2.6 | Go 协议类型 | `smartnpc-mcp/internal/bridge/protocol.go`（与 C# 端镜像） |
-| 2.7 | `bridge_ping` 工具 | `smartnpc-mcp/internal/tools/bridge_meta.go`，端到端打通 |
-| 2.8 | Mock bridge 用于测试 | `smartnpc-mcp/internal/bridge/mock.go` |
-| 2.9 | 端到端测试 | `bridge_ping_test.go`：用 mock bridge 验证工具流 |
-
-**里程碑**：在游戏里加载 mod → `smartnpc-agent ... bridge_ping` 收到 mod 真实响应。
-
----
-
-## M3 — NPC 行为工具集
-
-**目标**：MCP 暴露完整 NPC 操作面（约 20 个工具），任意 MCP client 能查询 / 控制 NPC。
-
-| 工具组 | 工具 | 文件 |
-|--------|------|------|
-| Query | `npc_list`、`npc_get`、`npc_find_nearby`、`npc_get_schedule`、`npc_get_gift_taste`、`npc_get_dialogue_pool` | `tools/npc_query.go` |
-| Dialogue | `npc_speak`、`npc_show_bubble`、`npc_ask_choice`、`npc_clear_dialogue` | `tools/npc_dialogue.go` |
-| Movement | `npc_move_to`、`npc_warp`、`npc_face` | `tools/npc_movement.go` |
-| Emote | `npc_emote`、`npc_play_animation` | `tools/npc_emote.go` |
-| Schedule | `npc_override_schedule`、`npc_reset_schedule` | `tools/npc_schedule.go` |
-| Friendship | `friendship_get`、`friendship_change` | `tools/friendship.go` |
-| Events | `game_subscribe_event` + MCP notifications 推送 | `tools/events.go` |
-
-**Mod 端配套**：
-
-- `Npc/*Handler.cs`（每组对应一个 handler）
-- `Patches/`：Harmony patch `DialogueBox.receiveLeftClick`、`NPC.checkAction`、`NPC.receiveGift`
-- `Events/GameEventBroadcaster.cs`：把 `DayStarted` / `MenuChanged` / 礼物事件等推到 ws
-
-**里程碑**：用 Claude Desktop 接 `smartnpc-mcp`，手动调工具能让 Abigail 在游戏里说话、走路、改好感度。
-
----
-
-## M4 — OpenAI Agent Loop
-
-**目标**：单个 NPC 通过 LLM 自主对话，闭环跑通"玩家点击 NPC → LLM 生成回复 → Mod 注入对话框"。
-
-| # | 任务 | 关键产物 |
-|---|------|---------|
-| 4.1 | OpenAI provider 实装 | `smartnpc-agent/internal/llm/openai.go`（function calling 翻译） |
-| 4.2 | MCP 工具 → OpenAI tool spec 转换 | `smartnpc-agent/internal/agent/toolbridge.go` |
-| 4.3 | NPC 人格 YAML loader | `smartnpc-agent/internal/persona/{loader,prompt}.go` + `persona/templates/abigail.yaml` |
-| 4.4 | Conversation context builder | `smartnpc-agent/internal/agent/context.go` |
-| 4.5 | 单 NPC agent loop | `smartnpc-agent/internal/agent/npc_agent.go`（think → tool calls → repeat） |
-| 4.6 | Agent 入口子命令 | `smartnpc-agent ... run --npc Abigail` |
-| 4.7 | 配置文件 | `smartnpc-agent/configs/agent.yaml`（model / api_key / persona dir） |
-
-**里程碑**：游戏内点 Abigail，弹出 AI 生成的、符合人格的对话。
-
----
-
-## M5 — 记忆 / 调度 / 多 NPC 编排
+## M5 — 记忆 / 调度 / 多 NPC 编排（计划）
 
 **目标**：14+ NPC 并发自主行为，跨 session 记忆持久化，主动事件触发。
 
 | # | 任务 | 关键产物 |
 |---|------|---------|
 | 5.1 | SQLite + FTS5 记忆存储 | `smartnpc-agent/internal/memory/{store,sqlite}.go` |
-| 5.2 | 跨 NPC 消息队列 | `smartnpc-agent/internal/relay/message_queue.go` |
-| 5.3 | 委托链 | `smartnpc-agent/internal/relay/delegate.go` |
-| 5.4 | Cron 调度 | `smartnpc-agent/internal/scheduler/cron.go`（`robfig/cron/v3`） |
-| 5.5 | Agent 池（自主 ≤3 + 按需 ≤2） | `smartnpc-agent/internal/orchestr/{pool,trigger,orchestrator}.go` |
-| 5.6 | 事件路由 | 把 `smartnpc-mcp` 的 MCP notifications 翻译成 trigger |
-| 5.7 | 全部 14 个可结婚 NPC persona 模板 | `persona/templates/*.yaml` |
+| 5.2 | 好感度注入 system prompt | Agent 回复前查 `friendship_get`，动态调整语气 |
+| 5.3 | 跨 NPC 消息队列 | `smartnpc-agent/internal/relay/message_queue.go` |
+| 5.4 | Cron 调度 + 主动行为 | `smartnpc-agent/internal/scheduler/cron.go` |
+| 5.5 | Agent 池（多 NPC 并发） | `smartnpc-agent/internal/orchestr/pool.go` |
+| 5.6 | 事件路由 | MCP notifications → trigger |
+| 5.7 | 多 NPC persona 模板 | `persona/templates/*.json` |
 
-**里程碑**：玩家 3 天没找 Abigail，她主动在酒吧搭话（cron + 好感度 + 主动行为）。
-
----
-
-## Monorepo 工程化演进
-
-仓库已是 monorepo（单仓库 + 多语言子项目 + go.work）。下面是按痛点分级的演进路径，**不必一次到位**。
-
-### Level 0 — 现状（M1 末）✅
-
-`go.work` 联动 Go module，C# 子项目独立 dotnet build。够用。
-
-### Level 1 — 统一任务运行器（建议 M2 前完成）
-
-引入 **Taskfile** (`go-task/task`)：
-
-```
-d:/SmartNPC/
-├── Taskfile.yml                ← 根任务：build / test / lint / clean
-├── smartnpc-mcp/Taskfile.yml
-├── smartnpc-agent/Taskfile.yml
-└── smapi-mod/Taskfile.yml
-```
-
-收益：
-
-- 命令统一：`task build`、`task test`、`task mcp:run -- ping`
-- 跨平台、零依赖（单 Go 二进制）
-- Windows 友好，比 Make 顺手
-
-### Level 2 — 依赖版本协调（M3 或出现漂移时）
-
-Go 双 module 共用 MCP SDK，可能漂移。两条路：
-
-- **保持双 module**：写 `scripts/upgrade-go-deps.cmd` 批量 `go get -u`
-- **合并单 module**：`smartnpc-mcp` / `smartnpc-agent` 改为同 module 下两个 `cmd/`
-
-建议 M3 前观察，**真痛了再动**。
-
-### Level 3 — 抽 `pkg/` 共享 module（M3 高概率需要）
-
-触发条件：第二次复制粘贴 ws 协议 DTO 时立即动手。
-
-```
-d:/SmartNPC/
-├── pkg/                            ← 新增 Go module
-│   ├── protocol/                   ← ws 协议 DTO
-│   └── npctypes/                   ← NPC / 好感度共享类型
-└── go.work                         ← use ./pkg ./smartnpc-mcp ./smartnpc-agent
-```
-
-C# 端 DTO 后续考虑用 codegen 从 Go 端生成（M4+ 评估）。
-
-### Level 4 — CI（M2 上线后）
-
-`.github/workflows/ci.yml`：
-
-- matrix：`go-mcp` / `go-agent` / `csharp-mod`
-- path filter：只跑改动的子项目
-- Go：`actions/setup-go@v5` + `task test`
-- C#：`actions/setup-dotnet@v4` + `dotnet test`
-
-### Level 5 — 进阶（暂不需要）
-
-Bazel / Pants / Nx / Turborepo / Lerna 都不引入。规模和复杂度不匹配。
+**里程碑**：玩家 3 天没找 XiaMi，她主动在农场搭话。
 
 ---
 
-## 立即行动建议
+## 启动全栈
 
-- [ ] M2 启动前先做 Level 1（Taskfile）+ Level 4（GitHub Actions）一次性搞定
-- [ ] M2 进行中观察是否需要 Level 3（共享 `pkg/`）
-- [ ] 其它升级按需
+```cmd
+:: 1. 构建
+task ci
+
+:: 2. Hermes (WSL)
+hermes -p xiami gateway run --accept-hooks
+
+:: 3. 安装 mod + 启动游戏（游戏关闭状态）
+task mod:install
+"D:\Stardew Valley\StardewModdingAPI.exe"
+
+:: 4. Agent（新 cmd 窗口）
+cd /d d:\SmartNPC\smartnpc-agent
+bin\smartnpc-agent.exe ^
+  -mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
+  -mcp-args="--ws-url=ws://127.0.0.1:18745/ws" ^
+  -log-level debug ^
+  run ^
+  -llm-url http://localhost:8643/v1 ^
+  -api-key xiami-npc-key ^
+  -model xiami ^
+  -speaker XiaMi ^
+  -persona ..\smartnpc-agent\personas\xiami.json
+```
