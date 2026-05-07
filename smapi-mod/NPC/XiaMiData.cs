@@ -111,6 +111,14 @@ namespace SmartNPC.Bridge
             _npc.IsWalkingTowardPlayer = false;
 
             farm.addCharacter(_npc);
+            AgentNpcRegistry.Register(NpcName);
+
+            // Ensure the player has a friendship record for this custom NPC so
+            // that friendship_get returns meaningful data and the console command
+            // `player_setfriendship XiaMi <points>` works.
+            if (!Game1.player.friendshipData.ContainsKey(NpcName))
+                Game1.player.friendshipData.Add(NpcName, new Friendship());
+
             _log.Log($"[XiaMi] NPC spawned at Farm ({SpawnTile.X}, {SpawnTile.Y})", LogLevel.Info);
         }
 

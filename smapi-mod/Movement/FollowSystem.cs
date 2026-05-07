@@ -1,0 +1,428 @@
+// NPC behavior state machine: Idle / Summoning / Following / Leading.
+//
+// Owns one NpcBehaviorState per managed NPC. All state transitions and
+// game-thread work (PathFindController construction, warpCharacter, etc.)
+// happen inside PumpOnGameTick — ws handlers only *set* the target mode and
+// return. This keeps the ws receive loop free of Game1 access.
+//
+// Summoning : NPC travels to the player (cross-map warp if needed), then
+//             paths to an adjacent tile in front of the player. Terminates
+//             in Idle when adjacent.
+// Following : every ~30 ticks, if the distance to the player exceeds the
+//             follow radius, repath the NPC to a tile one behind the player.
+// Leading   : segmented pathfinding toward a target tile. Every segment is
+//             capped at 5 tiles; on segment completion, enqueue the next one.
+//             Terminates in Idle when the final target is reached.
+//
+// OnPlayerWarped: if the NPC is Following/Leading the warping player, warp
+// the NPC to the new location's arrival tile and resume.
+
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using StardewModdingAPI;
+using StardewValley;
+using StardewValley.Pathfinding;
+
+namespace SmartNPC.Bridge
+{
+    /// <summary>Current behavior mode for an Agent-managed NPC.</summary>
+    internal enum NpcBehaviorMode
+    {
+        Idle,
+        Summoning,
+        Following,
+        Leading,
+    }
+
+    /// <summary>Per-NPC mutable state held by FollowSystem.</summary>
+    internal sealed class NpcBehaviorState
+    {
+        public NpcBehaviorMode Mode { get; set; } = NpcBehaviorMode.Idle;
+
+        // Leading target (map-local tile coordinates).
+        public Point LeadTarget { get; set; }
+        public string? LeadMap   { get; set; }
+
+        // Tick scheduler: only repath on these boundaries.
+        public uint LastPathTick { get; set; }
+
+        // Summoning: true once we have issued the final same-map path.
+        public bool SummonPathed { get; set; }
+    }
+
+    /// <summary>
+    /// Drives Summon / Follow / Lead for all registered NPCs. One instance
+    /// lives in ModEntry and is pumped from OnUpdateTicked.
+    /// </summary>
+    internal sealed class FollowSystem
+    {
+        // Tick cadence for Following / Leading re-evaluation.
+        private const int ReplanIntervalTicks = 30;
+
+        // Follow radius: stay within this many tiles of the player. If farther,
+        // the NPC is repathed behind the player.
+        private const float FollowRadiusTiles = 3f;
+
+        // Leading segment length: walk at most this many tiles per replan.
+        private const int LeadSegmentTiles = 5;
+
+        private readonly IMonitor _log;
+        private readonly Dictionary<string, NpcBehaviorState> _states =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        private uint _tickCounter;
+
+        public FollowSystem(IMonitor log) { _log = log; }
+
+        // ── public API (called from ws handlers on the game thread via ModEntry) ──
+
+        public void Summon(string npcName)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.Mode = NpcBehaviorMode.Summoning;
+            st.SummonPathed = false;
+            st.LastPathTick = 0;
+        }
+
+        public void StartFollow(string npcName)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.Mode = NpcBehaviorMode.Following;
+            st.LastPathTick = 0;
+        }
+
+        public void StopFollow(string npcName)
+        {
+            if (!_states.TryGetValue(npcName, out var st)) return;
+            st.Mode = NpcBehaviorMode.Idle;
+
+            // Cancel any in-flight pathing so the NPC actually stops.
+            NPC? npc = Game1.getCharacterFromName(npcName);
+            if (npc != null)
+            {
+                try { npc.Halt(); } catch { /* non-fatal */ }
+                if (npc.controller != null) npc.controller = null;
+            }
+        }
+
+        public void LeadTo(string npcName, int x, int y, string? map)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.Mode = NpcBehaviorMode.Leading;
+            st.LeadTarget = new Point(x, y);
+            st.LeadMap = string.IsNullOrWhiteSpace(map) ? null : map;
+            st.LastPathTick = 0;
+        }
+
+        public NpcBehaviorMode GetMode(string npcName)
+        {
+            return _states.TryGetValue(npcName, out var st) ? st.Mode : NpcBehaviorMode.Idle;
+        }
+
+        public IReadOnlyDictionary<string, NpcBehaviorMode> Snapshot()
+        {
+            var copy = new Dictionary<string, NpcBehaviorMode>(_states.Count);
+            foreach (var kv in _states) copy[kv.Key] = kv.Value.Mode;
+            return copy;
+        }
+
+        // ── tick pump ─────────────────────────────────────────────────────
+
+        public void PumpOnGameTick()
+        {
+            if (!Context.IsWorldReady) return;
+            _tickCounter++;
+
+            foreach (var kv in _states)
+            {
+                string name = kv.Key;
+                NpcBehaviorState st = kv.Value;
+                if (st.Mode == NpcBehaviorMode.Idle) continue;
+
+                NPC? npc = Game1.getCharacterFromName(name);
+                if (npc == null) continue;
+
+                try
+                {
+                    switch (st.Mode)
+                    {
+                        case NpcBehaviorMode.Summoning:
+                            this.TickSummoning(npc, st);
+                            break;
+                        case NpcBehaviorMode.Following:
+                            this.TickFollowing(npc, st);
+                            break;
+                        case NpcBehaviorMode.Leading:
+                            this.TickLeading(npc, st);
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.Log($"[FollowSystem] {name} {st.Mode} threw: {ex}", LogLevel.Warn);
+                    st.Mode = NpcBehaviorMode.Idle;
+                }
+            }
+        }
+
+        public void OnPlayerWarped(GameLocation newLocation)
+        {
+            if (newLocation == null) return;
+
+            Farmer player = Game1.player;
+            foreach (var kv in _states)
+            {
+                string name = kv.Key;
+                NpcBehaviorState st = kv.Value;
+                if (st.Mode != NpcBehaviorMode.Following && st.Mode != NpcBehaviorMode.Leading)
+                    continue;
+
+                NPC? npc = Game1.getCharacterFromName(name);
+                if (npc == null) continue;
+                if (npc.currentLocation == newLocation) continue;
+
+                try
+                {
+                    Vector2 arrival = player.Tile;
+                    Game1.warpCharacter(npc, newLocation, arrival);
+                    if (npc.controller != null) npc.controller = null;
+                    st.LastPathTick = 0; // force immediate repath on next tick
+                }
+                catch (Exception ex)
+                {
+                    _log.Log($"[FollowSystem] warp-chase {name} failed: {ex}", LogLevel.Warn);
+                }
+            }
+        }
+
+        // ── per-mode tick handlers ────────────────────────────────────────
+
+        private void TickSummoning(NPC npc, NpcBehaviorState st)
+        {
+            Farmer player = Game1.player;
+            if (player?.currentLocation == null) return;
+
+            // Not on the same map → cross-map warp to an adjacent tile.
+            if (npc.currentLocation != player.currentLocation)
+            {
+                Vector2 arrival = this.TileBehind(player);
+                try { Game1.warpCharacter(npc, player.currentLocation, arrival); }
+                catch (Exception ex) { _log.Log($"[FollowSystem] summon warp failed: {ex}", LogLevel.Warn); st.Mode = NpcBehaviorMode.Idle; return; }
+                if (npc.controller != null) npc.controller = null;
+                st.SummonPathed = false;
+                return;
+            }
+
+            // Same map: walk to a tile in front of the player.
+            if (!st.SummonPathed || npc.controller == null)
+            {
+                Point end = this.TileInFront(player);
+                if (this.TryStartPath(npc, npc.currentLocation, end))
+                {
+                    st.SummonPathed = true;
+                }
+            }
+
+            // Arrived when close to the player (≤ 1.5 tiles) and no active pathing.
+            float dist = Vector2.Distance(npc.Tile, player.Tile);
+            bool arrived = dist <= 1.5f && (npc.controller == null || npc.controller.pathToEndPoint == null || npc.controller.pathToEndPoint.Count == 0);
+            if (arrived)
+            {
+                // Face the player and go Idle.
+                int facing = FacePlayerDir(npc, player);
+                npc.faceDirection(facing);
+                st.Mode = NpcBehaviorMode.Idle;
+            }
+        }
+
+        private void TickFollowing(NPC npc, NpcBehaviorState st)
+        {
+            Farmer player = Game1.player;
+            if (player?.currentLocation == null) return;
+
+            // Cross-map (player already moved and Warped event not wired, or NPC lagged).
+            if (npc.currentLocation != player.currentLocation)
+            {
+                try { Game1.warpCharacter(npc, player.currentLocation, this.TileBehind(player)); }
+                catch (Exception ex) { _log.Log($"[FollowSystem] follow warp failed: {ex}", LogLevel.Warn); }
+                if (npc.controller != null) npc.controller = null;
+                st.LastPathTick = _tickCounter;
+                return;
+            }
+
+            if (!this.ShouldReplan(st)) return;
+
+            float dist = Vector2.Distance(npc.Tile, player.Tile);
+            if (dist <= FollowRadiusTiles)
+            {
+                // Close enough — no new path needed.
+                return;
+            }
+
+            Point end = this.TileBehind(player).ToPoint();
+            this.TryStartPath(npc, npc.currentLocation, end);
+            st.LastPathTick = _tickCounter;
+        }
+
+        private void TickLeading(NPC npc, NpcBehaviorState st)
+        {
+            // Resolve leading target map (default: NPC's current map).
+            GameLocation? targetMap = string.IsNullOrWhiteSpace(st.LeadMap)
+                ? npc.currentLocation
+                : Game1.getLocationFromName(st.LeadMap);
+            if (targetMap == null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // If the NPC is not yet on the target map, warp there first.
+            if (npc.currentLocation != targetMap)
+            {
+                try { Game1.warpCharacter(npc, targetMap, new Vector2(st.LeadTarget.X, st.LeadTarget.Y)); }
+                catch (Exception ex) { _log.Log($"[FollowSystem] lead warp failed: {ex}", LogLevel.Warn); st.Mode = NpcBehaviorMode.Idle; return; }
+                if (npc.controller != null) npc.controller = null;
+                st.LastPathTick = _tickCounter;
+                return;
+            }
+
+            // Arrived?
+            Point npcTile = new((int)npc.Tile.X, (int)npc.Tile.Y);
+            if (ManhattanDistance(npcTile, st.LeadTarget) <= 1)
+            {
+                int facing = DirectionTo(npcTile, st.LeadTarget);
+                if (facing >= 0) npc.faceDirection(facing);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            if (!this.ShouldReplan(st)) return;
+
+            // Segmented pathing: walk at most LeadSegmentTiles toward the target.
+            Point next = SegmentTarget(npcTile, st.LeadTarget, LeadSegmentTiles);
+            this.TryStartPath(npc, npc.currentLocation, next);
+            st.LastPathTick = _tickCounter;
+        }
+
+        // ── helpers ───────────────────────────────────────────────────────
+
+        private NpcBehaviorState GetOrCreate(string name)
+        {
+            if (!_states.TryGetValue(name, out var st))
+            {
+                st = new NpcBehaviorState();
+                _states[name] = st;
+            }
+            return st;
+        }
+
+        private bool ShouldReplan(NpcBehaviorState st)
+        {
+            if (st.LastPathTick == 0) return true;
+            return (_tickCounter - st.LastPathTick) >= ReplanIntervalTicks;
+        }
+
+        private bool TryStartPath(NPC npc, GameLocation location, Point endPoint)
+        {
+            try
+            {
+                npc.controller = new PathFindController(
+                    c: npc,
+                    location: location,
+                    endPoint: endPoint,
+                    finalFacingDirection: -1,
+                    endBehaviorFunction: null);
+            }
+            catch (Exception ex)
+            {
+                _log.Log($"[FollowSystem] path {npc.Name}→({endPoint.X},{endPoint.Y}) failed: {ex.Message}", LogLevel.Trace);
+                return false;
+            }
+
+            bool ok = npc.controller != null
+                      && npc.controller.pathToEndPoint != null
+                      && npc.controller.pathToEndPoint.Count > 0;
+            return ok;
+        }
+
+        /// <summary>Tile one step "in front of" the player (based on facing).</summary>
+        private Point TileInFront(Farmer player)
+        {
+            Vector2 t = player.Tile;
+            return player.FacingDirection switch
+            {
+                0 => new Point((int)t.X,     (int)t.Y - 1), // up
+                1 => new Point((int)t.X + 1, (int)t.Y),     // right
+                2 => new Point((int)t.X,     (int)t.Y + 1), // down
+                3 => new Point((int)t.X - 1, (int)t.Y),     // left
+                _ => new Point((int)t.X,     (int)t.Y + 1),
+            };
+        }
+
+        /// <summary>Tile one step "behind" the player (opposite of facing).</summary>
+        private Vector2 TileBehind(Farmer player)
+        {
+            Vector2 t = player.Tile;
+            return player.FacingDirection switch
+            {
+                0 => new Vector2(t.X,     t.Y + 1), // player faces up → behind is below
+                1 => new Vector2(t.X - 1, t.Y),     // faces right → behind is left
+                2 => new Vector2(t.X,     t.Y - 1), // faces down → behind is above
+                3 => new Vector2(t.X + 1, t.Y),     // faces left → behind is right
+                _ => new Vector2(t.X,     t.Y + 1),
+            };
+        }
+
+        private static int FacePlayerDir(NPC npc, Farmer player)
+        {
+            Vector2 d = player.Tile - npc.Tile;
+            if (Math.Abs(d.X) > Math.Abs(d.Y))
+                return d.X > 0 ? 1 : 3;
+            return d.Y > 0 ? 2 : 0;
+        }
+
+        private static int ManhattanDistance(Point a, Point b)
+            => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
+
+        private static int DirectionTo(Point from, Point to)
+        {
+            int dx = to.X - from.X;
+            int dy = to.Y - from.Y;
+            if (Math.Abs(dx) > Math.Abs(dy))
+                return dx > 0 ? 1 : 3;
+            if (dy != 0)
+                return dy > 0 ? 2 : 0;
+            return -1;
+        }
+
+        /// <summary>Point along (from→to) capped at <paramref name="maxSteps"/> tiles.</summary>
+        private static Point SegmentTarget(Point from, Point to, int maxSteps)
+        {
+            int dx = to.X - from.X;
+            int dy = to.Y - from.Y;
+            int dist = Math.Abs(dx) + Math.Abs(dy);
+            if (dist <= maxSteps) return to;
+
+            // Move proportionally along the manhattan path.
+            int stepX = 0, stepY = 0;
+            int remaining = maxSteps;
+
+            // Bias the axis with larger delta.
+            if (Math.Abs(dx) >= Math.Abs(dy))
+            {
+                stepX = Math.Sign(dx) * Math.Min(Math.Abs(dx), remaining);
+                remaining -= Math.Abs(stepX);
+                stepY = Math.Sign(dy) * Math.Min(Math.Abs(dy), remaining);
+            }
+            else
+            {
+                stepY = Math.Sign(dy) * Math.Min(Math.Abs(dy), remaining);
+                remaining -= Math.Abs(stepY);
+                stepX = Math.Sign(dx) * Math.Min(Math.Abs(dx), remaining);
+            }
+
+            return new Point(from.X + stepX, from.Y + stepY);
+        }
+    }
+}
