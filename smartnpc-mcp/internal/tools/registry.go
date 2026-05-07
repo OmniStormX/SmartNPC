@@ -16,5 +16,9 @@ func RegisterAll(s *mcp.Server, br *bridge.WSClient) {
 	if br != nil {
 		registerMail(s, br)
 		registerChat(s, br)
+		registerGameQuery(s, br)
+		registerNpcPerception(s, br)
+		registerNpcMovement(s, br)
+		registerNpcBehavior(s, br)
 	}
 }

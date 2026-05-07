@@ -13,13 +13,27 @@ const (
 
 // EventName constants — the canonical set of server-pushed events.
 const (
-	EventChatReceived = "chat_received"
+	EventChatReceived       = "chat_received"
+	EventNpcPerceptionUpdate = "npc_perception_update" // reserved, not emitted yet
 )
 
 // ActionName constants — the canonical set of client-issued requests.
 const (
-	ActionMailSend = "mail_send"
-	ActionChatSay  = "chat_say"
+	ActionMailSend          = "mail_send"
+	ActionChatSay           = "chat_say"
+	ActionGameGetTime       = "game_get_time"
+	ActionGameGetWeather    = "game_get_weather"
+	ActionFriendshipGet     = "friendship_get"
+	ActionNpcGetNearby      = "npc_get_nearby"
+	ActionNpcGetEnvironment = "npc_get_environment"
+	ActionNpcMoveTo         = "npc_move_to"
+	ActionNpcFaceDirection  = "npc_face_direction"
+	ActionNpcGetPosition    = "npc_get_position"
+	ActionNpcSummon         = "npc_summon"
+	ActionNpcFollowStart    = "npc_follow_start"
+	ActionNpcFollowStop     = "npc_follow_stop"
+	ActionNpcLeadTo         = "npc_lead_to"
+	ActionNpcGetBehavior    = "npc_get_behavior"
 )
 
 // Request is a client → server RPC call.
