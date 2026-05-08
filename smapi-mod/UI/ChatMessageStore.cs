@@ -13,10 +13,12 @@ namespace SmartNPC.Bridge
 
     /// <summary>
     /// Per-NPC chat history storage. Lives in memory for the session.
+    /// Tracks unread state per NPC for UI notification indicators.
     /// </summary>
     internal sealed class ChatMessageStore
     {
         private readonly Dictionary<string, List<ChatMessage>> _history = new();
+        private readonly HashSet<string> _unread = new();
         private readonly int _maxPerNpc;
 
         public ChatMessageStore(int maxPerNpc = 100)
@@ -40,6 +42,9 @@ namespace SmartNPC.Bridge
             });
             if (list.Count > _maxPerNpc)
                 list.RemoveAt(0);
+
+            if (!isPlayer)
+                _unread.Add(npcName);
         }
 
         public List<ChatMessage> GetHistory(string npcName)
@@ -49,10 +54,17 @@ namespace SmartNPC.Bridge
             return new List<ChatMessage>();
         }
 
+        public bool HasUnread(string npcName) => _unread.Contains(npcName);
+
+        public void MarkRead(string npcName) => _unread.Remove(npcName);
+
+        public bool HasAnyUnread() => _unread.Count > 0;
+
         public void Clear(string npcName)
         {
             if (_history.ContainsKey(npcName))
                 _history[npcName].Clear();
+            _unread.Remove(npcName);
         }
     }
 }

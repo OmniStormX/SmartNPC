@@ -6,8 +6,9 @@
 //   - Mail/MailHandler.cs        — `mail_send`
 //   - Chat/ChatHandler.cs        — `chat_say`
 //   - Chat/ChatInputCapture.cs   — Ctrl+T hotkey + Harmony patch for player chat
-//   - UI/ChatWindow.cs           — in-game chat UI
-//   - UI/FriendListWindow.cs     — NPC friend list UI
+//   - UI/NpcChatBar.cs           — bottom input bar (near-NPC quick chat)
+//   - UI/ChatPanel.cs            — QQ-style full chat panel
+//   - UI/ChatSideButton.cs       — HUD floating button
 //
 // See docs/protocol.md for the wire protocol.
 
@@ -35,6 +36,7 @@ namespace SmartNPC.Bridge
         private FollowSystem?     _follow;
         private BehaviorHandler?  _behavior;
         private ChatMessageStore _messageStore = new();
+        private ChatSideButton?  _sideButton;
 
         public override void Entry(IModHelper helper)
         {
@@ -48,6 +50,8 @@ namespace SmartNPC.Bridge
             helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
             helper.Events.Input.ButtonsChanged += this.OnButtonsChanged;
             helper.Events.Player.Warped += this.OnPlayerWarped;
+            helper.Events.Display.RenderedHud += this.OnRenderedHud;
+            helper.Events.Display.WindowResized += this.OnWindowResized;
         }
 
         private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
@@ -87,19 +91,22 @@ namespace SmartNPC.Bridge
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
                 _ws.Start();
 
-                // Wire up patches and UI.
+                // Wire up patches — opens NpcChatBar on NPC click.
                 NpcDialoguePatch.SetBridge(_ws);
-                NpcDialoguePatch.SetUI(_messageStore, this.OpenChatWindow);
+                NpcDialoguePatch.SetUI(_messageStore, this.OpenNpcChatBar);
 
                 // Configure ChatHandler to route replies to the message store.
                 _chat.SetMessageStore(_messageStore);
+
+                // HUD side button for opening ChatPanel.
+                _sideButton = new ChatSideButton(() => this.OpenChatPanel());
 
                 _chatInput = new ChatInputCapture(this, this.ForwardPlayerMessage);
 
                 // Register SMAPI console debug commands.
                 DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor);
 
-                this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat + mail + UI)", LogLevel.Info);
+                this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat bar + panel + side button)", LogLevel.Info);
             }
             catch (Exception ex)
             {
@@ -117,21 +124,33 @@ namespace SmartNPC.Bridge
             _follow?.PumpOnGameTick();
             NpcDialoguePatch.PumpInteractions();
 
-            // If ChatHandler swapped a ChatWindow out for a native DialogueBox,
-            // reopen the ChatWindow once the DialogueBox is dismissed.
+            // After DialogueBox dismissed, reopen NpcChatBar.
             if (_chat != null)
             {
                 string? reopenNpc = _chat.ConsumePendingReopen();
                 if (reopenNpc != null)
-                    this.OpenChatWindow(reopenNpc);
+                    this.OpenNpcChatBar(reopenNpc);
             }
+
+            // Update side button unread indicator.
+            _sideButton?.SetUnread(_messageStore.HasAnyUnread());
+        }
+
+        /// <summary>Draw floating chat side button on HUD.</summary>
+        private void OnRenderedHud(object? sender, RenderedHudEventArgs e)
+        {
+            if (!Context.IsWorldReady) return;
+            if (Game1.activeClickableMenu != null) return;
+            _sideButton?.Draw(e.SpriteBatch);
+        }
+
+        private void OnWindowResized(object? sender, WindowResizedEventArgs e)
+        {
+            _sideButton?.UpdatePosition();
         }
 
         /// <summary>
         /// Register vanilla NPCs as Agent-managed once the save is loaded.
-        /// This bypasses the once-per-day dialogue limit for these NPCs so the
-        /// external Agent can drive their conversations. Vanilla NPCs already
-        /// have friendshipData populated by the game, so no manual Add is needed.
         /// </summary>
         private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
         {
@@ -144,17 +163,25 @@ namespace SmartNPC.Bridge
                 LogLevel.Info);
         }
 
-        /// <summary>F2 → friend list; F3 → debug panel.</summary>
+        /// <summary>F2 → ChatPanel; F3 → debug panel; side button click.</summary>
         private void OnButtonsChanged(object? sender, ButtonsChangedEventArgs e)
         {
             if (!Context.IsWorldReady) return;
-            if (Game1.activeClickableMenu != null) return;
 
             foreach (SButton btn in e.Pressed)
             {
+                // Side button click (check before menu guard so it works from HUD)
+                if (btn == SButton.MouseLeft && Game1.activeClickableMenu == null)
+                {
+                    if (_sideButton?.HandleClick(btn, this.Helper.Input.GetCursorPosition()) == true)
+                        return;
+                }
+
+                if (Game1.activeClickableMenu != null) continue;
+
                 if (btn == SButton.F2)
                 {
-                    Game1.activeClickableMenu = new FriendListWindow(_messageStore, this.OpenChatWindow);
+                    this.OpenChatPanel();
                     return;
                 }
                 if (btn == SButton.F3 && _follow != null)
@@ -171,17 +198,41 @@ namespace SmartNPC.Bridge
             _follow?.OnPlayerWarped(e.NewLocation);
         }
 
-        /// <summary>Open chat window for a given NPC.</summary>
-        private void OpenChatWindow(string npcName)
+        /// <summary>Open bottom chat bar for near-NPC quick interaction.</summary>
+        private void OpenNpcChatBar(string npcName)
         {
+            // If ChatPanel is already open, switch NPC there instead.
+            if (Game1.activeClickableMenu is ChatPanel panel)
+            {
+                panel.SelectNpc(npcName);
+                return;
+            }
+
             NPC? npc = Game1.getCharacterFromName(npcName);
             string displayName = npc?.displayName ?? npcName;
 
-            var window = new ChatWindow(npcName, displayName, _messageStore, this.OnChatSend);
-            Game1.activeClickableMenu = window;
+            var bar = new NpcChatBar(npcName, displayName, _messageStore, this.OnChatSend);
+            Game1.activeClickableMenu = bar;
         }
 
-        /// <summary>Called when player sends a message from the chat window.</summary>
+        /// <summary>Open QQ-style full chat panel.</summary>
+        private void OpenChatPanel(string? initialNpc = null)
+        {
+            // If NpcChatBar is showing, transfer its NPC to the panel.
+            if (Game1.activeClickableMenu is NpcChatBar)
+            {
+                string? current = NpcChatBar.ActiveBarNpc;
+                Game1.exitActiveMenu();
+                Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, current ?? initialNpc);
+                return;
+            }
+
+            if (Game1.activeClickableMenu != null) return;
+
+            Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, initialNpc);
+        }
+
+        /// <summary>Called when player sends a message from any chat UI.</summary>
         private void OnChatSend(string npcName, string text)
         {
             if (_ws is null) return;
