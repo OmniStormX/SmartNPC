@@ -104,6 +104,15 @@ func (r *Router) SetSession(session *mcp.ClientSession) {
 	}
 }
 
+// WireAgentRouters sets a back-reference to this Router on every registered
+// agent so they can use the npc_send_message local tool to communicate with
+// each other. Call after all agents are registered.
+func (r *Router) WireAgentRouters() {
+	for _, a := range r.Agents() {
+		a.SetRouter(r)
+	}
+}
+
 // LoadTools loads the MCP tool catalogue into every registered agent. Any
 // per-agent failure is returned immediately — callers that want best-effort
 // loading should loop over r.Agents() themselves.
@@ -221,6 +230,31 @@ func (r *Router) anyLogger() interface {
 		}
 	}
 	return nil
+}
+
+// GetAgent returns the Agent registered under the given speaker name, or nil
+// if no such agent exists. Used by the inter-NPC messaging system: when Agent
+// A calls npc_send_message targeting Agent B, the local tool handler resolves
+// the recipient via this method.
+func (r *Router) GetAgent(speaker string) *Agent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.agents[normalizeSpeaker(speaker)]
+}
+
+// DeliverNPCMessage delivers a message from one NPC agent to another. The
+// message is injected into the recipient's history as a system-tagged entry
+// and triggers an asynchronous respond-and-say cycle so the recipient reacts
+// to the incoming NPC message naturally.
+//
+// Returns false if the recipient is not registered.
+func (r *Router) DeliverNPCMessage(fromNPC, toNPC, message string) bool {
+	recipient := r.GetAgent(toNPC)
+	if recipient == nil {
+		return false
+	}
+	recipient.ReceiveNPCMessage(fromNPC, message)
+	return true
 }
 
 // normalizeSpeaker canonicalises speaker names for map lookup. We match

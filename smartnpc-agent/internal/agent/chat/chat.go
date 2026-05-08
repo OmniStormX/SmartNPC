@@ -72,9 +72,19 @@ type Agent struct {
 	history []llm.Message
 	session *mcp.ClientSession
 	tools   []llm.ToolSpec
+	// router is a back-reference used by the npc_send_message local tool so
+	// one agent can deliver messages to another. Set via SetRouter() after the
+	// router is constructed.
+	router interface {
+		DeliverNPCMessage(fromNPC, toNPC, message string) bool
+		Speakers() []string
+	}
 	// locations is the named-location table used by the move-intent parser.
 	// Initialized from cfg.Persona.NamedLocations when present, else defaults.
 	locations *LocationTable
+	// lastUserMsgTime tracks when the last player message arrived, used by the
+	// proactive ticker to avoid interrupting active conversations.
+	lastUserMsgTime time.Time
 	// replyDone is an optional test hook: when non-nil, every completed
 	// respondAndSay call sends on it (non-blocking). Tests use this to wait
 	// for the async goroutine dispatched by HandleNotification without
@@ -135,7 +145,38 @@ func (a *Agent) Speaker() string {
 	return a.cfg.Speaker
 }
 
+// SetRouter wires the back-reference to the Router so this agent can use the
+// npc_send_message local tool to deliver messages to other NPC agents. Must be
+// called after the Router has been fully constructed.
+func (a *Agent) SetRouter(r interface {
+	DeliverNPCMessage(fromNPC, toNPC, message string) bool
+	Speakers() []string
+}) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.router = r
+}
+
+// ReceiveNPCMessage injects a message from another NPC into this agent's
+// history and triggers an asynchronous response. The message appears as a
+// system-tagged entry so the LLM sees it as world context rather than player
+// input. The agent will then formulate an in-character reply and speak it via
+// chat_say (which the game displays as a normal dialogue).
+func (a *Agent) ReceiveNPCMessage(fromNPC, message string) {
+	injected := fmt.Sprintf("[%s 给你传话说：「%s」请你自然地回应这条来自 NPC 同伴的消息，可以选择通过 npc_send_message 回复对方。]", fromNPC, message)
+	a.cfg.Logger.Info("received NPC message", "from", fromNPC, "message", message)
+
+	a.mu.Lock()
+	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: injected})
+	a.trimHistory()
+	a.mu.Unlock()
+
+	go a.respondAndSay(injected)
+}
+
 // LoadTools fetches available MCP tools and caches them for LLM requests.
+// Additionally registers local-only tools (like npc_send_message) that the
+// LLM can invoke but are handled in-process.
 func (a *Agent) LoadTools(ctx context.Context) error {
 	a.mu.Lock()
 	s := a.session
@@ -151,11 +192,40 @@ func (a *Agent) LoadTools(ctx context.Context) error {
 
 	specs := convertMCPTools(res.Tools)
 
+	// Append local-only tools visible to the LLM.
+	specs = append(specs, a.localToolSpecs()...)
+
 	a.mu.Lock()
 	a.tools = specs
 	a.mu.Unlock()
 	a.cfg.Logger.Info("tools loaded", "count", len(specs))
 	return nil
+}
+
+// localToolSpecs returns tool definitions for in-process tools that don't
+// require an MCP roundtrip. These are registered alongside MCP tools so the
+// LLM sees them in the same tool catalogue.
+func (a *Agent) localToolSpecs() []llm.ToolSpec {
+	return []llm.ToolSpec{
+		{
+			Name:        "npc_send_message",
+			Description: "Send a message to another NPC. The recipient NPC will receive your message and may respond. Use this to gossip, relay information, ask for help, or maintain social relationships with other NPCs.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"to": map[string]any{
+						"type":        "string",
+						"description": "The internal name of the recipient NPC (e.g. \"Abigail\", \"Sebastian\", \"XiaMi\")",
+					},
+					"message": map[string]any{
+						"type":        "string",
+						"description": "The message content to deliver to the other NPC",
+					},
+				},
+				"required": []string{"to", "message"},
+			},
+		},
+	}
 }
 
 // Tools returns a copy of the tool specs currently visible to the LLM. The
@@ -261,6 +331,11 @@ func (a *Agent) respondAndSay(userText string) {
 	// for the async goroutine without sleeping. Done is best-effort; a
 	// nil/unbuffered-and-unread channel simply gets skipped.
 	defer a.signalReplyDone()
+
+	// Track last user interaction so the proactive ticker can skip if active.
+	a.mu.Lock()
+	a.lastUserMsgTime = time.Now()
+	a.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Timeout)
 	defer cancel()
@@ -571,8 +646,15 @@ func (a *Agent) applyMoveIntent(ctx context.Context, userText string) string {
 		if loc.Map != "" {
 			args["map"] = loc.Map
 		}
-		if _, err := s.CallTool(ctx, &mcp.CallToolParams{Name: "npc_move_to", Arguments: args}); err != nil {
+		moveRes, err := s.CallTool(ctx, &mcp.CallToolParams{Name: "npc_move_to", Arguments: args})
+		if err != nil {
 			a.cfg.Logger.Warn("auto npc_move_to failed", "err", err, "location", loc.Name)
+		} else {
+			a.cfg.Logger.Info("auto npc_move_to result",
+				"location", loc.Name,
+				"args", args,
+				"result", extractToolText(moveRes),
+			)
 		}
 	}
 
@@ -615,8 +697,15 @@ func (a *Agent) applyBehaviorIntent(ctx context.Context, userText string) (strin
 		if s == nil {
 			return
 		}
-		if _, err := s.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args}); err != nil {
+		res, err := s.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
 			a.cfg.Logger.Warn("auto behavior tool failed", "name", name, "err", err)
+		} else {
+			a.cfg.Logger.Info("auto behavior tool result",
+				"name", name,
+				"args", args,
+				"result", extractToolText(res),
+			)
 		}
 	}
 
@@ -688,18 +777,9 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 		extra += gameStateCtx
 	}
 
-	// Parse behavior intent FIRST — verbs like "跟着我"/"别跟了"/"带我去X" take
-	// priority over plain move-intent because they often overlap (e.g.
-	// "带我去湖边" is simultaneously a lead and a move). When behavior-intent
-	// fires we skip applyMoveIntent to avoid double-dispatching.
-	effectiveUserText, handledByBehavior := a.applyBehaviorIntent(ctx, userText)
-	if !handledByBehavior {
-		// Parse move intent BEFORE the LLM round. If the player wants to go
-		// somewhere named, fire npc_move_to directly so the motion starts
-		// regardless of whether the model emits tool_calls. Then annotate the
-		// user message so the LLM can narrate the action in character.
-		effectiveUserText = a.applyMoveIntent(ctx, userText)
-	}
+	// All tool invocations (move, follow, summon, etc.) are delegated to the
+	// LLM's own judgment via normal tool_calls. No keyword-based pre-processing.
+	effectiveUserText := userText
 
 	a.mu.Lock()
 	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: effectiveUserText})
@@ -732,6 +812,18 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 			return reply, nil
 		}
 
+		// Model wants tool calls — log the structured data for debugging.
+		for i, tc := range resp.ToolCalls {
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			a.cfg.Logger.Info("LLM tool_call",
+				"round", round,
+				"index", i,
+				"id", tc.ID,
+				"name", tc.Name,
+				"arguments", string(argsJSON),
+			)
+		}
+
 		// Model wants tool calls — execute them and feed results back.
 		// First, append assistant message with tool calls to history.
 		assistantMsg := llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls}
@@ -748,7 +840,13 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 				Name:       tc.Name,
 				ToolCallID: tc.ID,
 			})
-			a.cfg.Logger.Debug("tool executed", "name", tc.Name, "result_len", len(result))
+			a.cfg.Logger.Info("tool result",
+				"name", tc.Name,
+				"call_id", tc.ID,
+				"arguments", func() string { b, _ := json.Marshal(tc.Arguments); return string(b) }(),
+				"success", err == nil,
+				"result", truncateStr(result, 500),
+			)
 		}
 	}
 
@@ -772,8 +870,14 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	return reply, nil
 }
 
-// executeTool calls an MCP tool via the session.
+// executeTool calls an MCP tool via the session, or handles local-only tools
+// (like npc_send_message) in-process without going through the bridge.
 func (a *Agent) executeTool(ctx context.Context, tc llm.ToolCall) (string, error) {
+	// Local tools: handled in-process without MCP roundtrip.
+	if result, handled := a.executeLocalTool(tc); handled {
+		return result, nil
+	}
+
 	a.mu.Lock()
 	s := a.session
 	a.mu.Unlock()
@@ -810,6 +914,44 @@ func (a *Agent) executeTool(ctx context.Context, tc llm.ToolCall) (string, error
 	return out, nil
 }
 
+// executeLocalTool handles tools that run in-process (no MCP roundtrip).
+// Returns (result, true) if handled, ("", false) if the tool should be
+// routed to MCP normally.
+func (a *Agent) executeLocalTool(tc llm.ToolCall) (string, bool) {
+	switch tc.Name {
+	case "npc_send_message":
+		return a.handleNpcSendMessage(tc.Arguments), true
+	default:
+		return "", false
+	}
+}
+
+// handleNpcSendMessage implements the local npc_send_message tool. It delivers
+// a message from this agent to another NPC agent via the router.
+func (a *Agent) handleNpcSendMessage(args map[string]any) string {
+	toNPC, _ := args["to"].(string)
+	message, _ := args["message"].(string)
+	if toNPC == "" || message == "" {
+		return `{"ok":false,"error":"missing required fields: to, message"}`
+	}
+
+	a.mu.Lock()
+	r := a.router
+	speaker := a.cfg.Speaker
+	a.mu.Unlock()
+
+	if r == nil {
+		return `{"ok":false,"error":"router not configured, cannot send inter-NPC messages"}`
+	}
+
+	if ok := r.DeliverNPCMessage(speaker, toNPC, message); !ok {
+		return fmt.Sprintf(`{"ok":false,"error":"recipient NPC %q not found"}`, toNPC)
+	}
+
+	a.cfg.Logger.Info("npc_send_message delivered", "from", speaker, "to", toNPC, "message", message)
+	return fmt.Sprintf(`{"ok":true,"delivered_to":"%s"}`, toNPC)
+}
+
 // buildMessages constructs system + history for the LLM request. When extra
 // is non-empty it is appended to the system message as a separate paragraph —
 // used to inject per-turn dynamic context (e.g. current friendship tier)
@@ -830,6 +972,14 @@ func (a *Agent) trimHistory() {
 	if len(a.history) > a.cfg.MaxHistory*2 {
 		a.history = a.history[len(a.history)-a.cfg.MaxHistory*2:]
 	}
+}
+
+// truncateStr caps a string at max bytes for log readability.
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 // extractChatText extracts player text from a chat_received notification.
