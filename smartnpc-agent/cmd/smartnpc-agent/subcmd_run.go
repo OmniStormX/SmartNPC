@@ -46,6 +46,12 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 		"path to a directory of persona JSON files. When set, one Agent is "+
 			"instantiated per file and events are routed by their `npc` field. "+
 			"Mutually exclusive with --persona.")
+	personaMode := fs.String("persona-mode", "openai",
+		"persona provider backend: 'openai' (stateless /v1/chat/completions) or "+
+			"'hermes' (stateful /v1/responses with server-side session persistence)")
+	proactive := fs.Bool("proactive", true, "enable NPC autonomous behavior ticker")
+	proactiveInterval := fs.Duration("proactive-interval", 4*time.Minute,
+		"interval between proactive behavior ticks (e.g. 3m, 5m)")
 	timeout := fs.Duration("llm-timeout", 90*time.Second, "timeout per LLM request")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -73,11 +79,7 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 		mdl = os.Getenv("OPENAI_MODEL")
 	}
 
-	personaProvider, err := llm.NewOpenAI(llm.OpenAIConfig{
-		APIKey:  key,
-		BaseURL: url,
-		Model:   mdl,
-	})
+	personaProvider, err := createPersonaProvider(*personaMode, key, url, mdl, *timeout)
 	if err != nil {
 		return fmt.Errorf("create persona LLM provider: %w", err)
 	}
@@ -108,8 +110,27 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 	// fully-wired chat.Agent. Shared by both the single-persona and
 	// personas-dir paths so their Agent configuration stays in lockstep.
 	buildAgent := func(speakerName, sysPrompt string, p *chat.Persona) *chat.Agent {
+		// For Hermes mode, each NPC gets its own provider instance with a
+		// unique conversation key. All NPCs share the same gateway — session
+		// isolation is via the conversation field, memory is shared.
+		agentPersonaProvider := personaProvider
+		if *personaMode == "hermes" {
+			hp, hErr := llm.NewHermes(llm.HermesConfig{
+				APIKey:       key,
+				BaseURL:      url,
+				Model:        mdl,
+				Conversation: "smartnpc-" + strings.ToLower(speakerName),
+				Timeout:      *timeout,
+			})
+			if hErr == nil {
+				agentPersonaProvider = hp
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: hermes provider for %s failed: %v, falling back to default\n", speakerName, hErr)
+			}
+		}
+
 		cfg := chat.Config{
-			Provider:     personaProvider,
+			Provider:     agentPersonaProvider,
 			Speaker:      speakerName,
 			SystemPrompt: sysPrompt,
 			Persona:      p,
@@ -117,7 +138,7 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 		}
 		if decisionProvider != nil {
 			cfg.DecisionProvider = decisionProvider
-			cfg.PersonaProvider = personaProvider
+			cfg.PersonaProvider = agentPersonaProvider
 			cfg.DecisionModel = *decisionModel
 			cfg.PersonaModel = mdl
 		}
@@ -184,6 +205,7 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 	// Wire session and load available tools for every agent. All agents
 	// share the same MCP session and tool catalogue by design.
 	router.SetSession(cli.Session())
+	router.WireAgentRouters()
 	if err := router.LoadTools(ctx); err != nil {
 		// Non-fatal: agents work without tools, they just can't call them.
 		fmt.Fprintf(os.Stderr, "warning: failed to load tools: %v\n", err)
@@ -199,6 +221,13 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 			modeDescription, mdl, *timeout)
 	}
 	fmt.Fprintf(os.Stderr, "Waiting for NPC events (chat_message / npc_interact / chat_received)... (Ctrl+C to stop)\n")
+
+	// Start proactive behavior ticker if enabled.
+	router.StartProactive(ctx, chat.ProactiveConfig{
+		Interval: *proactiveInterval,
+		Jitter:   60 * time.Second,
+		Enabled:  *proactive,
+	})
 
 	// Block until the user cancels (Ctrl+C) or the signal context fires.
 	// Events are handled in goroutines dispatched by the MCP client's
@@ -243,4 +272,27 @@ func loadPersonasDir(dir string, build func(string, string, *chat.Persona) *chat
 		agents = append(agents, build(persona.Speaker, persona.SystemPrompt, persona))
 	}
 	return agents, nil
+}
+
+// createPersonaProvider builds the persona LLM provider based on mode.
+// For "hermes" mode the returned provider is a default instance — per-NPC
+// providers with unique conversation keys are created inside buildAgent.
+// For "openai" mode (default) it returns a standard OpenAI-compatible provider.
+func createPersonaProvider(mode, apiKey, baseURL, model string, timeout time.Duration) (llm.Provider, error) {
+	switch mode {
+	case "hermes":
+		return llm.NewHermes(llm.HermesConfig{
+			APIKey:       apiKey,
+			BaseURL:      baseURL,
+			Model:        model,
+			Conversation: "smartnpc-default",
+			Timeout:      timeout,
+		})
+	default:
+		return llm.NewOpenAI(llm.OpenAIConfig{
+			APIKey:  apiKey,
+			BaseURL: baseURL,
+			Model:   model,
+		})
+	}
 }
