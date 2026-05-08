@@ -19,11 +19,11 @@ if errorlevel 1 goto build_fail
 echo [OK] Build complete.
 echo.
 
-rem ---- Step 2: Kill existing game process ----
-echo [2/5] Killing existing game process (if any)...
-powershell -NoProfile -Command "Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue | Stop-Process -Force"
+rem ---- Step 2: Kill existing processes ----
+echo [2/5] Killing existing processes (if any)...
+powershell -NoProfile -Command "Get-Process -Name 'Stardew Valley','StardewModdingAPI','smartnpc-agent','smartnpc-mcp' -ErrorAction SilentlyContinue | Stop-Process -Force"
 timeout /t 1 /nobreak >nul
-echo [OK] Game process cleared.
+echo [OK] Old processes cleared.
 echo.
 
 rem ---- Step 3: Install mod ----
@@ -33,19 +33,18 @@ if errorlevel 1 goto install_fail
 echo [OK] Mod installed.
 echo.
 
-rem ---- Step 4: Start Hermes gateway in WSL ----
-echo [4/5] Starting Hermes gateway in WSL...
-start "Hermes Gateway" wsl -d Ubuntu bash -c "hermes gateway run --accept-hooks"
+rem ---- Step 4: Start Hermes gateway in WSL (single instance, 6 conversations) ----
+echo [4/5] Starting Hermes gateway in WSL (xiami profile)...
+start "Hermes Gateway" wsl -d Ubuntu-22.04 bash -lc "hermes -p xiami gateway run --accept-hooks --replace"
 echo [OK] Hermes gateway starting in background window.
-echo      Waiting for Hermes to become healthy...
+echo      Waiting for gateway to become healthy (up to 60s)...
 
 :wait_hermes
 timeout /t 5 /nobreak >nul
-curl -sS http://192.168.59.118:8642/health >nul 2>&1
-if errorlevel 1 (
+curl --silent --fail http://192.168.59.118:8643/health >nul 2>nul && goto hermes_ok
 echo      ... still waiting for Hermes gateway
 goto wait_hermes
-)
+:hermes_ok
 echo [OK] Hermes gateway is healthy.
 echo.
 
@@ -70,7 +69,7 @@ rem                    the event's `npc` field (multi-NPC mode).
 rem Override DECISION_URL / DECISION_MODEL env to swap endpoints without editing this script.
 if not defined DECISION_URL   set DECISION_URL=http://v2.open.venus.oa.com/llmproxy
 if not defined DECISION_MODEL set DECISION_MODEL=gpt-5.5
-bin\smartnpc-agent.exe --mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe --mcp-args "--ws-url ws://127.0.0.1:18745/ws" --log-level debug run --personas-dir personas --persona-url http://192.168.59.118:8642/v1 --api-key smartnpc-test-key --decision-url %DECISION_URL% --decision-model %DECISION_MODEL%
+bin\smartnpc-agent.exe --mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe --mcp-args "--ws-url ws://127.0.0.1:18745/ws" --log-level debug run --personas-dir personas --persona-url http://192.168.59.118:8643 --persona-mode hermes --api-key xiami-npc-key --decision-url %DECISION_URL% --decision-model %DECISION_MODEL%
 goto :eof
 
 :build_fail
