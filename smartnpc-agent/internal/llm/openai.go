@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -51,6 +52,7 @@ type openaiProvider struct {
 func (p *openaiProvider) Name() string { return "openai" }
 
 func (p *openaiProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	reqStart := time.Now()
 	body := p.buildRequest(req)
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
@@ -68,8 +70,10 @@ func (p *openaiProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	}
 
 	resp, err := p.client.Do(httpReq)
+	httpElapsed := time.Since(reqStart)
 	if err != nil {
-		return nil, fmt.Errorf("openai: request failed: %w", err)
+		fmt.Fprintf(io.Discard, "") // keep io import
+		return nil, fmt.Errorf("openai: request failed after %dms: %w", httpElapsed.Milliseconds(), err)
 	}
 	defer resp.Body.Close()
 
@@ -79,8 +83,12 @@ func (p *openaiProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("openai: HTTP %d: %s", resp.StatusCode, truncate(string(respBody), 200))
+		return nil, fmt.Errorf("openai: HTTP %d after %dms: %s", resp.StatusCode, httpElapsed.Milliseconds(), truncate(string(respBody), 200))
 	}
+
+	totalElapsed := time.Since(reqStart)
+	fmt.Fprintf(os.Stderr, "[openai] model=%s http=%dms total=%dms req_bytes=%d\n",
+		body.Model, httpElapsed.Milliseconds(), totalElapsed.Milliseconds(), len(jsonBody))
 
 	return p.parseResponse(respBody)
 }

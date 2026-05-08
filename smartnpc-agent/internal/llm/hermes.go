@@ -51,17 +51,26 @@ func NewHermes(cfg HermesConfig) (Provider, error) {
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &hermesProvider{
-		cfg:    cfg,
-		client: &http.Client{Timeout: cfg.Timeout},
+		cfg:         cfg,
+		client:      &http.Client{Timeout: cfg.Timeout},
+		initialized: make(map[string]bool),
 	}, nil
 }
 
 type hermesProvider struct {
-	cfg    HermesConfig
-	client *http.Client
-	mu     sync.Mutex
-	epoch  int // incremented on context overflow to start fresh conversation
+	cfg         HermesConfig
+	client      *http.Client
+	mu          sync.Mutex
+	epoch       int // incremented on context overflow to start fresh conversation
+	initialized map[string]bool
+	lastTokens  int // input_tokens from the most recent successful response
 }
+
+// maxInputTokens defines the soft ceiling before we proactively rotate the
+// conversation epoch. This avoids waiting 80+ seconds for a 78K-token request
+// to complete before detecting overflow. Set well below the model's hard limit
+// (256K for gpt-5.5) so the last response in an epoch still has headroom.
+const maxInputTokens = 30000
 
 func (p *hermesProvider) Name() string { return "hermes" }
 
@@ -85,14 +94,45 @@ func (p *hermesProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		return &ChatResponse{Content: "(no input)"}, nil
 	}
 
-	instructions := extractDynamicContext(req.Messages)
 	convKey := p.conversationKey()
+
+	p.mu.Lock()
+	first := !p.initialized[convKey]
+	lastTok := p.lastTokens
+	p.mu.Unlock()
+
+	// Proactive epoch rotation: if the previous response already used more
+	// than maxInputTokens, rotate NOW rather than waiting for another 80s
+	// request that will inevitably overflow or be painfully slow.
+	if !first && lastTok > maxInputTokens {
+		fmt.Fprintf(os.Stderr, "[hermes] proactive rotation: last request used %d input tokens (limit %d)\n", lastTok, maxInputTokens)
+		p.mu.Lock()
+		p.epoch++
+		delete(p.initialized, convKey)
+		p.mu.Unlock()
+		convKey = p.conversationKey()
+		first = true
+	}
+
+	var instructions string
+	if first {
+		// First request in this conversation — send the full persona prompt so
+		// Hermes has the complete system context before replying. Subsequent
+		// requests only carry the per-turn dynamic context.
+		instructions = extractSystemPrompt(req.Messages)
+		if len(instructions) > 6000 {
+			instructions = instructions[:6000]
+		}
+	} else {
+		instructions = extractDynamicContext(req.Messages)
+	}
 
 	result, err := p.doRequest(ctx, req.Model, userInput, instructions, convKey)
 	if err != nil && isContextOverflow(err) {
 		// Context overflow — rotate to new epoch with fresh persona prompt.
 		p.mu.Lock()
 		p.epoch++
+		delete(p.initialized, convKey)
 		p.mu.Unlock()
 		newConvKey := p.conversationKey()
 
@@ -105,12 +145,25 @@ func (p *hermesProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		freshInput := "[系统：由于对话过长，之前的详细对话已归档到记忆中。你的长期记忆仍然完整，请继续保持角色。]\n\n" + userInput
 
 		result, err = p.doRequest(ctx, req.Model, freshInput, freshInstructions, newConvKey)
+		if err == nil {
+			p.mu.Lock()
+			p.initialized[newConvKey] = true
+			p.mu.Unlock()
+		}
+		return result, err
+	}
+
+	if err == nil {
+		p.mu.Lock()
+		p.initialized[convKey] = true
+		p.mu.Unlock()
 	}
 	return result, err
 }
 
 // doRequest executes a single /v1/responses call.
 func (p *hermesProvider) doRequest(ctx context.Context, model, input, instructions, conversation string) (*ChatResponse, error) {
+	reqStart := time.Now()
 	body := hermesRequest{
 		Model:        model,
 		Input:        input,
@@ -141,7 +194,9 @@ func (p *hermesProvider) doRequest(ctx context.Context, model, input, instructio
 	}
 
 	resp, err := p.client.Do(httpReq)
+	httpElapsed := time.Since(reqStart)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[hermes] request failed after %dms: %v\n", httpElapsed.Milliseconds(), err)
 		return nil, fmt.Errorf("hermes: request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -153,11 +208,21 @@ func (p *hermesProvider) doRequest(ctx context.Context, model, input, instructio
 
 	if resp.StatusCode != http.StatusOK {
 		errMsg := truncate(string(respBody), 300)
-		fmt.Fprintf(os.Stderr, "[hermes] ERROR HTTP %d: %s\n", resp.StatusCode, truncate(string(respBody), 200))
+		fmt.Fprintf(os.Stderr, "[hermes] ERROR HTTP %d after %dms: %s\n", resp.StatusCode, httpElapsed.Milliseconds(), truncate(string(respBody), 200))
 		return nil, fmt.Errorf("hermes: HTTP %d: %s", resp.StatusCode, errMsg)
 	}
 
-	fmt.Fprintf(os.Stderr, "[hermes] OK id=%s\n", extractResponseID(respBody))
+	totalElapsed := time.Since(reqStart)
+	inputTokens := extractInputTokens(respBody)
+	fmt.Fprintf(os.Stderr, "[hermes] OK id=%s http=%dms total=%dms tokens_in=%s\n",
+		extractResponseID(respBody), httpElapsed.Milliseconds(), totalElapsed.Milliseconds(),
+		extractUsageInfo(respBody))
+
+	// Track input token usage for proactive epoch rotation.
+	p.mu.Lock()
+	p.lastTokens = inputTokens
+	p.mu.Unlock()
+
 	return p.parseResponse(respBody)
 }
 
@@ -255,6 +320,32 @@ func extractResponseID(body []byte) string {
 	}
 	_ = json.Unmarshal(body, &stub)
 	return stub.ID
+}
+
+// extractUsageInfo pulls token counts from the response for logging.
+func extractUsageInfo(body []byte) string {
+	var stub struct {
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &stub); err != nil || stub.Usage.TotalTokens == 0 {
+		return "?"
+	}
+	return fmt.Sprintf("in=%d out=%d total=%d", stub.Usage.InputTokens, stub.Usage.OutputTokens, stub.Usage.TotalTokens)
+}
+
+// extractInputTokens returns the input_tokens count from a response body.
+func extractInputTokens(body []byte) int {
+	var stub struct {
+		Usage struct {
+			InputTokens int `json:"input_tokens"`
+		} `json:"usage"`
+	}
+	_ = json.Unmarshal(body, &stub)
+	return stub.Usage.InputTokens
 }
 
 // extractDynamicContext pulls only per-turn dynamic context from system

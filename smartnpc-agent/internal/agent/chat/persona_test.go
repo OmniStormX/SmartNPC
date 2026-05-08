@@ -169,20 +169,20 @@ func TestLoadPersona_WithFriendshipBehaviors(t *testing.T) {
 	}
 }
 
-// TestLoadPersona_ShippedAbigail loads the real personas/abigail.json shipped
-// with the repo to make sure the JSON actually parses and exposes all four
-// heart ranges. Catches accidental regressions when the file is hand-edited.
+// TestLoadPersona_ShippedAbigail loads the real personas/abigail/ shipped
+// with the repo to make sure the persona actually parses and exposes all four
+// heart ranges. Catches accidental regressions when files are hand-edited.
 func TestLoadPersona_ShippedPersonas(t *testing.T) {
 	cases := []struct {
 		name string
 		path string
 	}{
-		{"abigail", "../../../personas/abigail.json"},
-		{"xiami", "../../../personas/xiami.json"},
-		{"haley", "../../../personas/haley.json"},
-		{"harvey", "../../../personas/harvey.json"},
-		{"penny", "../../../personas/penny.json"},
-		{"sebastian", "../../../personas/sebastian.json"},
+		{"abigail", "../../../personas/abigail"},
+		{"xiami", "../../../personas/xiami"},
+		{"haley", "../../../personas/haley"},
+		{"harvey", "../../../personas/harvey"},
+		{"penny", "../../../personas/penny"},
+		{"sebastian", "../../../personas/sebastian"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -35,6 +35,7 @@ namespace SmartNPC.Bridge
         private MovementHandler?  _movement;
         private FollowSystem?     _follow;
         private BehaviorHandler?  _behavior;
+        private WanderSystem?     _wander;
         private ChatMessageStore _messageStore = new();
         private ChatSideButton?  _sideButton;
 
@@ -70,6 +71,8 @@ namespace SmartNPC.Bridge
                 _movement = new MovementHandler(this.Monitor);
                 _follow   = new FollowSystem(this.Monitor);
                 _behavior = new BehaviorHandler(this.Monitor, _follow);
+                _wander   = new WanderSystem(this.Monitor, _follow);
+                _wander.OnNpcEncounter += this.HandleNpcEncounter;
 
                 _router.Register("mail_send",            _mail.Handle);
                 _router.Register("chat_say",             _chat.Handle);
@@ -122,6 +125,7 @@ namespace SmartNPC.Bridge
             _movement?.PumpOnGameTick();
             _behavior?.PumpOnGameTick();
             _follow?.PumpOnGameTick();
+            _wander?.Tick();
             NpcDialoguePatch.PumpInteractions();
 
             // After DialogueBox dismissed, reopen NpcChatBar.
@@ -196,6 +200,16 @@ namespace SmartNPC.Bridge
         {
             if (!e.IsLocalPlayer) return;
             _follow?.OnPlayerWarped(e.NewLocation);
+        }
+
+        /// <summary>
+        /// Called by WanderSystem when two agent NPCs meet. Broadcasts an
+        /// npc_encounter event so the Agent can trigger memory-sharing dialogue.
+        /// </summary>
+        private void HandleNpcEncounter(string npcA, string npcB, string mapName)
+        {
+            if (_ws == null) return;
+            _ = _ws.BroadcastEvent("npc_encounter", new { npc_a = npcA, npc_b = npcB, map = mapName });
         }
 
         /// <summary>Open bottom chat bar for near-NPC quick interaction.</summary>

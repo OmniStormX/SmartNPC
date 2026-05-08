@@ -1,11 +1,15 @@
 // Proactive behavior ticker — periodically injects a system prompt into each
-// NPC agent, giving them the opportunity to perform autonomous actions (walk,
-// chat with other NPCs, idle, etc.) without player initiation.
+// NPC agent, giving them the opportunity to perform autonomous social actions
+// (chat with nearby NPCs, react to events) without player initiation.
+//
+// Movement is handled entirely by the C# WanderSystem state machine — the
+// proactive ticker no longer suggests npc_move_to.
 
 package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -98,16 +102,23 @@ func (a *Agent) recentlyActive(within time.Duration) bool {
 
 // doProactiveTick builds a proactive prompt and runs the agent's respond loop.
 // If the LLM replies "idle", no chat_say is emitted.
+//
+// IMPORTANT: To avoid polluting the Hermes conversation with hundreds of idle
+// proactive ticks, we use respondProactive() which only invokes the persona
+// stage when the decision layer actually took action. Idle ticks never touch
+// the Hermes session, keeping input_tokens from ballooning.
 func (a *Agent) doProactiveTick(ctx context.Context) {
 	tickCtx, cancel := context.WithTimeout(ctx, a.cfg.Timeout)
 	defer cancel()
 
-	// Gather game state for context.
+	// Gather context: game state + NPC position + nearby entities.
 	gameState := a.getGameStateContext(tickCtx)
+	position := a.getPositionContext(tickCtx)
+	nearby := a.getNearbyContext(tickCtx)
 
-	prompt := buildProactivePrompt(a.cfg.Speaker, gameState)
+	prompt := buildProactivePrompt(a.cfg.Speaker, gameState, position, nearby)
 
-	reply, err := a.respond(tickCtx, prompt)
+	reply, err := a.respondProactive(tickCtx, prompt)
 	if err != nil {
 		a.cfg.Logger.Warn("proactive tick LLM failed", "speaker", a.cfg.Speaker, "err", err)
 		return
@@ -142,25 +153,134 @@ func (a *Agent) doProactiveTick(ctx context.Context) {
 }
 
 // buildProactivePrompt constructs the system injection for autonomous behavior.
-func buildProactivePrompt(speaker, gameState string) string {
+// Movement is handled by C# WanderSystem — this prompt only covers social
+// behaviors and environmental awareness.
+func buildProactivePrompt(speaker, gameState, position, nearby string) string {
 	var sb strings.Builder
 	sb.WriteString("[系统提示 — 自主行为时间]\n")
 	if gameState != "" {
 		sb.WriteString(gameState)
 		sb.WriteString("\n")
 	}
-	sb.WriteString(fmt.Sprintf("你是 %s，你已经空闲了一段时间。根据你的性格和当前状态，你可以自由决定做什么：\n", speaker))
-	sb.WriteString("- 使用 npc_move_to 去某个地方散步\n")
-	sb.WriteString("- 使用 npc_send_message 给另一个 NPC 传话或闲聊\n")
-	sb.WriteString("- 使用 npc_get_nearby 观察周围环境\n")
-	sb.WriteString("- 使用 npc_get_environment 感受当前环境\n")
-	sb.WriteString("- 或者什么都不做（回复 idle）\n")
+	if position != "" {
+		sb.WriteString(position)
+		sb.WriteString("\n")
+	}
+	if nearby != "" {
+		sb.WriteString(nearby)
+		sb.WriteString("\n")
+	}
+	sb.WriteString(fmt.Sprintf("\n你是 %s，已经空闲了一段时间。你正在闲逛。根据你的性格和周围环境，你可以：\n", speaker))
+	sb.WriteString("- 如果附近有其他 NPC，可以用 npc_send_message 跟他们闲聊（简短1-2句）\n")
+	sb.WriteString("- 如果附近有玩家且距离<5，可以主动打招呼\n")
+	sb.WriteString("- 什么都不做（回复 idle）\n")
 	sb.WriteString("\n规则：\n")
-	sb.WriteString("- 不要主动对玩家说话（除非你在玩家附近且真的有话想说）\n")
-	sb.WriteString("- 如果你选择做某事，执行对应的 tool 调用\n")
-	sb.WriteString("- 如果你什么都不想做，只回复一个词: idle\n")
-	sb.WriteString("- 保持符合你性格的行为模式")
+	sb.WriteString("- 不要使用 npc_move_to（移动由系统自动处理）\n")
+	sb.WriteString("- 跟 NPC 闲聊保持简短（1-2句），不要频繁\n")
+	sb.WriteString("- 大部分时候选择 idle，保持自然节奏\n")
+	sb.WriteString("- 如果什么都不想做，只回复一个词: idle")
 	return sb.String()
+}
+
+// getPositionContext calls npc_get_position via MCP and returns a formatted
+// string like "[你的位置] 地图: Farm, 坐标: (64, 15), 朝向: 南".
+func (a *Agent) getPositionContext(ctx context.Context) string {
+	a.mu.Lock()
+	s := a.session
+	speaker := a.cfg.Speaker
+	a.mu.Unlock()
+	if s == nil {
+		return ""
+	}
+
+	res, err := s.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "npc_get_position",
+		Arguments: map[string]any{"npc": speaker},
+	})
+	if err != nil || res == nil || res.IsError {
+		return ""
+	}
+
+	raw := extractToolText(res)
+	if raw == "" {
+		return ""
+	}
+
+	var pos struct {
+		X         float64 `json:"x"`
+		Y         float64 `json:"y"`
+		Map       string  `json:"map"`
+		Direction string  `json:"direction"`
+		IsMoving  bool    `json:"is_moving"`
+	}
+	if err := json.Unmarshal([]byte(raw), &pos); err != nil {
+		return ""
+	}
+
+	dirCN := map[string]string{
+		"up": "北", "down": "南", "left": "西", "right": "东",
+	}
+	dir := dirCN[pos.Direction]
+	if dir == "" {
+		dir = pos.Direction
+	}
+
+	result := fmt.Sprintf("[你的位置] 地图: %s, 坐标: (%.0f, %.0f), 朝向: %s",
+		pos.Map, pos.X, pos.Y, dir)
+	if pos.IsMoving {
+		result += " (移动中)"
+	}
+	return result
+}
+
+// getNearbyContext calls npc_get_nearby via MCP and returns a formatted string
+// listing nearby NPCs and players. Returns "" on failure or when alone.
+func (a *Agent) getNearbyContext(ctx context.Context) string {
+	a.mu.Lock()
+	s := a.session
+	speaker := a.cfg.Speaker
+	a.mu.Unlock()
+	if s == nil {
+		return ""
+	}
+
+	res, err := s.CallTool(ctx, &mcp.CallToolParams{
+		Name: "npc_get_nearby",
+		Arguments: map[string]any{
+			"npc":    speaker,
+			"radius": 15.0,
+		},
+	})
+	if err != nil || res == nil || res.IsError {
+		return ""
+	}
+
+	raw := extractToolText(res)
+	if raw == "" {
+		return ""
+	}
+
+	var data struct {
+		Count  int `json:"count"`
+		Nearby []struct {
+			Name     string  `json:"name"`
+			Type     string  `json:"type"`
+			Distance float64 `json:"distance"`
+		} `json:"nearby"`
+	}
+	if err := json.Unmarshal([]byte(raw), &data); err != nil || data.Count == 0 {
+		return "[周围] 附近没有其他人"
+	}
+
+	var parts []string
+	for _, n := range data.Nearby {
+		typeLabel := "NPC"
+		if n.Type == "player" {
+			typeLabel = "玩家"
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s, %.0f格)", n.Name, typeLabel, n.Distance))
+	}
+	return "[周围] 附近有: " + strings.Join(parts, ", ")
 }
 
 // isIdleReply returns true if the LLM chose not to act.

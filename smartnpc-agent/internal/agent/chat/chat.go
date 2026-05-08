@@ -85,6 +85,9 @@ type Agent struct {
 	// lastUserMsgTime tracks when the last player message arrived, used by the
 	// proactive ticker to avoid interrupting active conversations.
 	lastUserMsgTime time.Time
+	// npcReplyMode is true while responding to an NPC message. When set,
+	// npc_send_message calls are blocked to prevent infinite ping-pong loops.
+	npcReplyMode bool
 	// replyDone is an optional test hook: when non-nil, every completed
 	// respondAndSay call sends on it (non-blocking). Tests use this to wait
 	// for the async goroutine dispatched by HandleNotification without
@@ -157,21 +160,27 @@ func (a *Agent) SetRouter(r interface {
 	a.router = r
 }
 
-// ReceiveNPCMessage injects a message from another NPC into this agent's
-// history and triggers an asynchronous response. The message appears as a
-// system-tagged entry so the LLM sees it as world context rather than player
-// input. The agent will then formulate an in-character reply and speak it via
-// chat_say (which the game displays as a normal dialogue).
+// ReceiveNPCMessage triggers an asynchronous response to a message from
+// another NPC. The message is formatted as a system-tagged event so the LLM
+// treats it as world context rather than player input. History appending is
+// handled by the normal respond() → respondDual() pipeline — we do NOT
+// pre-append here to avoid double-insertion.
 func (a *Agent) ReceiveNPCMessage(fromNPC, message string) {
-	injected := fmt.Sprintf("[%s 给你传话说：「%s」请你自然地回应这条来自 NPC 同伴的消息，可以选择通过 npc_send_message 回复对方。]", fromNPC, message)
+	injected := fmt.Sprintf("[NPC 消息] %s 对你说：「%s」\n这是来自其他NPC的消息，不是玩家指令。请自然回应，但不要使用 npc_send_message 回传消息给对方（避免无限对话循环）。用 chat_say 说话即可。", fromNPC, message)
 	a.cfg.Logger.Info("received NPC message", "from", fromNPC, "message", message)
 
+	// Set flag so that npc_send_message is blocked during this response
+	// cycle, preventing infinite ping-pong between two NPCs.
 	a.mu.Lock()
-	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: injected})
-	a.trimHistory()
+	a.npcReplyMode = true
 	a.mu.Unlock()
 
-	go a.respondAndSay(injected)
+	go func() {
+		a.respondAndSay(injected)
+		a.mu.Lock()
+		a.npcReplyMode = false
+		a.mu.Unlock()
+	}()
 }
 
 // LoadTools fetches available MCP tools and caches them for LLM requests.
@@ -597,157 +606,6 @@ func extractToolText(res *mcp.CallToolResult) string {
 	return ""
 }
 
-// applyMoveIntent inspects the user utterance for a movement keyword and,
-// when appropriate, preemptively fires `npc_move_to` so the NPC starts
-// walking regardless of whether the LLM emits tool_calls. It returns the
-// user text with a short bracketed hint appended so the LLM can narrate the
-// action in character.
-//
-// Three outcomes:
-//
-//  1. No move intent → returns userText unchanged.
-//  2. Move intent with a resolved named location → fires the tool, appends
-//     "[你正在走向X]" and returns.
-//  3. Move intent without a location match → appends "[玩家要求移动但目的地
-//     不明，请询问具体位置]" so the LLM asks for clarification.
-//
-// Tool execution failures are logged but never surface as errors: the chat
-// turn should still produce a natural reply even when the motion fails.
-func (a *Agent) applyMoveIntent(ctx context.Context, userText string) string {
-	if a.locations == nil {
-		return userText
-	}
-	intent := a.locations.DetectMoveIntent(userText)
-	if !intent.HasIntent {
-		return userText
-	}
-
-	if intent.Location == nil {
-		a.cfg.Logger.Debug("move intent detected but no named location matched", "text", userText)
-		return userText + "\n[系统：玩家让你移动但你不确定具体位置，请询问更明确的目的地]"
-	}
-
-	loc := intent.Location
-	a.cfg.Logger.Info("auto-executing move_to", "location", loc.Name, "x", loc.X, "y", loc.Y)
-
-	// Kick off npc_move_to on the active MCP session. If the session is not
-	// wired (e.g. in unit tests) we still annotate the user message so the
-	// LLM responds as if the move were in progress — tests can assert the
-	// prompt shape without needing a live mod.
-	a.mu.Lock()
-	s := a.session
-	a.mu.Unlock()
-	if s != nil {
-		args := map[string]any{
-			"npc": a.cfg.Speaker,
-			"x":   loc.X,
-			"y":   loc.Y,
-		}
-		if loc.Map != "" {
-			args["map"] = loc.Map
-		}
-		moveRes, err := s.CallTool(ctx, &mcp.CallToolParams{Name: "npc_move_to", Arguments: args})
-		if err != nil {
-			a.cfg.Logger.Warn("auto npc_move_to failed", "err", err, "location", loc.Name)
-		} else {
-			a.cfg.Logger.Info("auto npc_move_to result",
-				"location", loc.Name,
-				"args", args,
-				"result", extractToolText(moveRes),
-			)
-		}
-	}
-
-	return userText + "\n[系统：你已经开始走向" + loc.Name + "了，请自然地回应]"
-}
-
-// applyBehaviorIntent handles high-level behavior verbs (summon/follow/lead/
-// stop) before the normal move-intent parser runs. It returns (effectiveText,
-// handled) — when handled is true the caller should skip `applyMoveIntent`
-// entirely, since behavior keywords often overlap with plain move keywords
-// (e.g. "带我去湖边" is BOTH lead + move).
-//
-// Outcomes:
-//
-//  1. No behavior intent → returns userText unchanged, handled=false.
-//  2. "stop"   → calls npc_follow_stop, appends "[系统：你已停止跟随]".
-//  3. "follow" → calls npc_follow_start, appends "[系统：你已开始跟着玩家]".
-//  4. "summon" → calls npc_summon, appends "[系统：你正在赶往玩家身边]".
-//  5. "lead"   → if a landmark was resolved, calls npc_lead_to and appends
-//                "[系统：你正在带玩家前往X]"; if no landmark, falls through
-//                to follow as a graceful fallback.
-//
-// Tool failures are logged but never surface — the chat turn must still
-// produce a natural reply even when the motion fails.
-func (a *Agent) applyBehaviorIntent(ctx context.Context, userText string) (string, bool) {
-	if a.locations == nil {
-		return userText, false
-	}
-	intent, loc := a.locations.DetectBehaviorIntent(userText)
-	if intent == "" {
-		return userText, false
-	}
-
-	a.mu.Lock()
-	s := a.session
-	speaker := a.cfg.Speaker
-	a.mu.Unlock()
-
-	call := func(name string, args map[string]any) {
-		if s == nil {
-			return
-		}
-		res, err := s.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
-		if err != nil {
-			a.cfg.Logger.Warn("auto behavior tool failed", "name", name, "err", err)
-		} else {
-			a.cfg.Logger.Info("auto behavior tool result",
-				"name", name,
-				"args", args,
-				"result", extractToolText(res),
-			)
-		}
-	}
-
-	switch intent {
-	case "stop":
-		a.cfg.Logger.Info("auto-executing follow_stop")
-		call("npc_follow_stop", map[string]any{"npc": speaker})
-		return userText + "\n[系统：你已停止跟随玩家，请自然地回应]", true
-
-	case "follow":
-		a.cfg.Logger.Info("auto-executing follow_start")
-		call("npc_follow_start", map[string]any{"npc": speaker})
-		return userText + "\n[系统：你已开始跟着玩家走，请自然地回应]", true
-
-	case "summon":
-		a.cfg.Logger.Info("auto-executing summon")
-		call("npc_summon", map[string]any{"npc": speaker})
-		return userText + "\n[系统：你正在赶往玩家身边，请自然地回应]", true
-
-	case "lead":
-		if loc == nil {
-			// "lead the way" without a destination — degrade to follow so
-			// something sensible happens.
-			a.cfg.Logger.Info("lead intent without destination, falling back to follow_start")
-			call("npc_follow_start", map[string]any{"npc": speaker})
-			return userText + "\n[系统：玩家要你带路但没说具体地方，请自然地反问或先跟上]", true
-		}
-		a.cfg.Logger.Info("auto-executing lead_to", "location", loc.Name, "x", loc.X, "y", loc.Y)
-		args := map[string]any{
-			"npc": speaker,
-			"x":   loc.X,
-			"y":   loc.Y,
-		}
-		if loc.Map != "" {
-			args["map"] = loc.Map
-		}
-		call("npc_lead_to", args)
-		return userText + "\n[系统：你正在带玩家前往" + loc.Name + "，请自然地回应]", true
-	}
-	return userText, false
-}
-
 // respond runs the LLM loop: send messages → if tool_calls → execute → repeat.
 func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	// Dual-LLM routing: when a decision layer is configured, defer to the
@@ -920,6 +778,15 @@ func (a *Agent) executeTool(ctx context.Context, tc llm.ToolCall) (string, error
 func (a *Agent) executeLocalTool(tc llm.ToolCall) (string, bool) {
 	switch tc.Name {
 	case "npc_send_message":
+		// Block npc_send_message when responding to an NPC message to prevent
+		// infinite ping-pong loops between two agents.
+		a.mu.Lock()
+		blocked := a.npcReplyMode
+		a.mu.Unlock()
+		if blocked {
+			a.cfg.Logger.Info("npc_send_message blocked: in npcReplyMode (preventing ping-pong)")
+			return `{"ok":false,"error":"cannot send messages while replying to an NPC message (anti-loop)"}`, true
+		}
 		return a.handleNpcSendMessage(tc.Arguments), true
 	default:
 		return "", false

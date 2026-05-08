@@ -33,12 +33,12 @@ func TestIsIdleReply(t *testing.T) {
 }
 
 func TestBuildProactivePrompt(t *testing.T) {
-	prompt := buildProactivePrompt("Abigail", "[Current game state] Time: 14:00 (afternoon), spring 5")
+	prompt := buildProactivePrompt("Abigail",
+		"[Current game state] Time: 14:00 (afternoon), spring 5",
+		"[你的位置] 地图: Farm, 坐标: (64, 15), 朝向: 南",
+		"[周围] 附近有: OmniStorm(玩家, 3格)")
 	if !strings.Contains(prompt, "Abigail") {
 		t.Error("prompt should contain speaker name")
-	}
-	if !strings.Contains(prompt, "npc_move_to") {
-		t.Error("prompt should mention npc_move_to tool")
 	}
 	if !strings.Contains(prompt, "npc_send_message") {
 		t.Error("prompt should mention npc_send_message tool")
@@ -49,10 +49,20 @@ func TestBuildProactivePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "14:00") {
 		t.Error("prompt should contain game state")
 	}
+	if !strings.Contains(prompt, "Farm") {
+		t.Error("prompt should contain position info")
+	}
+	if !strings.Contains(prompt, "OmniStorm") {
+		t.Error("prompt should contain nearby info")
+	}
+	// Movement is handled by C# WanderSystem — prompt should NOT suggest npc_move_to
+	if !strings.Contains(prompt, "不要使用 npc_move_to") {
+		t.Error("prompt should prohibit npc_move_to")
+	}
 }
 
 func TestBuildProactivePrompt_NoGameState(t *testing.T) {
-	prompt := buildProactivePrompt("XiaMi", "")
+	prompt := buildProactivePrompt("XiaMi", "", "", "")
 	if !strings.Contains(prompt, "XiaMi") {
 		t.Error("prompt should contain speaker name")
 	}

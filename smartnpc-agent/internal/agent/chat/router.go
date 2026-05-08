@@ -15,7 +15,10 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -182,6 +185,16 @@ func (r *Router) HandleNotification() func(context.Context, *mcp.LoggingMessageR
 			r.dispatch(last, text, "chat_received")
 			return
 		}
+
+		// npc_encounter: two agent NPCs met in the same map. Trigger a
+		// one-shot memory-sharing exchange via npc_send_message (npcA → npcB).
+		if npcA, npcB, ok := extractNpcEncounter(req); ok {
+			if logger != nil {
+				logger.Info("npc_encounter", "npc_a", npcA, "npc_b", npcB)
+			}
+			r.handleEncounter(npcA, npcB)
+			return
+		}
 	}
 }
 
@@ -272,4 +285,71 @@ func normalizeSpeaker(name string) string {
 		b[i] = c
 	}
 	return string(b)
+}
+
+// extractNpcEncounter parses an npc_encounter event from the MCP notification.
+// Returns the two NPC names on success.
+func extractNpcEncounter(req *mcp.LoggingMessageRequest) (npcA, npcB string, ok bool) {
+	if req == nil || req.Params == nil {
+		return "", "", false
+	}
+	m, mOk := req.Params.Data.(map[string]any)
+	if !mOk {
+		return "", "", false
+	}
+	if m["kind"] != "stardew/event" || m["name"] != "npc_encounter" {
+		return "", "", false
+	}
+	raw, rawOk := m["data"]
+	if !rawOk {
+		return "", "", false
+	}
+	var inner struct {
+		NpcA string `json:"npc_a"`
+		NpcB string `json:"npc_b"`
+	}
+	switch v := raw.(type) {
+	case map[string]any:
+		inner.NpcA, _ = v["npc_a"].(string)
+		inner.NpcB, _ = v["npc_b"].(string)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return "", "", false
+		}
+		_ = json.Unmarshal(b, &inner)
+	}
+	if inner.NpcA == "" || inner.NpcB == "" {
+		return "", "", false
+	}
+	return inner.NpcA, inner.NpcB, true
+}
+
+// handleEncounter triggers a one-shot memory-sharing exchange between two NPCs
+// that met on the same map. NPC A sends a brief message to NPC B — no reply
+// expected (npcReplyMode blocks the return path anyway).
+//
+// Skipped when NPC A is currently mid-conversation (recently received a player
+// message within 30s) so encounters don't interrupt an active chat.
+func (r *Router) handleEncounter(npcA, npcB string) {
+	r.mu.RLock()
+	agentA := r.agents[normalizeSpeaker(npcA)]
+	r.mu.RUnlock()
+	if agentA == nil {
+		return
+	}
+
+	// Don't interrupt an active player conversation.
+	if agentA.recentlyActive(30 * time.Second) {
+		agentA.cfg.Logger.Debug("encounter skipped: agent recently active",
+			"speaker", npcA, "other", npcB)
+		return
+	}
+
+	// Inject a system message as if npcA decided to greet npcB.
+	// The message goes through respondAndSay which will run the decision
+	// stage — it may call npc_send_message to npcB (allowed because this
+	// is NOT npcReplyMode). NpcB receives it and responds via chat_say only.
+	encounter := fmt.Sprintf("[系统提示 — NPC 相遇]\n你刚好遇到了 %s。如果你想打招呼或分享最近发生的事，用 npc_send_message 跟对方说一句话（简短1-2句）。如果不想搭话，回复 idle。", npcB)
+	go agentA.respondAndSay(encounter)
 }

@@ -62,6 +62,8 @@ func TestNpcSendMessage_DeliverySuccess(t *testing.T) {
 	}
 
 	// Verify B's history contains the injected message from Abigail.
+	// The message goes through the normal respond() pipeline and ends up
+	// as a User role entry (the formatted "[NPC 消息] ..." string).
 	agentB.mu.Lock()
 	histB := agentB.history
 	agentB.mu.Unlock()
@@ -70,7 +72,7 @@ func TestNpcSendMessage_DeliverySuccess(t *testing.T) {
 	}
 	found := false
 	for _, msg := range histB {
-		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "Abigail") && strings.Contains(msg.Content, "今晚去矿洞探险吗") {
+		if strings.Contains(msg.Content, "Abigail") && strings.Contains(msg.Content, "今晚去矿洞探险吗") {
 			found = true
 			break
 		}

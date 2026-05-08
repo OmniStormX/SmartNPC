@@ -238,10 +238,10 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 	return nil
 }
 
-// loadPersonasDir scans dir for *.json files, parses each one as a persona,
-// and builds one Agent per file using the supplied factory. Sorted by
-// filename so a `ls personas/` matches the insertion order in the router,
-// which keeps diagnostics predictable.
+// loadPersonasDir scans dir for subdirectories (each containing persona.json +
+// SOUL.md), parses each one as a persona, and builds one Agent per directory.
+// Also supports legacy *.json files for backward compatibility. Sorted by name
+// so ordering is predictable.
 func loadPersonasDir(dir string, build func(string, string, *chat.Persona) *chat.Agent) ([]*chat.Agent, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -250,13 +250,12 @@ func loadPersonasDir(dir string, build func(string, string, *chat.Persona) *chat
 	var paths []string
 	for _, e := range entries {
 		if e.IsDir() {
-			continue
+			// New structure: subdirectory with persona.json + SOUL.md
+			paths = append(paths, filepath.Join(dir, e.Name()))
+		} else if strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+			// Legacy: flat JSON file
+			paths = append(paths, filepath.Join(dir, e.Name()))
 		}
-		name := e.Name()
-		if !strings.HasSuffix(strings.ToLower(name), ".json") {
-			continue
-		}
-		paths = append(paths, filepath.Join(dir, name))
 	}
 	sort.Strings(paths)
 

@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -61,13 +62,15 @@ const (
 // NPC it is steering. Additional state blocks (time/weather/friendship/
 // position) are appended after substitution.
 const decisionSystemPromptTemplate = `You are a Stardew Valley NPC behavior controller for "{speaker}".
-Analyze the player's message and decide what actions to take.
+Analyze the incoming message and decide what actions to take.
+The message may come from the player OR from another NPC (marked with "[NPC 消息]").
 You MUST use tool calls for physical actions (moving, looking around, checking surroundings).
 If the message is purely conversational (greetings, small talk, questions about mood), call NO tools — a separate role-play model will answer.
 
 Rules:
 - Prefer read tools (npc_get_nearby, npc_get_environment, npc_get_position, friendship_get, game_get_time, game_get_weather) before committing to an action.
 - Do NOT write dialogue. Do NOT role-play. Any text you return will be discarded; only tool_calls matter.
+- When another NPC asks you to move/come/go somewhere, use npc_move_to or npc_summon as appropriate.
 - When you are done, reply with the single word "done".`
 
 // actionResult is one decision-stage tool invocation plus its response,
@@ -82,6 +85,7 @@ type actionResult struct {
 // respondDual runs the decision → persona pipeline. See the file-level
 // doc-comment for the architectural rationale.
 func (a *Agent) respondDual(ctx context.Context, userText string) (string, error) {
+	dualStart := time.Now()
 	a.mu.Lock()
 	decision := a.cfg.DecisionProvider
 	persona := a.cfg.PersonaProvider
@@ -102,15 +106,19 @@ func (a *Agent) respondDual(ctx context.Context, userText string) (string, error
 	// the persona stage has identical ambient awareness. Also consumed by
 	// the decision system prompt so the reasoner knows world state before
 	// picking tools.
+	prefetchStart := time.Now()
 	friendshipCtx := a.getFriendshipContext(ctx)
 	gameStateCtx := a.getGameStateContext(ctx)
+	a.cfg.Logger.Info("timing: prefetch context done", "elapsed_ms", time.Since(prefetchStart).Milliseconds())
 
 	// All tool invocations are delegated to the decision LLM's judgment.
 	// No keyword-based pre-processing — the LLM decides what actions to take.
 	effectiveUserText := userText
 
 	// ── Stage 1: decision ────────────────────────────────────────
+	decisionStart := time.Now()
 	results, decisionErr := a.runDecisionStage(ctx, decision, effectiveUserText, friendshipCtx, gameStateCtx)
+	a.cfg.Logger.Info("timing: decision stage done", "elapsed_ms", time.Since(decisionStart).Milliseconds())
 	if decisionErr != nil {
 		a.cfg.Logger.Warn("decision stage failed", "err", decisionErr)
 		// Graceful degradation: if a distinct single-LLM Provider is
@@ -138,7 +146,53 @@ func (a *Agent) respondDual(ctx context.Context, userText string) (string, error
 	a.cfg.Logger.Info("decision", "tool_calls", len(results))
 
 	// ── Stage 2: persona ─────────────────────────────────────────
-	return a.runPersonaStage(ctx, persona, effectiveUserText, friendshipCtx, gameStateCtx, results)
+	personaStart := time.Now()
+	reply, personaErr := a.runPersonaStage(ctx, persona, effectiveUserText, friendshipCtx, gameStateCtx, results)
+	a.cfg.Logger.Info("timing: persona stage done", "elapsed_ms", time.Since(personaStart).Milliseconds())
+	a.cfg.Logger.Info("timing: respondDual total", "elapsed_ms", time.Since(dualStart).Milliseconds())
+	return reply, personaErr
+}
+
+// respondProactive is a lightweight variant of respondDual for proactive ticks.
+// It runs ONLY the decision stage. If the decision stage produces no tool calls
+// (i.e. the LLM decided "idle"), it returns "idle" immediately WITHOUT touching
+// the Hermes persona stage. This prevents proactive ticks from polluting the
+// Hermes conversation chain with idle messages that would balloon input_tokens.
+//
+// Only when the decision stage actually executes tools (e.g. npc_send_message)
+// does it proceed to the persona stage for an in-character reply.
+func (a *Agent) respondProactive(ctx context.Context, userText string) (string, error) {
+	a.mu.Lock()
+	decision := a.cfg.DecisionProvider
+	persona := a.cfg.PersonaProvider
+	a.mu.Unlock()
+
+	// Fallback: if no dual-LLM config, use single-model respond.
+	if decision == nil {
+		return a.respond(ctx, userText)
+	}
+
+	friendshipCtx := a.getFriendshipContext(ctx)
+	gameStateCtx := a.getGameStateContext(ctx)
+
+	results, decisionErr := a.runDecisionStage(ctx, decision, userText, friendshipCtx, gameStateCtx)
+	if decisionErr != nil {
+		a.cfg.Logger.Warn("proactive decision stage failed", "err", decisionErr)
+		return "idle", nil
+	}
+
+	// No tool calls → LLM chose idle. Skip persona stage entirely.
+	if len(results) == 0 {
+		return "idle", nil
+	}
+
+	a.cfg.Logger.Info("proactive decision acted", "tool_calls", len(results))
+
+	// Decision stage took action → run persona stage for dialogue.
+	if persona == nil {
+		return "idle", nil
+	}
+	return a.runPersonaStage(ctx, persona, userText, friendshipCtx, gameStateCtx, results)
 }
 
 // runDecisionStage feeds the user message + available tool specs to the
@@ -170,6 +224,7 @@ func (a *Agent) runDecisionStage(
 
 	var results []actionResult
 	for round := range maxDecisionRounds {
+		roundStart := time.Now()
 		resp, err := decider.Chat(ctx, llm.ChatRequest{
 			Model:       model,
 			Messages:    msgs,
@@ -177,6 +232,7 @@ func (a *Agent) runDecisionStage(
 			Temperature: 0, // use model default (GPT-5.5 only supports default=1)
 			MaxTokens:   decisionMaxTokens,
 		})
+		a.cfg.Logger.Info("timing: decision LLM call", "round", round, "elapsed_ms", time.Since(roundStart).Milliseconds())
 		if err != nil {
 			return results, fmt.Errorf("decision round %d: %w", round, err)
 		}
