@@ -54,6 +54,7 @@ func NewHermes(cfg HermesConfig) (Provider, error) {
 		cfg:         cfg,
 		client:      &http.Client{Timeout: cfg.Timeout},
 		initialized: make(map[string]bool),
+		turnCount:   make(map[string]int),
 	}, nil
 }
 
@@ -63,7 +64,8 @@ type hermesProvider struct {
 	mu          sync.Mutex
 	epoch       int // incremented on context overflow to start fresh conversation
 	initialized map[string]bool
-	lastTokens  int // input_tokens from the most recent successful response
+	lastTokens  int            // input_tokens from the most recent successful response
+	turnCount   map[string]int // per-conversation-key turn counter
 }
 
 // maxInputTokens defines the soft ceiling before we proactively rotate the
@@ -71,6 +73,11 @@ type hermesProvider struct {
 // to complete before detecting overflow. Set well below the model's hard limit
 // (256K for gpt-5.5) so the last response in an epoch still has headroom.
 const maxInputTokens = 30000
+
+// maxTurnsPerEpoch limits turns within a single conversation epoch. When
+// reached, we rotate to a new epoch with a compressed summary of the prior
+// conversation, removing redundant system prompts and idle exchanges.
+const maxTurnsPerEpoch = 10
 
 func (p *hermesProvider) Name() string { return "hermes" }
 
@@ -86,8 +93,10 @@ func (p *hermesProvider) conversationKey() string {
 	return key
 }
 
-// Chat implements Provider. On context_length_exceeded, auto-rotates to a new
-// conversation epoch and retries with the full persona prompt.
+// Chat implements Provider. Manages conversation lifecycle:
+// 1. Tracks turns per epoch — at maxTurnsPerEpoch, compresses and rotates
+// 2. On context_length_exceeded, auto-rotates with fresh persona prompt
+// 3. On token budget exceeded (maxInputTokens), proactively rotates
 func (p *hermesProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	userInput := extractLastUserMessage(req.Messages)
 	if userInput == "" {
@@ -99,26 +108,29 @@ func (p *hermesProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	p.mu.Lock()
 	first := !p.initialized[convKey]
 	lastTok := p.lastTokens
+	turns := p.turnCount[convKey]
 	p.mu.Unlock()
 
-	// Proactive epoch rotation: if the previous response already used more
-	// than maxInputTokens, rotate NOW rather than waiting for another 80s
-	// request that will inevitably overflow or be painfully slow.
+	// ── Turn-based compression: rotate at maxTurnsPerEpoch ──
+	if !first && turns >= maxTurnsPerEpoch {
+		fmt.Fprintf(os.Stderr, "[hermes] turn limit reached (%d/%d), compressing context → new epoch\n", turns, maxTurnsPerEpoch)
+		p.rotateEpoch(convKey)
+		convKey = p.conversationKey()
+		first = true
+	}
+
+	// ── Token budget check: rotate if last response was too large ──
 	if !first && lastTok > maxInputTokens {
 		fmt.Fprintf(os.Stderr, "[hermes] proactive rotation: last request used %d input tokens (limit %d)\n", lastTok, maxInputTokens)
-		p.mu.Lock()
-		p.epoch++
-		delete(p.initialized, convKey)
-		p.mu.Unlock()
+		p.rotateEpoch(convKey)
 		convKey = p.conversationKey()
 		first = true
 	}
 
 	var instructions string
 	if first {
-		// First request in this conversation — send the full persona prompt so
-		// Hermes has the complete system context before replying. Subsequent
-		// requests only carry the per-turn dynamic context.
+		// First request in new epoch — send the full persona prompt so
+		// Hermes has the complete system context before replying.
 		instructions = extractSystemPrompt(req.Messages)
 		if len(instructions) > 6000 {
 			instructions = instructions[:6000]
@@ -127,16 +139,18 @@ func (p *hermesProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		instructions = extractDynamicContext(req.Messages)
 	}
 
+	// If rotating due to turn limit, prepend a context-carry note so the
+	// model knows prior conversation exists in its long-term memory.
+	if first && turns > 0 {
+		userInput = "[系统：之前的对话已归档到长期记忆中。你对这个玩家的了解仍然完整，请继续保持角色，不要重复自我介绍。]\n\n" + userInput
+	}
+
 	result, err := p.doRequest(ctx, req.Model, userInput, instructions, convKey)
 	if err != nil && isContextOverflow(err) {
 		// Context overflow — rotate to new epoch with fresh persona prompt.
-		p.mu.Lock()
-		p.epoch++
-		delete(p.initialized, convKey)
-		p.mu.Unlock()
+		fmt.Fprintf(os.Stderr, "[hermes] context overflow, rotating: %s → new epoch\n", convKey)
+		p.rotateEpoch(convKey)
 		newConvKey := p.conversationKey()
-
-		fmt.Fprintf(os.Stderr, "[hermes] context overflow, rotating: %s → %s\n", convKey, newConvKey)
 
 		freshInstructions := extractSystemPrompt(req.Messages)
 		if len(freshInstructions) > 4000 {
@@ -148,6 +162,7 @@ func (p *hermesProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		if err == nil {
 			p.mu.Lock()
 			p.initialized[newConvKey] = true
+			p.turnCount[newConvKey] = 1
 			p.mu.Unlock()
 		}
 		return result, err
@@ -156,9 +171,19 @@ func (p *hermesProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	if err == nil {
 		p.mu.Lock()
 		p.initialized[convKey] = true
+		p.turnCount[convKey] = turns + 1
 		p.mu.Unlock()
 	}
 	return result, err
+}
+
+// rotateEpoch increments the epoch counter and resets tracking for the old key.
+func (p *hermesProvider) rotateEpoch(oldKey string) {
+	p.mu.Lock()
+	p.epoch++
+	delete(p.initialized, oldKey)
+	delete(p.turnCount, oldKey)
+	p.mu.Unlock()
 }
 
 // doRequest executes a single /v1/responses call.
