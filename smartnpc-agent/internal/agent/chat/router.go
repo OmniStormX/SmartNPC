@@ -32,6 +32,11 @@ type Router struct {
 	// Used to route chat_received (which has no npc field) to the agent the
 	// player is presumably talking to.
 	lastActive string
+	// groupSessions holds live, persistent group chat sessions keyed by
+	// session ID. Unlike the old transient GroupChatSession (single round,
+	// stack-scoped), entries here survive across HandleGroupMessage calls
+	// so subsequent player turns keep the same participants + history.
+	groupSessions map[string]*GroupSession
 }
 
 // NewRouter returns an empty Router. Use Register to add agents.
@@ -40,7 +45,8 @@ type Router struct {
 // NewRouterFromAgents registers them in one call.
 func NewRouter() *Router {
 	return &Router{
-		agents: make(map[string]*Agent),
+		agents:        make(map[string]*Agent),
+		groupSessions: make(map[string]*GroupSession),
 	}
 }
 
@@ -195,6 +201,87 @@ func (r *Router) HandleNotification() func(context.Context, *mcp.LoggingMessageR
 			r.handleEncounter(npcA, npcB)
 			return
 		}
+
+		// group_chat_message: player addressed multiple NPCs at once. We run
+		// the group round asynchronously so the notification handler returns
+		// promptly — RunGroupChat itself drives sequential replies + chat_say
+		// per participant with the configured inter-NPC delay.
+		//
+		// NOTE: legacy event kept for backward-compat with the original
+		// transient single-round API. New code should emit the explicit
+		// group_create / group_message / group_close trio instead.
+		if participants, text, ok := extractGroupChatMessage(req); ok {
+			if logger != nil {
+				logger.Info("group_chat_message",
+					"participants", participants, "text", text)
+			}
+			go r.RunGroupChat(ctx, participants, text)
+			return
+		}
+
+		// group_create: explicit session creation. Idempotent — re-creating
+		// the same group_id resets participants and clears history (see
+		// CreateGroupSession). No NPC replies are triggered here; the
+		// session just sits ready for the next group_message.
+		if groupID, participants, ok := extractGroupCreate(req); ok {
+			if logger != nil {
+				logger.Info("group_create",
+					"group_id", groupID, "participants", participants)
+			}
+			r.CreateGroupSession(groupID, participants)
+			return
+		}
+
+		// group_message: player utterance targeting an existing session.
+		// Runs two rounds asynchronously so the handler returns promptly.
+		// Unknown group IDs log a warning inside HandleGroupMessage.
+		if groupID, text, ok := extractGroupMessage(req); ok {
+			if logger != nil {
+				logger.Info("group_message",
+					"group_id", groupID, "text", text)
+			}
+			go r.HandleGroupMessage(groupID, text)
+			return
+		}
+
+		// group_invite: add an NPC to an existing session mid-conversation.
+		// Errors (unknown session, empty npc) are logged; no partial state.
+		if groupID, npc, ok := extractGroupInvite(req); ok {
+			if logger != nil {
+				logger.Info("group_invite", "group_id", groupID, "npc", npc)
+			}
+			if err := r.AddGroupParticipant(groupID, npc); err != nil {
+				if logger != nil {
+					logger.Warn("group_invite failed",
+						"group_id", groupID, "npc", npc, "err", err)
+				}
+			}
+			return
+		}
+
+		// group_kick: remove an NPC from an existing session. Symmetric
+		// with group_invite — errors logged, no retry.
+		if groupID, npc, ok := extractGroupKick(req); ok {
+			if logger != nil {
+				logger.Info("group_kick", "group_id", groupID, "npc", npc)
+			}
+			if err := r.RemoveGroupParticipant(groupID, npc); err != nil {
+				if logger != nil {
+					logger.Warn("group_kick failed",
+						"group_id", groupID, "npc", npc, "err", err)
+				}
+			}
+			return
+		}
+
+		// group_close: tear down an existing session. Idempotent.
+		if groupID, ok := extractGroupClose(req); ok {
+			if logger != nil {
+				logger.Info("group_close", "group_id", groupID)
+			}
+			r.CloseGroupSession(groupID)
+			return
+		}
 	}
 }
 
@@ -236,6 +323,7 @@ func (r *Router) dispatch(speaker, text, source string) {
 func (r *Router) anyLogger() interface {
 	Debug(string, ...any)
 	Info(string, ...any)
+	Warn(string, ...any)
 } {
 	for _, a := range r.Agents() {
 		if a.cfg.Logger != nil {
@@ -352,4 +440,212 @@ func (r *Router) handleEncounter(npcA, npcB string) {
 	// is NOT npcReplyMode). NpcB receives it and responds via chat_say only.
 	encounter := fmt.Sprintf("[系统提示 — NPC 相遇]\n你刚好遇到了 %s。如果你想打招呼或分享最近发生的事，用 npc_send_message 跟对方说一句话（简短1-2句）。如果不想搭话，回复 idle。", npcB)
 	go agentA.respondAndSay(encounter)
+}
+
+// extractGroupChatMessage parses a group_chat_message event. The payload shape
+// mirrors the C# DTO: { participants: ["A","B",...], text: "...", source: "player" }.
+// Participants with empty strings are filtered out so a single typo in the
+// command parser cannot inject a phantom speaker into RunGroupChat.
+func extractGroupChatMessage(req *mcp.LoggingMessageRequest) (participants []string, text string, ok bool) {
+	if req == nil || req.Params == nil {
+		return nil, "", false
+	}
+	m, mOk := req.Params.Data.(map[string]any)
+	if !mOk {
+		return nil, "", false
+	}
+	if m["kind"] != "stardew/event" || m["name"] != "group_chat_message" {
+		return nil, "", false
+	}
+	raw, rawOk := m["data"]
+	if !rawOk {
+		return nil, "", false
+	}
+	var inner struct {
+		Participants []string `json:"participants"`
+		Text         string   `json:"text"`
+		Source       string   `json:"source"`
+	}
+	switch v := raw.(type) {
+	case map[string]any:
+		if t, k := v["text"].(string); k {
+			inner.Text = t
+		}
+		if s, k := v["source"].(string); k {
+			inner.Source = s
+		}
+		if ps, k := v["participants"].([]any); k {
+			for _, p := range ps {
+				if name, nk := p.(string); nk && name != "" {
+					inner.Participants = append(inner.Participants, name)
+				}
+			}
+		}
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, "", false
+		}
+		if err := json.Unmarshal(b, &inner); err != nil {
+			return nil, "", false
+		}
+	}
+	// Drop any empty entries that may have slipped through the json path.
+	cleaned := inner.Participants[:0]
+	for _, p := range inner.Participants {
+		if p != "" {
+			cleaned = append(cleaned, p)
+		}
+	}
+	if len(cleaned) == 0 || inner.Text == "" {
+		return nil, "", false
+	}
+	return cleaned, inner.Text, true
+}
+
+// extractGroupEventData is a shared helper for the group_* lifecycle
+// events: it validates the envelope (kind=stardew/event, name matches)
+// and returns the inner `data` map for the caller to pick fields out of.
+// Centralised so each event-specific extractor is a short wrapper and
+// the envelope-validation logic lives in one place.
+func extractGroupEventData(req *mcp.LoggingMessageRequest, eventName string) (map[string]any, bool) {
+	if req == nil || req.Params == nil {
+		return nil, false
+	}
+	m, mOk := req.Params.Data.(map[string]any)
+	if !mOk {
+		return nil, false
+	}
+	if m["kind"] != "stardew/event" || m["name"] != eventName {
+		return nil, false
+	}
+	raw, rawOk := m["data"]
+	if !rawOk {
+		return nil, false
+	}
+	// Accept either a native map (common path from SMAPI JSON → any) or a
+	// json.RawMessage / arbitrary value that we reserialise. The nil case
+	// below is defensive against upstream quirks.
+	switch v := raw.(type) {
+	case map[string]any:
+		return v, true
+	case json.RawMessage:
+		var inner map[string]any
+		if err := json.Unmarshal(v, &inner); err != nil {
+			return nil, false
+		}
+		return inner, true
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, false
+		}
+		var inner map[string]any
+		if err := json.Unmarshal(b, &inner); err != nil {
+			return nil, false
+		}
+		return inner, true
+	}
+}
+
+// extractGroupCreate parses a group_create event:
+//
+//	{"data":{"group_id":"grp_xxx","participants":["XiaMi","Abigail"]}}
+//
+// Empty participant names are filtered so a stray comma in the UI can't
+// inject a phantom speaker. Returns ok=false when group_id is missing or
+// no non-empty participants remain.
+func extractGroupCreate(req *mcp.LoggingMessageRequest) (groupID string, participants []string, ok bool) {
+	data, dOk := extractGroupEventData(req, "group_create")
+	if !dOk {
+		return "", nil, false
+	}
+	id, _ := data["group_id"].(string)
+	if id == "" {
+		return "", nil, false
+	}
+	var ps []string
+	switch raw := data["participants"].(type) {
+	case []any:
+		for _, p := range raw {
+			if name, nk := p.(string); nk && name != "" {
+				ps = append(ps, name)
+			}
+		}
+	case []string:
+		for _, name := range raw {
+			if name != "" {
+				ps = append(ps, name)
+			}
+		}
+	}
+	if len(ps) == 0 {
+		return "", nil, false
+	}
+	return id, ps, true
+}
+
+// extractGroupMessage parses a group_message event:
+//
+//	{"data":{"group_id":"grp_xxx","text":"...","source":"player"}}
+//
+// source is accepted but not inspected — the router treats every
+// group_message as a player turn (NPC-originated messages go through
+// chat_say + npc_send_message, not this path).
+func extractGroupMessage(req *mcp.LoggingMessageRequest) (groupID string, text string, ok bool) {
+	data, dOk := extractGroupEventData(req, "group_message")
+	if !dOk {
+		return "", "", false
+	}
+	id, _ := data["group_id"].(string)
+	t, _ := data["text"].(string)
+	if id == "" || t == "" {
+		return "", "", false
+	}
+	return id, t, true
+}
+
+// extractGroupInvite parses a group_invite event:
+//
+//	{"data":{"group_id":"grp_xxx","npc":"Sebastian"}}
+func extractGroupInvite(req *mcp.LoggingMessageRequest) (groupID string, npc string, ok bool) {
+	return extractGroupNpcOp(req, "group_invite")
+}
+
+// extractGroupKick parses a group_kick event:
+//
+//	{"data":{"group_id":"grp_xxx","npc":"Sebastian"}}
+func extractGroupKick(req *mcp.LoggingMessageRequest) (groupID string, npc string, ok bool) {
+	return extractGroupNpcOp(req, "group_kick")
+}
+
+// extractGroupNpcOp is the shared parser for the invite/kick pair since
+// they share a payload shape. Kept unexported so callers go through the
+// named wrappers above.
+func extractGroupNpcOp(req *mcp.LoggingMessageRequest, eventName string) (groupID string, npc string, ok bool) {
+	data, dOk := extractGroupEventData(req, eventName)
+	if !dOk {
+		return "", "", false
+	}
+	id, _ := data["group_id"].(string)
+	n, _ := data["npc"].(string)
+	if id == "" || n == "" {
+		return "", "", false
+	}
+	return id, n, true
+}
+
+// extractGroupClose parses a group_close event:
+//
+//	{"data":{"group_id":"grp_xxx"}}
+func extractGroupClose(req *mcp.LoggingMessageRequest) (groupID string, ok bool) {
+	data, dOk := extractGroupEventData(req, "group_close")
+	if !dOk {
+		return "", false
+	}
+	id, _ := data["group_id"].(string)
+	if id == "" {
+		return "", false
+	}
+	return id, true
 }
