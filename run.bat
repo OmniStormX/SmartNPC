@@ -22,8 +22,9 @@ echo.
 rem ---- Step 2: Kill existing game process ----
 echo [2/5] Killing existing game process (if any)...
 powershell -NoProfile -Command "Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue | Stop-Process -Force"
+powershell -NoProfile -Command "Get-Process -Name 'smartnpc-agent','smartnpc-mcp' -ErrorAction SilentlyContinue | Stop-Process -Force"
 timeout /t 1 /nobreak >nul
-echo [OK] Game process cleared.
+echo [OK] Old processes cleared.
 echo.
 
 rem ---- Step 3: Install mod ----

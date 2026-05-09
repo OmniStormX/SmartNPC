@@ -34,6 +34,7 @@ const (
 	ActionNpcFollowStop     = "npc_follow_stop"
 	ActionNpcLeadTo         = "npc_lead_to"
 	ActionNpcGetBehavior    = "npc_get_behavior"
+	ActionPlayerGetStatus   = "player_get_status"
 )
 
 // Request is a client → server RPC call.

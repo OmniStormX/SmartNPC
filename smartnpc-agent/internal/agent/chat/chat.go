@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/smartnpc/smartnpc-agent/internal/llm"
+	"github.com/smartnpc/smartnpc-agent/internal/memory"
 )
 
 const (
@@ -63,6 +64,38 @@ type Config struct {
 	FriendshipTimeout time.Duration
 	// Logger for diagnostics.
 	Logger *slog.Logger
+
+	// ── Long-term memory (optional) ────────────────────────────────
+	// Memory, when non-nil, enables SQLite-backed persistence: every
+	// chat turn opens/reuses a conversation, mirrors all messages, and
+	// injects a ContextBundle digest into the system prompt. Defaults
+	// to disabled so existing tests / call sites stay byte-for-byte
+	// identical. The Store lifetime is owned by the caller — Agent
+	// neither opens nor closes it.
+	Memory memory.Store
+	// MemoryDBPath, when non-empty AND Memory is nil, makes New() open a
+	// SQLite store at the given path automatically and own its lifetime
+	// (Close() will close it). Provides a one-line opt-in for callers
+	// that don't want to wire memory.Open themselves. Defaults to
+	// "data/smartnpc_memory.db" when callers leave both Memory and
+	// MemoryDBPath blank but explicitly enable persistence via
+	// EnableMemoryByDefault.
+	MemoryDBPath string
+	// EnableMemoryByDefault toggles the auto-open path described under
+	// MemoryDBPath: when true and both Memory + MemoryDBPath are zero,
+	// the agent opens "data/smartnpc_memory.db". Off by default so
+	// existing tests stay deterministic.
+	EnableMemoryByDefault bool
+	// MemoryIdleTimeout overrides memory.DefaultIdleTimeout. Only
+	// consulted when Memory != nil.
+	MemoryIdleTimeout time.Duration
+	// MemoryGameDateFn returns the current in-game date string (e.g.
+	// "Spring 5"), used by ConversationTracker to roll over a
+	// conversation when the day changes. Optional; nil ⇒ ignored.
+	MemoryGameDateFn func() string
+	// MemorySummarizer overrides the LLM provider used for asynchronous
+	// memory extraction. Defaults to the persona Provider.
+	MemorySummarizer *memory.Summarizer
 }
 
 // Agent holds conversation state and handles incoming chat notifications.
@@ -72,9 +105,17 @@ type Agent struct {
 	history []llm.Message
 	session *mcp.ClientSession
 	tools   []llm.ToolSpec
+	// router is the multi-NPC router this agent is registered with, if any.
+	// Used to dispatch consult_npc tool calls to peer agents. nil → consult is
+	// unavailable (single-NPC deployments).
+	router *Router
 	// locations is the named-location table used by the move-intent parser.
 	// Initialized from cfg.Persona.NamedLocations when present, else defaults.
 	locations *LocationTable
+	// memory bundles the optional long-term-memory wiring. nil when
+	// Config.Memory was not supplied. Mutated only through helpers in
+	// memory_integration.go so the chat path stays clean.
+	memory *memoryWiring
 	// replyDone is an optional test hook: when non-nil, every completed
 	// respondAndSay call sends on it (non-blocking). Tests use this to wait
 	// for the async goroutine dispatched by HandleNotification without
@@ -118,6 +159,16 @@ func New(cfg Config) *Agent {
 		locs = DefaultLocations()
 	}
 	a.locations = NewLocationTable(locs)
+
+	// Wire the optional memory subsystem. Errors here only happen for
+	// genuine misconfiguration (e.g. nil store sneaking past the type
+	// system); we log and proceed without memory rather than refusing to
+	// start the agent — chat remains usable without persistence.
+	if mem, err := initMemory(cfg); err != nil {
+		cfg.Logger.Warn("memory init failed; running without persistence", "err", err)
+	} else {
+		a.memory = mem
+	}
 	return a
 }
 
@@ -127,6 +178,14 @@ func (a *Agent) SetSession(session *mcp.ClientSession) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.session = session
+}
+
+// Close releases resources held by the Agent. Currently flushes the
+// long-term memory tracker (closing every still-open conversation). Safe
+// to call multiple times; safe to call when memory is disabled.
+func (a *Agent) Close() error {
+	a.memoryFlush()
+	return nil
 }
 
 // Speaker returns the NPC display name this agent is bound to. Useful for
@@ -163,10 +222,44 @@ func (a *Agent) LoadTools(ctx context.Context) error {
 func (a *Agent) Tools() []llm.ToolSpec {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := make([]llm.ToolSpec, len(a.tools))
-	copy(out, a.tools)
+	return a.toolSpecsLocked()
+}
+
+// toolSpecsLocked returns the tool list to advertise to the LLM, including
+// the synthetic consult_npc tool when this agent is part of a router with
+// peers. Caller must hold a.mu.
+func (a *Agent) toolSpecsLocked() []llm.ToolSpec {
+	out := make([]llm.ToolSpec, 0, len(a.tools)+1)
+	out = append(out, a.tools...)
+	if a.router != nil {
+		// Only expose consult when at least one peer exists. r.Speakers()
+		// briefly takes its own lock; that's safe — we don't keep both.
+		peers := a.router.Speakers()
+		if len(peers) >= 2 {
+			peerList := make([]string, 0, len(peers)-1)
+			self := normalizeSpeaker(a.cfg.Speaker)
+			for _, s := range peers {
+				if normalizeSpeaker(s) != self {
+					peerList = append(peerList, s)
+				}
+			}
+			desc := "IMPORTANT: When the player asks about another NPC's thoughts, feelings, plans, schedule, opinions, or current status, you MUST call this tool to consult them directly instead of guessing. " +
+				"Also use it when the player says '帮我问', '去问问', 'ask X for me'. " +
+				"You will receive their real answer and can rephrase it in your own voice. " +
+				"Available NPCs to consult: " + strings.Join(peerList, ", ") + "."
+			out = append(out, llm.ToolSpec{
+				Name:        ConsultToolName,
+				Description: desc,
+				InputSchema: consultToolSpec(),
+			})
+		}
+	}
 	return out
 }
+
+// attachRouter is implemented in delegate.go alongside the rest of the
+// consult_npc plumbing so F2 (memory) and F3 (delegation) share one
+// canonical definition.
 
 // convertMCPTools turns MCP tool descriptors into the provider-agnostic
 // llm.ToolSpec shape. The MCP SDK exposes InputSchema as an opaque value that
@@ -671,6 +764,13 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 		return a.respondDual(ctx, userText)
 	}
 
+	// Open or reuse the persistent conversation BEFORE we do any
+	// LLM-bound work so messages hitting the store all share one id.
+	convID, err := a.memoryStartTurn()
+	if err != nil {
+		a.cfg.Logger.Warn("memory start turn failed", "err", err)
+	}
+
 	// Look up friendship tier up front so the LLM can calibrate tone before it
 	// picks any tools itself. A short timeout keeps a slow/missing bridge from
 	// stalling the chat turn; on failure we fall back to an empty addendum.
@@ -680,12 +780,17 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	// it doesn't proactively call the tools itself.
 	gameStateCtx := a.getGameStateContext(ctx)
 
-	extra := friendshipCtx
-	if gameStateCtx != "" {
-		if extra != "" {
-			extra += "\n\n"
+	// Long-term memory digest (may be empty for a fresh NPC).
+	memoryCtx := a.memoryContextAddendum()
+
+	extra := joinContextBlocks(friendshipCtx, gameStateCtx, memoryCtx)
+
+	// Inject consult_npc guidance when peers are available.
+	if a.router != nil {
+		peers := a.router.Speakers()
+		if len(peers) >= 2 {
+			extra += "\n\n[Delegation rule] When the player asks about another NPC's personal thoughts, plans, feelings, schedule, or opinions — or explicitly says \"帮我问/去问问/ask X\" — you MUST call consult_npc to get their real answer. Do NOT fabricate what another NPC thinks or says."
 		}
-		extra += gameStateCtx
 	}
 
 	// Parse behavior intent FIRST — verbs like "跟着我"/"别跟了"/"带我去X" take
@@ -705,8 +810,13 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: effectiveUserText})
 	a.trimHistory()
 	msgs := a.buildMessages(extra)
-	tools := a.tools
+	tools := a.toolSpecsLocked()
+	tools = append(tools, a.memoryToolSpecs()...)
 	a.mu.Unlock()
+
+	// Mirror the user turn into SQLite. Best-effort: failures are logged
+	// inside memoryAppend.
+	a.memoryAppend(convID, "user", effectiveUserText, nil)
 
 	for round := 0; round < maxToolRounds; round++ {
 		resp, err := a.cfg.Provider.Chat(ctx, llm.ChatRequest{
@@ -729,6 +839,8 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 			a.history = append(a.history, llm.Message{Role: llm.RoleAssistant, Content: reply})
 			a.trimHistory()
 			a.mu.Unlock()
+			a.memoryAppend(convID, "assistant", reply, nil)
+			a.memoryNoteTurn(convID)
 			return reply, nil
 		}
 
@@ -736,6 +848,7 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 		// First, append assistant message with tool calls to history.
 		assistantMsg := llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls}
 		msgs = append(msgs, assistantMsg)
+		a.memoryAppend(convID, "assistant", "", resp.ToolCalls)
 
 		for _, tc := range resp.ToolCalls {
 			result, err := a.executeTool(ctx, tc)
@@ -748,6 +861,7 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 				Name:       tc.Name,
 				ToolCallID: tc.ID,
 			})
+			a.memoryAppend(convID, "tool", result, nil)
 			a.cfg.Logger.Debug("tool executed", "name", tc.Name, "result_len", len(result))
 		}
 	}
@@ -769,11 +883,28 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	a.history = append(a.history, llm.Message{Role: llm.RoleAssistant, Content: reply})
 	a.trimHistory()
 	a.mu.Unlock()
+	a.memoryAppend(convID, "assistant", reply, nil)
+	a.memoryNoteTurn(convID)
 	return reply, nil
 }
 
 // executeTool calls an MCP tool via the session.
 func (a *Agent) executeTool(ctx context.Context, tc llm.ToolCall) (string, error) {
+	// Log every tool call for debugging delegation and tool selection.
+	a.cfg.Logger.Info("tool executing", "tool", tc.Name, "args", tc.Arguments)
+
+	// In-process memory tools are dispatched without touching MCP; this
+	// also lets memory_* work in unit tests that don't wire a session.
+	if out, ok := a.memoryToolDispatch(tc); ok {
+		return out, nil
+	}
+
+	// Synthetic consult_npc tool — routed through the in-process Router
+	// instead of the MCP server.
+	if tc.Name == ConsultToolName {
+		return a.executeConsult(ctx, tc)
+	}
+
 	a.mu.Lock()
 	s := a.session
 	a.mu.Unlock()

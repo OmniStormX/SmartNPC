@@ -20,5 +20,6 @@ func RegisterAll(s *mcp.Server, br *bridge.WSClient) {
 		registerNpcPerception(s, br)
 		registerNpcMovement(s, br)
 		registerNpcBehavior(s, br)
+		registerPlayerQuery(s, br)
 	}
 }

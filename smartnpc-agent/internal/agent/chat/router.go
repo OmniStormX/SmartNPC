@@ -15,6 +15,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -29,6 +30,22 @@ type Router struct {
 	// Used to route chat_received (which has no npc field) to the agent the
 	// player is presumably talking to.
 	lastActive string
+
+	// groupHandler is an optional group-chat dispatcher. When set and a
+	// group_create / group_message event arrives, it's routed here instead
+	// of to a single agent. Injected via SetGroupHandler to avoid circular
+	// imports with the group package.
+	groupHandler GroupHandler
+	// activeGroupID tracks which group the player is currently chatting in.
+	// When non-empty, chat_received routes to the group instead of lastActive.
+	activeGroupID string
+}
+
+// GroupHandler abstracts the group orchestrator so the router doesn't need
+// to import the group package directly (avoiding circular deps).
+type GroupHandler interface {
+	CreateGroup(participants []string) (string, error)
+	OnPlayerMessage(ctx context.Context, groupID, text string)
 }
 
 // NewRouter returns an empty Router. Use Register to add agents.
@@ -71,6 +88,74 @@ func (r *Router) Register(speaker string, agent *Agent) {
 		r.order = append(r.order, speaker)
 	}
 	r.agents[key] = agent
+	// Wire the back-reference so the agent can issue consult_npc calls.
+	agent.attachRouter(r)
+}
+
+// LookupAgent returns the agent registered under speaker (case-insensitive)
+// or nil when absent. Exported so other in-package files (delegate plumbing)
+// can reach across the registry without grabbing the lock by hand.
+func (r *Router) LookupAgent(speaker string) *Agent {
+	if speaker == "" {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.agents[normalizeSpeaker(speaker)]
+}
+
+// ConsultAgent dispatches a delegated question from `from` to `to` and
+// returns the consulted agent's reply.
+//
+// The call is bounded by both:
+//   - MaxDelegateDepth (carried in ctx via withChain), and
+//   - DefaultDelegateTimeout (per-call hard cap, even when ctx has no deadline).
+//
+// Returns a graceful error (one of ErrDelegate*) on guard-rail violations
+// so the caller can surface a soft fallback to its decision layer.
+func (r *Router) ConsultAgent(ctx context.Context, from, to, question, contextHint string) (*DelegateResponse, error) {
+	if r == nil {
+		return nil, ErrDelegateNoRouter
+	}
+	if to == "" || question == "" {
+		return nil, fmt.Errorf("consult: missing target or question")
+	}
+
+	chain := chainFromContext(ctx)
+	if len(chain) >= MaxDelegateDepth {
+		return nil, ErrDelegateMaxDepth
+	}
+	// `to` cannot already be on the chain (cycle). Also reject delegating to
+	// the asker itself.
+	if normalizeSpeaker(to) == normalizeSpeaker(from) || containsCI(chain, to) {
+		return nil, ErrDelegateCycle
+	}
+
+	target := r.LookupAgent(to)
+	if target == nil {
+		return nil, ErrDelegateUnknownTarget
+	}
+
+	// Append `from` to the chain — the consulted agent now sees the full
+	// ancestry leading up to it. (Not `to`, because `to` is the *receiver*;
+	// once it executes, any nested consult it issues will have `to` itself
+	// as `from`, which gets appended in this same code path.)
+	childCtx, cancel := context.WithTimeout(withChain(ctx, from), DefaultDelegateTimeout)
+	defer cancel()
+
+	resp, err := target.HandleInternalQuery(childCtx, InternalQuery{
+		FromAgent: from,
+		Question:  question,
+		Context:   contextHint,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("consult %s: %w", to, err)
+	}
+	return &DelegateResponse{
+		Answer:    resp.Answer,
+		Consulted: target.Speaker(),
+		ToolsUsed: resp.ToolsUsed,
+	}, nil
 }
 
 // Agents returns the registered agents in insertion order. Useful for
@@ -94,6 +179,23 @@ func (r *Router) Speakers() []string {
 	out := make([]string, len(r.order))
 	copy(out, r.order)
 	return out
+}
+
+// SetGroupHandler injects the group chat orchestrator. When set, events
+// named "group_create" and "group_message" are routed to it, and
+// chat_received messages while a group is active go to the group instead
+// of the lastActive single agent.
+func (r *Router) SetGroupHandler(h GroupHandler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.groupHandler = h
+}
+
+// ActiveGroupID returns the currently active group (empty if none).
+func (r *Router) ActiveGroupID() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.activeGroupID
 }
 
 // SetSession wires the same MCP session into every registered agent. Call
@@ -145,6 +247,44 @@ func (r *Router) HandleNotification() func(context.Context, *mcp.LoggingMessageR
 
 		logger := r.anyLogger()
 
+		// ── Group chat events ──────────────────────────────────────────
+		// Intercept group_create and group_message before single-NPC routing.
+		if participants, ok := extractGroupCreate(req); ok {
+			r.mu.RLock()
+			gh := r.groupHandler
+			r.mu.RUnlock()
+			if gh == nil {
+				if logger != nil {
+					logger.Debug("group_create dropped: no group handler")
+				}
+				return
+			}
+			groupID, err := gh.CreateGroup(participants)
+			if err != nil {
+				if logger != nil {
+					logger.Info("group_create failed", "err", err)
+				}
+				return
+			}
+			r.mu.Lock()
+			r.activeGroupID = groupID
+			r.mu.Unlock()
+			if logger != nil {
+				logger.Info("group created", "group_id", groupID, "participants", participants)
+			}
+			return
+		}
+		if groupID, text, ok := extractGroupMessage(req); ok {
+			r.mu.RLock()
+			gh := r.groupHandler
+			r.mu.RUnlock()
+			if gh == nil {
+				return
+			}
+			gh.OnPlayerMessage(ctx, groupID, text)
+			return
+		}
+
 		// chat_message carries an explicit npc field — primary routing key.
 		if npc, text, ok := extractChatMessage(req); ok {
 			r.dispatch(npc, text, "chat_message")
@@ -158,12 +298,21 @@ func (r *Router) HandleNotification() func(context.Context, *mcp.LoggingMessageR
 		}
 
 		// chat_received is untargeted (player typing in the global box).
-		// Route to the most recently interacted agent when one exists;
-		// otherwise drop — broadcasting would wake every NPC at once.
+		// When a group is active, route to the group orchestrator.
+		// Otherwise route to the most recently interacted agent.
 		if text, ok := extractChatReceivedText(req); ok {
 			r.mu.RLock()
+			gh := r.groupHandler
+			gid := r.activeGroupID
 			last := r.lastActive
 			r.mu.RUnlock()
+
+			// Group mode takes priority.
+			if gh != nil && gid != "" {
+				gh.OnPlayerMessage(ctx, gid, text)
+				return
+			}
+
 			if last == "" {
 				if logger != nil {
 					logger.Debug("chat_received dropped: no active speaker yet", "text", text)
@@ -238,4 +387,82 @@ func normalizeSpeaker(name string) string {
 		b[i] = c
 	}
 	return string(b)
+}
+
+// ── group event extractors ────────────────────────────────────────────────
+
+// extractGroupCreate parses a group_create event:
+// {kind:"stardew/event", name:"group_create", data:{participants:["Abigail","Sebastian"]}}
+func extractGroupCreate(req *mcp.LoggingMessageRequest) ([]string, bool) {
+	if req == nil || req.Params == nil {
+		return nil, false
+	}
+	m, ok := req.Params.Data.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if m["kind"] != "stardew/event" || m["name"] != "group_create" {
+		return nil, false
+	}
+	raw, ok := m["data"]
+	if !ok {
+		return nil, false
+	}
+	data, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	rawParticipants, ok := data["participants"]
+	if !ok {
+		return nil, false
+	}
+	// participants can be []any from JSON unmarshal.
+	switch v := rawParticipants.(type) {
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, true
+	case []string:
+		if len(v) == 0 {
+			return nil, false
+		}
+		return v, true
+	}
+	return nil, false
+}
+
+// extractGroupMessage parses a group_message event:
+// {kind:"stardew/event", name:"group_message", data:{group_id:"xxx", text:"hello"}}
+func extractGroupMessage(req *mcp.LoggingMessageRequest) (groupID string, text string, ok bool) {
+	if req == nil || req.Params == nil {
+		return "", "", false
+	}
+	m, mOk := req.Params.Data.(map[string]any)
+	if !mOk {
+		return "", "", false
+	}
+	if m["kind"] != "stardew/event" || m["name"] != "group_message" {
+		return "", "", false
+	}
+	raw, rawOk := m["data"]
+	if !rawOk {
+		return "", "", false
+	}
+	data, dOk := raw.(map[string]any)
+	if !dOk {
+		return "", "", false
+	}
+	gid, _ := data["group_id"].(string)
+	txt, _ := data["text"].(string)
+	if gid == "" || txt == "" {
+		return "", "", false
+	}
+	return gid, txt, true
 }

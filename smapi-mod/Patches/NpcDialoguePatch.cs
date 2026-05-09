@@ -1,5 +1,6 @@
-// Harmony prefix on NPC.checkAction — for Agent-managed NPCs, open the custom
-// ChatWindow instead of the default dialogue flow, and broadcast a ws event.
+// Harmony prefix on NPC.checkAction — for Agent-managed NPCs, open the QQ-
+// style ChatPanel instead of the default dialogue flow, and broadcast a ws
+// event.
 
 using System.Collections.Concurrent;
 using HarmonyLib;

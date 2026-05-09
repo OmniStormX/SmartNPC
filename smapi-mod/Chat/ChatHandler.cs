@@ -1,7 +1,11 @@
-// Handles the `chat_say` ws action. Routes replies either to the game's native
-// DialogueBox (with portrait) — closing the ChatWindow first if it's open, and
-// reopening it once the player dismisses the dialogue — or straight to the
-// native dialogue box when no ChatWindow is active.
+// Handles the `chat_say` ws action. Routes replies into the chat history
+// store, increments the unread counter, and either:
+//   - feeds a NotificationToast (panel closed), or
+//   - lets the open ChatPanel render the new bubble (panel open + selected
+//     conversation matches).
+//
+// Falls back to the game's native DialogueBox only when the panel is closed
+// AND a notification handler hasn't been wired (defensive default).
 
 using System;
 using System.Collections.Concurrent;
@@ -20,19 +24,28 @@ namespace SmartNPC.Bridge
         private readonly IMonitor _log;
         private readonly ConcurrentQueue<ChatSayParams> _pending = new();
         private ChatMessageStore? _store;
-
-        // Pending-reopen state: when we close a ChatWindow to show a DialogueBox,
-        // we remember the NPC name so ModEntry can reopen the ChatWindow once
-        // the DialogueBox is dismissed. Written on the game thread by
-        // PumpOnGameTick; read on the game thread by ConsumePendingReopen.
-        private string? _pendingReopenNpc;
-        private bool    _awaitingDialogueClose;
+        private UnreadTracker? _unread;
+        // (npcName, displayName, text) → push toast / refresh panel.
+        private Action<string, string, string>? _onMessage;
 
         public ChatHandler(IMonitor log) { _log = log; }
 
         public void SetMessageStore(ChatMessageStore store)
         {
             _store = store;
+        }
+
+        public void SetUnreadTracker(UnreadTracker unread)
+        {
+            _unread = unread;
+        }
+
+        /// <summary>Wire a callback fired on the game thread for every NPC
+        /// message that arrives. ModEntry uses this to push toasts / refresh
+        /// the panel.</summary>
+        public void SetMessageNotifier(Action<string, string, string> onMessage)
+        {
+            _onMessage = onMessage;
         }
 
         public Task<Response> Handle(string id, JsonElement @params)
@@ -63,73 +76,19 @@ namespace SmartNPC.Bridge
                 _store?.Add(p.Speaker!, p.Speaker!, p.Text!, isPlayer: false);
 
                 NPC? npc = Game1.getCharacterFromName(p.Speaker!);
+                string displayName = npc?.displayName ?? p.Speaker!;
 
-                // If ChatWindow is open for this NPC, swap to a native DialogueBox
-                // (with portrait) and mark it for reopen once dismissed.
-                if (ChatWindow.ActiveNpc == p.Speaker)
-                {
-                    if (npc != null)
-                    {
-                        // Remember who to reopen BEFORE closing the window
-                        // (cleanupBeforeExit clears ChatWindow.ActiveNpc).
-                        _pendingReopenNpc     = p.Speaker;
-                        _awaitingDialogueClose = true;
+                // If the ChatPanel is open and this conversation is selected,
+                // the user is actively reading — do not increment unread.
+                bool isActiveConversation = ChatPanel.IsOpen && ChatPanel.ActiveNpc == p.Speaker;
+                if (!isActiveConversation)
+                    _unread?.IncrementUnread(p.Speaker!);
 
-                        // Close the ChatWindow cleanly.
-                        if (Game1.activeClickableMenu is ChatWindow)
-                            Game1.exitActiveMenu();
+                // Fan out to the panel/toast layer.
+                _onMessage?.Invoke(p.Speaker!, displayName, p.Text!);
 
-                        // Show native NPC dialogue (portrait + typewriter).
-                        var dialogue = new Dialogue(npc, "SmartNPC:response", p.Text!);
-                        Game1.DrawDialogue(dialogue);
-                        _log.Log($"dialogue (reopen pending): <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                    }
-                    else
-                    {
-                        // No NPC instance — just leave the message in the store;
-                        // ChatWindow will pick it up on next draw.
-                        _log.Log($"chat_say → UI store (no NPC instance): <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                    }
-                    continue;
-                }
-
-                // ChatWindow not open for this speaker. Fall back to native
-                // DialogueBox (or chat box if no NPC instance), suppressing
-                // overlap with any existing DialogueBox.
-                if (Game1.activeClickableMenu is DialogueBox) continue;
-
-                if (npc != null)
-                {
-                    var dialogue = new Dialogue(npc, "SmartNPC:response", p.Text!);
-                    Game1.DrawDialogue(dialogue);
-                    _log.Log($"dialogue: <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                }
-                else
-                {
-                    Game1.chatBox?.addInfoMessage($"<{p.Speaker}> {p.Text}");
-                    _log.Log($"chat: <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                }
+                _log.Log($"chat_say → store: <{p.Speaker}> {p.Text}", LogLevel.Trace);
             }
-        }
-
-        /// <summary>
-        /// Call from ModEntry.OnUpdateTicked. Returns the NPC name whose
-        /// ChatWindow should be reopened (because the DialogueBox we swapped in
-        /// has just closed), or <c>null</c>. Caller is responsible for actually
-        /// reopening the window.
-        /// </summary>
-        public string? ConsumePendingReopen()
-        {
-            if (!_awaitingDialogueClose) return null;
-
-            // Still inside the DialogueBox — keep waiting.
-            if (Game1.activeClickableMenu is DialogueBox) return null;
-
-            // DialogueBox closed. Hand off the NPC name and clear state.
-            string? npc = _pendingReopenNpc;
-            _pendingReopenNpc      = null;
-            _awaitingDialogueClose = false;
-            return npc;
         }
 
         private sealed class ChatSayParams

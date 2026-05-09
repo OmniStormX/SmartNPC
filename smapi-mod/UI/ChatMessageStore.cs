@@ -12,7 +12,9 @@ namespace SmartNPC.Bridge
     }
 
     /// <summary>
-    /// Per-NPC chat history storage. Lives in memory for the session.
+    /// Per-NPC chat history storage. Lives in memory for the session and is
+    /// snapshotted to per-save data via <see cref="Snapshot"/> /
+    /// <see cref="Restore"/>.
     /// </summary>
     internal sealed class ChatMessageStore
     {
@@ -53,6 +55,30 @@ namespace SmartNPC.Bridge
         {
             if (_history.ContainsKey(npcName))
                 _history[npcName].Clear();
+        }
+
+        /// <summary>Build a serialisable snapshot of the last N messages per NPC.</summary>
+        public Dictionary<string, List<ChatMessage>> Snapshot()
+        {
+            var snap = new Dictionary<string, List<ChatMessage>>();
+            foreach (var kv in _history)
+            {
+                int start = Math.Max(0, kv.Value.Count - _maxPerNpc);
+                snap[kv.Key] = kv.Value.GetRange(start, kv.Value.Count - start);
+            }
+            return snap;
+        }
+
+        /// <summary>Restore from a snapshot. Replaces in-memory state.</summary>
+        public void Restore(Dictionary<string, List<ChatMessage>>? snapshot)
+        {
+            _history.Clear();
+            if (snapshot is null) return;
+            foreach (var kv in snapshot)
+            {
+                if (kv.Value is null) continue;
+                _history[kv.Key] = new List<ChatMessage>(kv.Value);
+            }
         }
     }
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/smartnpc/smartnpc-agent/internal/agent/chat"
 	"github.com/smartnpc/smartnpc-agent/internal/llm"
 	"github.com/smartnpc/smartnpc-agent/internal/mcpclient"
+	"github.com/smartnpc/smartnpc-agent/internal/memory"
+	"github.com/smartnpc/smartnpc-agent/internal/scheduler"
 )
 
 func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []string) error {
@@ -47,6 +49,23 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 			"instantiated per file and events are routed by their `npc` field. "+
 			"Mutually exclusive with --persona.")
 	timeout := fs.Duration("llm-timeout", 90*time.Second, "timeout per LLM request")
+
+	// ── Long-term memory (optional) ────────────────────────────────
+	// Default path lives under ./data so a stock checkout has a stable
+	// location for the SQLite file. Empty path disables memory entirely
+	// (chat reverts to the legacy ephemeral history).
+	memoryDB := fs.String("memory-db", "data/smartnpc_memory.db",
+		"path to the SQLite memory database. Empty disables persistence.")
+	memoryIdle := fs.Duration("memory-idle", 0,
+		"idle timeout after which a conversation is auto-ended; 0 uses "+
+			"memory.DefaultIdleTimeout (5 min).")
+
+	// ── Proactive scheduler (optional) ─────────────────────────────
+	proactiveEnabled := fs.Bool("proactive", false,
+		"enable the proactive-NPC scheduler: NPCs may initiate contact with "+
+			"the player on a 15-minute cadence subject to cooldown rules.")
+	proactiveInterval := fs.Duration("proactive-interval", 0,
+		"override the proactive scheduler tick interval (0 = default 15min)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -104,6 +123,34 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 		}
 	}
 
+	// Open the long-term memory store BEFORE spinning up agents so every
+	// chat.Config can reference the same Store. We deliberately open before
+	// MCP spawn: a fast schema apply makes startup easier to diagnose, and
+	// failure here should fall through to ephemeral mode rather than crash
+	// the whole agent.
+	var memStore memory.Store
+	if *memoryDB != "" {
+		// Ensure parent directory exists so callers don't have to mkdir
+		// themselves. Errors are tolerated — Open will surface a clearer
+		// message if the path is unreachable.
+		if dir := filepath.Dir(*memoryDB); dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0o755)
+		}
+		s, err := memory.Open(*memoryDB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"warning: failed to open memory database %q: %v (running without persistence)\n",
+				*memoryDB, err)
+		} else {
+			memStore = s
+			defer func() {
+				if cerr := memStore.Close(); cerr != nil {
+					fmt.Fprintf(os.Stderr, "warning: memory close failed: %v\n", cerr)
+				}
+			}()
+		}
+	}
+
 	// buildAgent turns a loaded persona (possibly nil) + system prompt into a
 	// fully-wired chat.Agent. Shared by both the single-persona and
 	// personas-dir paths so their Agent configuration stays in lockstep.
@@ -120,6 +167,10 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 			cfg.PersonaProvider = personaProvider
 			cfg.DecisionModel = *decisionModel
 			cfg.PersonaModel = mdl
+		}
+		if memStore != nil {
+			cfg.Memory = memStore
+			cfg.MemoryIdleTimeout = *memoryIdle
 		}
 		return chat.New(cfg)
 	}
@@ -189,6 +240,33 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 		fmt.Fprintf(os.Stderr, "warning: failed to load tools: %v\n", err)
 	}
 
+	// ── Group chat orchestrator ───────────────────────────────────────
+	// Always wire group support in multi-NPC mode so /group commands work.
+	if len(agents) > 1 {
+		setupGroupChat(router, cli.Session(), nil)
+		fmt.Fprintf(os.Stderr, "group chat ENABLED (use /group NPC1 NPC2 in game chat to start)\n")
+	}
+
+	// ── Proactive scheduler (optional) ─────────────────────────────
+	// When --proactive is set, spin up scheduler.Scheduler on top of the
+	// shared router + MCP session. The scheduler runs in its own
+	// goroutine; Stop() is invoked during shutdown so the daily-count
+	// flush doesn't race the agent.Close() loop below.
+	var sched *scheduler.Scheduler
+	if *proactiveEnabled {
+		schedRouter, schedSession := newSchedulerAdapters(router, cli.Session())
+		schedCfg := scheduler.DefaultConfig()
+		if *proactiveInterval > 0 {
+			schedCfg.CheckInterval = *proactiveInterval
+		}
+		sched = scheduler.New(schedRouter, schedSession, schedCfg, nil)
+		sched.Start(ctx)
+		fmt.Fprintf(os.Stderr,
+			"proactive scheduler ENABLED (interval=%s, per-npc=%s, global=%s, daily=%d, hours=%d-%d)\n",
+			schedCfg.CheckInterval, schedCfg.CooldownPerNPC, schedCfg.GlobalCooldown,
+			schedCfg.MaxDailyPerNPC, schedCfg.ActiveHoursStart, schedCfg.ActiveHoursEnd)
+	}
+
 	if decisionProvider != nil {
 		fmt.Fprintf(os.Stderr,
 			"SmartNPC chat agent running in DUAL-LLM mode (%s, decision=%s @ %s, persona=%s @ %s, timeout=%s)\n",
@@ -206,6 +284,20 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 	// alive so the session stays open.
 	<-ctx.Done()
 	fmt.Fprintln(os.Stderr, "shutting down...")
+	// Stop the scheduler before agents so any in-flight LLM call routed
+	// through HandleInternalQuery completes against a still-live agent.
+	if sched != nil {
+		sched.Stop()
+	}
+	// Flush every open conversation through Agent.Close so the memory store
+	// has a chance to mark conversations as ended and (eventually) emit a
+	// final summary. Errors are tolerated — the deferred memStore.Close
+	// above will still release the DB handle.
+	for _, a := range agents {
+		if err := a.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: agent %s close failed: %v\n", a.Speaker(), err)
+		}
+	}
 	return nil
 }
 
