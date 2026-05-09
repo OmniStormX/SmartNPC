@@ -55,6 +55,15 @@ namespace SmartNPC.Bridge
             {
                 if (p is null) continue;
 
+                // Group chat path: only record into group history and let the
+                // ChatPanel render it; no DialogueBox, no NpcChatBar.
+                if (!string.IsNullOrWhiteSpace(p.GroupId))
+                {
+                    _store?.AddGroupMessage(p.GroupId!, p.Speaker!, p.Text!, isPlayer: false);
+                    _log.Log($"group msg: [{p.GroupId}] <{p.Speaker}> {p.Text}", LogLevel.Trace);
+                    continue;
+                }
+
                 // Always store for history.
                 _store?.Add(p.Speaker!, p.Speaker!, p.Text!, isPlayer: false);
 
@@ -121,9 +130,10 @@ namespace SmartNPC.Bridge
 
         private sealed class ChatSayParams
         {
-            [JsonPropertyName("speaker")] public string? Speaker { get; set; }
-            [JsonPropertyName("text")]    public string? Text    { get; set; }
-            [JsonPropertyName("color")]   public string? Color   { get; set; }
+            [JsonPropertyName("speaker")]  public string? Speaker  { get; set; }
+            [JsonPropertyName("text")]     public string? Text     { get; set; }
+            [JsonPropertyName("color")]    public string? Color    { get; set; }
+            [JsonPropertyName("group_id")] public string? GroupId  { get; set; }
         }
     }
 }

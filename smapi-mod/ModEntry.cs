@@ -38,6 +38,7 @@ namespace SmartNPC.Bridge
         private WanderSystem?     _wander;
         private ChatMessageStore _messageStore = new();
         private ChatSideButton?  _sideButton;
+        private GroupChatManager? _groupChat;
 
         public override void Entry(IModHelper helper)
         {
@@ -94,6 +95,9 @@ namespace SmartNPC.Bridge
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
                 _ws.Start();
 
+                // Group chat manager (depends on ws).
+                _groupChat = new GroupChatManager(_ws, this.Monitor);
+
                 // Wire up patches — opens NpcChatBar on NPC click.
                 NpcDialoguePatch.SetBridge(_ws);
                 NpcDialoguePatch.SetUI(_messageStore, this.OpenNpcChatBar);
@@ -107,7 +111,7 @@ namespace SmartNPC.Bridge
                 _chatInput = new ChatInputCapture(this, this.ForwardPlayerMessage);
 
                 // Register SMAPI console debug commands.
-                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor);
+                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws);
 
                 this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat bar + panel + side button)", LogLevel.Info);
             }
@@ -237,13 +241,13 @@ namespace SmartNPC.Bridge
             {
                 string? current = NpcChatBar.ActiveBarNpc;
                 Game1.exitActiveMenu();
-                Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, current ?? initialNpc);
+                Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, current ?? initialNpc, _groupChat);
                 return;
             }
 
             if (Game1.activeClickableMenu != null) return;
 
-            Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, initialNpc);
+            Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, initialNpc, _groupChat);
         }
 
         /// <summary>Called when player sends a message from any chat UI.</summary>

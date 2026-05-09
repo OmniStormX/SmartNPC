@@ -19,6 +19,8 @@ namespace SmartNPC.Bridge
     {
         private readonly Dictionary<string, List<ChatMessage>> _history = new();
         private readonly HashSet<string> _unread = new();
+        private readonly Dictionary<string, List<ChatMessage>> _groupHistory = new();
+        private readonly HashSet<string> _groupUnread = new();
         private readonly int _maxPerNpc;
 
         public ChatMessageStore(int maxPerNpc = 100)
@@ -65,6 +67,48 @@ namespace SmartNPC.Bridge
             if (_history.ContainsKey(npcName))
                 _history[npcName].Clear();
             _unread.Remove(npcName);
+        }
+
+        // ── group chat ─────────────────────────────────────────────────
+
+        /// <summary>Append a message to a group chat's history.</summary>
+        public void AddGroupMessage(string groupId, string speaker, string text, bool isPlayer)
+        {
+            if (!_groupHistory.TryGetValue(groupId, out var list))
+            {
+                list = new List<ChatMessage>();
+                _groupHistory[groupId] = list;
+            }
+            list.Add(new ChatMessage
+            {
+                Speaker = speaker,
+                Text = text,
+                IsPlayer = isPlayer,
+                Time = DateTime.Now,
+            });
+            if (list.Count > _maxPerNpc)
+                list.RemoveAt(0);
+
+            if (!isPlayer)
+                _groupUnread.Add(groupId);
+        }
+
+        public List<ChatMessage> GetGroupHistory(string groupId)
+        {
+            if (_groupHistory.TryGetValue(groupId, out var list))
+                return list;
+            return new List<ChatMessage>();
+        }
+
+        public bool HasGroupUnread(string groupId) => _groupUnread.Contains(groupId);
+
+        public void MarkGroupRead(string groupId) => _groupUnread.Remove(groupId);
+
+        public void ClearGroup(string groupId)
+        {
+            if (_groupHistory.ContainsKey(groupId))
+                _groupHistory[groupId].Clear();
+            _groupUnread.Remove(groupId);
         }
     }
 }

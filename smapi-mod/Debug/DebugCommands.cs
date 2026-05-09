@@ -18,8 +18,9 @@ namespace SmartNPC.Bridge
         private const string CmdFriendship = "smartnpc_friendship";
         private const string CmdDebug      = "smartnpc_debug";
         private const string CmdTeleport   = "smartnpc_teleport";
+        private const string CmdGroup      = "smartnpc_group";
 
-        public static void Register(ICommandHelper commands, IMonitor log)
+        public static void Register(ICommandHelper commands, IMonitor log, WebSocketServer? ws = null)
         {
             commands.Add(
                 name: CmdFriendship,
@@ -43,7 +44,17 @@ namespace SmartNPC.Bridge
                     $"Usage: {CmdTeleport} <NpcName>",
                 callback: (_, args) => HandleTeleport(args, log));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}", LogLevel.Trace);
+            commands.Add(
+                name: CmdGroup,
+                documentation:
+                    "Broadcast a group_chat_message event to the agent.\n" +
+                    $"Usage: {CmdGroup} <Npc1,Npc2,...> <message ...>\n" +
+                    $"Example: {CmdGroup} XiaMi,Abigail,Sebastian What do you want to do today?",
+                callback: (_, args) => HandleGroup(args, log, ws));
+
+            log.Log(
+                $"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdGroup}",
+                LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -235,5 +246,52 @@ namespace SmartNPC.Bridge
         {
             0 => "up", 1 => "right", 2 => "down", 3 => "left", _ => "?",
         };
+
+        // ── smartnpc_group ─────────────────────────────────────────────
+
+        private static void HandleGroup(string[] args, IMonitor log, WebSocketServer? ws)
+        {
+            if (ws is null)
+            {
+                log.Log("WebSocketServer not initialized; cannot broadcast group_chat_message.", LogLevel.Error);
+                return;
+            }
+
+            if (args.Length < 2)
+            {
+                log.Log($"usage: {CmdGroup} <Npc1,Npc2,...> <message ...>", LogLevel.Error);
+                return;
+            }
+
+            string[] participants = args[0]
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim())
+                .Where(s => s.Length > 0)
+                .ToArray();
+
+            if (participants.Length == 0)
+            {
+                log.Log("no valid participant names parsed from first argument.", LogLevel.Error);
+                return;
+            }
+
+            string text = string.Join(" ", args.Skip(1)).Trim();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                log.Log("message text is empty.", LogLevel.Error);
+                return;
+            }
+
+            _ = ws.BroadcastEvent("group_chat_message", new
+            {
+                participants,
+                text,
+                source = "player",
+            });
+
+            log.Log(
+                $"[GroupChat] broadcast to [{string.Join(", ", participants)}]: {text}",
+                LogLevel.Info);
+        }
     }
 }
