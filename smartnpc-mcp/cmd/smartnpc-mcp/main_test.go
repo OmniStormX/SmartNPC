@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,7 +22,7 @@ func TestHTTPTransport_PingRoundTrip(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name: "smartnpc-mcp-test", Version: "test",
 	}, nil)
-	tools.RegisterAll(server, nil) // no bridge — only meta tools
+	tools.RegisterAll(server, nil, nil) // no bridge — only meta + in-process tools
 
 	handler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
@@ -73,5 +74,77 @@ func TestHTTPTransport_PingRoundTrip(t *testing.T) {
 	}
 	if res.StructuredContent == nil {
 		t.Fatal("expected structured content")
+	}
+}
+
+func TestSynthChatMessageFromAudible(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		wantOK   bool
+		wantNPC  string
+		wantText string
+	}{
+		{
+			name:     "nearest_npc_picked",
+			payload:  `{"text":"hi","source":"player","audible_npcs":[{"name":"XiaMi","distance":2.0},{"name":"Abigail","distance":4.0}]}`,
+			wantOK:   true,
+			wantNPC:  "XiaMi",
+			wantText: "hi",
+		},
+		{
+			name:    "empty_audible_drops",
+			payload: `{"text":"hi","source":"player","audible_npcs":[]}`,
+			wantOK:  false,
+		},
+		{
+			name:    "no_audible_field_drops",
+			payload: `{"text":"hi","source":"player"}`,
+			wantOK:  false,
+		},
+		{
+			name:    "empty_text_drops",
+			payload: `{"text":"","source":"player","audible_npcs":[{"name":"XiaMi"}]}`,
+			wantOK:  false,
+		},
+		{
+			name:    "first_entry_name_empty_drops",
+			payload: `{"text":"hi","source":"player","audible_npcs":[{"name":""}]}`,
+			wantOK:  false,
+		},
+		{
+			name:    "malformed_json_drops",
+			payload: `not json`,
+			wantOK:  false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, ok := synthChatMessageFromAudible(json.RawMessage(tc.payload))
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v want %v", ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				return
+			}
+			var got struct {
+				NPC    string `json:"npc"`
+				Target string `json:"target"`
+				Text   string `json:"text"`
+				Source string `json:"source"`
+			}
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("unmarshal synth: %v", err)
+			}
+			if got.NPC != tc.wantNPC || got.Target != tc.wantNPC {
+				t.Errorf("npc/target = %q/%q want both %q", got.NPC, got.Target, tc.wantNPC)
+			}
+			if got.Text != tc.wantText {
+				t.Errorf("text = %q want %q", got.Text, tc.wantText)
+			}
+			if got.Source != "player" {
+				t.Errorf("source = %q want player", got.Source)
+			}
+		})
 	}
 }

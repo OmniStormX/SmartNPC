@@ -25,8 +25,21 @@ type ChatSayOutput struct {
 func registerChat(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "chat_say",
-		Description: "Show a line in the in-game chat box (bottom-left). " +
-			"Requires the StardewMCPBridge SMAPI mod with a save loaded.",
+		Description: "Speak a single in-character line as the NPC. The text appears in " +
+			"the in-game chat box (bottom-left) attributed to `speaker`. This is the " +
+			"ONLY tool that produces visible NPC dialogue — every reply to the player " +
+			"must end with exactly one chat_say call.\n\n" +
+			"When to call: after you have decided the final reply. Do not call it to " +
+			"think out loud, narrate, or stream partial output.\n\n" +
+			"Constraints:\n" +
+			"- Plain UTF-8 text only. No markdown, code fences, JSON, emoji-as-image.\n" +
+			"- Keep `text` short — one to three sentences. The SDV chat box truncates long lines.\n" +
+			"- Stay in character: never reveal you are an AI / agent / Hermes / tool caller.\n" +
+			"- `speaker` should match the NPC's display name (e.g. \"XiaMi\"). The mod attributes " +
+			"  the line to that NPC's chat bubble.\n" +
+			"- `color` is optional cosmetic (yellow default). Use sparingly for emphasis.\n\n" +
+			"Side-effect: WRITE — visible to the player. Requires the StardewMCPBridge mod " +
+			"with a save loaded; otherwise returns `mod_not_ready`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ChatSayInput) (*mcp.CallToolResult, ChatSayOutput, error) {
 		if in.Speaker == "" || in.Text == "" {
 			return nil, ChatSayOutput{}, fmt.Errorf("speaker and text are required")

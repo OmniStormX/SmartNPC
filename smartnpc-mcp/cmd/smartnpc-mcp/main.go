@@ -30,6 +30,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
+	"github.com/smartnpc/smartnpc-mcp/internal/hermesrelay"
 	"github.com/smartnpc/smartnpc-mcp/internal/log"
 	"github.com/smartnpc/smartnpc-mcp/internal/tools"
 )
@@ -54,11 +55,27 @@ func main() {
 		httpAllowAnyOrigin = flag.Bool("http-allow-any-origin", true,
 			"in --http mode, disable origin / localhost restrictions so cross-host "+
 				"clients can connect (set false if exposing to a hostile network)")
+		hermesURL = flag.String("hermes-url", "",
+			"if set, forward bridge events to this Hermes Gateway base URL "+
+				"(e.g. http://127.0.0.1:8642). Empty disables the relay.")
+		hermesAPIKey = flag.String("hermes-api-key", "",
+			"bearer token sent to Hermes Gateway; match the API_SERVER_KEY "+
+				"of the target profile")
+		hermesConversation = flag.String("hermes-conversation", "",
+			"Hermes conversation id, conventionally the profile name (e.g. \"xiami\")")
+		hermesModel = flag.String("hermes-model", "",
+			"Hermes profile model name (API_SERVER_MODEL_NAME of the target profile)")
+		hermesNPC = flag.String("hermes-npc", "",
+			"forward only events whose npc/to/target matches this NPC name; "+
+				"empty forwards every event")
+		hermesPersonaFile = flag.String("hermes-persona-file", "",
+			"optional path to a markdown file whose contents are sent as the "+
+				"Hermes `instructions` field on every event POST")
 	)
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println(version)
+		fmt.Fprintln(os.Stderr, version)
 		return
 	}
 
@@ -82,6 +99,32 @@ func main() {
 		Version: version,
 	}, &mcp.ServerOptions{Logger: logger})
 
+	// Construct the Hermes relay before the bridge so the event router
+	// can include it. nil = disabled.
+	var relay *hermesrelay.Relay
+	if *hermesURL != "" {
+		var err error
+		relay, err = hermesrelay.New(hermesrelay.Config{
+			URL:          *hermesURL,
+			APIKey:       *hermesAPIKey,
+			Conversation: *hermesConversation,
+			Model:        *hermesModel,
+			NPCName:      *hermesNPC,
+			PersonaFile:  *hermesPersonaFile,
+		}, logger)
+		if err != nil {
+			logger.Error("hermesrelay init failed", "err", err)
+			os.Exit(1)
+		}
+		logger.Info("hermes relay enabled",
+			"url", *hermesURL,
+			"conversation", *hermesConversation,
+			"model", *hermesModel,
+			"npc_filter", *hermesNPC,
+			"persona_file", *hermesPersonaFile,
+		)
+	}
+
 	// Wire the ws bridge first so we can attach event forwarders during
 	// tool registration.
 	var br *bridge.WSClient
@@ -89,7 +132,7 @@ func main() {
 		// Construct first, then bind the handler — the handler needs to
 		// reference the client to issue chat_say in echo mode.
 		br = bridge.NewWSClient(bridge.WSClientOptions{URL: *wsURL, Logger: logger})
-		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker))
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, relay))
 		if err := br.Connect(ctx); err != nil {
 			// Mod may not be running yet. The ws client retries in the
 			// background; meanwhile non-mod tools (ping) still work.
@@ -97,7 +140,7 @@ func main() {
 		}
 	}
 
-	tools.RegisterAll(server, br)
+	tools.RegisterAll(server, br, logger)
 
 	if *httpAddr != "" {
 		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin)
@@ -166,15 +209,45 @@ func runHTTP(ctx context.Context, logger *slog.Logger, server *mcp.Server, addr 
 
 // makeRouter constructs the bridge.EventHandler that combines:
 //   - forwarding every event to MCP clients as a logging notification
+//   - audible-routing policy: a chat_received event with non-empty
+//     `audible_npcs` is converted into an additional synthesized
+//     chat_message targeting the closest audible NPC. The original
+//     chat_received is still forwarded to MCP clients (ambient observers),
+//     but the Hermes relay only sees the synthesized chat_message to
+//     avoid double-delivering the same line as both broadcast and DM.
 //   - optional --echo-mode: when a chat_received event arrives, immediately
 //     issue a chat_say back through the same bridge.
+//   - optional Hermes relay: POST the event to a running Hermes Gateway
+//     so an NPC profile can drive its turn.
 //
 // br may be nil during initial wiring; in that case echo-mode is a no-op.
-func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string) bridge.EventHandler {
+// relay may be nil; in that case the Hermes forwarding is skipped.
+func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay *hermesrelay.Relay) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
 
 	return func(ctx context.Context, name string, data json.RawMessage) {
+		// MCP clients always see the raw event stream.
 		forward(ctx, name, data)
+
+		// Audible routing: when chat_received carries audible_npcs, the
+		// synthesized chat_message is the authoritative event for the
+		// relay. The original chat_received is suppressed from the relay
+		// to avoid double-delivery.
+		var synthData json.RawMessage
+		var synthOK bool
+		if name == bridge.EventChatReceived {
+			synthData, synthOK = synthChatMessageFromAudible(data)
+		}
+
+		switch {
+		case synthOK:
+			forward(ctx, bridge.EventChatMessage, synthData)
+			if relay != nil {
+				relay.HandleEvent(ctx, bridge.EventChatMessage, synthData)
+			}
+		case relay != nil:
+			relay.HandleEvent(ctx, name, data)
+		}
 
 		if !echo || br == nil || name != bridge.EventChatReceived {
 			return
@@ -202,4 +275,36 @@ func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, ec
 			}
 		}()
 	}
+}
+
+// synthChatMessageFromAudible inspects a chat_received payload and, when
+// it carries a non-empty `audible_npcs` array, returns a synthesized
+// chat_message payload (npc + target + text + source) for the closest
+// audible NPC. The C# mod sorts the list by distance ascending, so the
+// first entry is the recipient. Returns (nil, false) when the payload
+// has no audible NPCs or the JSON is malformed.
+func synthChatMessageFromAudible(data json.RawMessage) (json.RawMessage, bool) {
+	var p struct {
+		Text   string `json:"text"`
+		Source string `json:"source"`
+		Audible []struct {
+			Name string `json:"name"`
+		} `json:"audible_npcs"`
+	}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, false
+	}
+	if len(p.Audible) == 0 || p.Audible[0].Name == "" || p.Text == "" {
+		return nil, false
+	}
+	out, err := json.Marshal(map[string]any{
+		"npc":    p.Audible[0].Name,
+		"target": p.Audible[0].Name,
+		"text":   p.Text,
+		"source": p.Source,
+	})
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }

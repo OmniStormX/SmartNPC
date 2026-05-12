@@ -505,18 +505,93 @@ whether a prior command is still in flight before issuing a new one.
 - `invalid_params` — missing `npc`
 - `unknown_npc` — NPC not on current save
 
+### `player_get_status`  (client → server)
+
+Read whether the player is currently available to be interrupted. Used by
+proactive scheduling to decide whether to defer a planned NPC action.
+
+**params** — none.
+
+**response.data**
+
+| field       | type   | notes                                                       |
+|-------------|--------|-------------------------------------------------------------|
+| `ok`        | bool   | `true`                                                      |
+| `busy`      | bool   | composite of `in_menu` / `in_event` / cutscene              |
+| `in_menu`   | bool   | a clickable menu is open                                    |
+| `in_event`  | bool   | a cutscene / in-game event is running                       |
+| `is_moving` | bool   | player is walking/running                                   |
+| `location`  | string | current map name                                            |
+
+**errors**
+
+- `mod_not_ready` — no save loaded
+
+## MCP-only tools (no ws traffic)
+
+These tools live entirely inside `smartnpc-mcp` and do not traverse the
+WebSocket bridge. They are exposed to MCP clients only. See
+[`docs/mcp-tools.md`](./mcp-tools.md) for the full input/output schema:
+
+| tool                    | side-effect | description                                                              |
+|-------------------------|-------------|--------------------------------------------------------------------------|
+| `npc_send_message`      | WRITE       | NPC-to-NPC private message; buffered in an in-memory FIFO inbox          |
+| `npc_broadcast_event`   | WRITE       | NPC-to-all fire-and-forget event; no inbox                               |
+| `npc_inbox_get`         | READ        | Peek pending messages queued for a recipient NPC                         |
+| `npc_inbox_ack`         | WRITE       | Drop messages from an inbox by id                                        |
+| `npc_get_named_locations` | READ      | Return the static table of human-addressable Farm landmarks              |
+
 ## Events
 
-### `chat_received`  (server → client)
+See [`events.md`](./events.md) for the full catalog (including reserved
+schemas and synthetic events that smartnpc-mcp originates on its own).
+The summaries below describe what the SMAPI mod emits today.
 
-Emitted when the player submits a line in the in-game chat box.
+### `chat_message`  (server → client)
+
+Emitted when the player sends a line targeted at a specific NPC via the
+in-game chat panel. This is the primary "player talks to NPC" trigger.
 
 **data**
 
-| field    | type   | notes                                    |
-|----------|--------|------------------------------------------|
-| `text`   | string | the raw text the player typed            |
-| `source` | string | `"player"` for now; reserved for future  |
+| field    | type   | notes                                       |
+|----------|--------|---------------------------------------------|
+| `npc`    | string | recipient NPC internal name                 |
+| `target` | string | redundant alias for `npc` today             |
+| `text`   | string | raw UTF-8 text typed by the player          |
+| `source` | string | `"player"`                                  |
+
+### `chat_received`  (server → client)
+
+Emitted when the player sends a line through the in-game chat box without
+addressing a specific NPC (Ctrl+T). Carries the list of Agent-managed NPCs
+within audible range so the consumer can decide whether to synthesize a
+targeted `chat_message` for the nearest one or fan the line out as
+ambient chatter. Also emitted by the legacy group chat UI (with an empty
+`audible_npcs` list).
+
+**data**
+
+| field          | type             | notes                                                              |
+|----------------|------------------|--------------------------------------------------------------------|
+| `text`         | string           | the raw text the player typed                                      |
+| `source`       | string           | `"player"` for now; reserved for future                            |
+| `audible_npcs` | array (optional) | Agent-managed NPCs within `AudibleNPCResolver.DefaultRadius` tiles of the player, sorted by distance (closest first). Omitted / empty when none are in earshot or when the source is not the chat box. |
+
+Each entry of `audible_npcs`:
+
+| field      | type   | notes                                          |
+|------------|--------|------------------------------------------------|
+| `name`     | string | NPC internal name                              |
+| `map`      | string | NPC's current map                              |
+| `distance` | number | Euclidean tile distance from the player        |
+| `x`        | int    | NPC tile X                                     |
+| `y`        | int    | NPC tile Y                                     |
+
+> `smartnpc-mcp` consumes `chat_received` and — when `audible_npcs` is non-empty —
+> synthesizes a `chat_message` notification targeted at `audible_npcs[0]`.
+> Downstream MCP clients receive both events on the same channel.
+
 
 ### `npc_interact`  (server → client)
 
@@ -529,6 +604,16 @@ The client should generate an AI response and send it back via `chat_say`.
 |--------|--------|--------------------------------------------|
 | `npc`  | string | internal NPC name, e.g. `"XiaMi"`          |
 | `source` | string | `"player"` — the interaction initiator   |
+
+### `group_create`  (server → client)
+
+Emitted when the player opens a group chat session (legacy UI).
+
+**data**
+
+| field          | type           | notes                                |
+|----------------|----------------|--------------------------------------|
+| `participants` | array of string | NPC internal names in the group     |
 
 ## Lifecycle
 

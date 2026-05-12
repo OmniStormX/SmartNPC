@@ -36,7 +36,7 @@ echo.
 
 rem ---- Step 4: Start Hermes gateway in WSL ----
 echo [4/5] Starting Hermes gateway in WSL...
-start "Hermes Gateway" wsl -d Ubuntu bash -c "hermes gateway run --accept-hooks"
+start "Hermes Gateway" wsl -d Ubuntu-22.04 bash -ic "hermes gateway run --accept-hooks"
 echo [OK] Hermes gateway starting in background window.
 echo      Waiting for Hermes to become healthy...
 

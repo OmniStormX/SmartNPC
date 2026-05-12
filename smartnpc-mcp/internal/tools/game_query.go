@@ -58,9 +58,13 @@ type FriendshipGetOutput struct {
 func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "game_get_time",
-		Description: "Read the current in-game time (hour/minute), date (day/season/year) " +
-			"and short day-of-week. Use this before greeting the player so you can say " +
-			"\"good morning\" vs \"good evening\" appropriately. Takes no parameters.",
+		Description: "Read the current in-game clock and calendar: hour (0-23), minute, " +
+			"raw time-of-day (e.g. 1430), day-of-month (1-28), short day-of-week, " +
+			"season (spring/summer/fall/winter), and year.\n\n" +
+			"When to call: BEFORE any greeting or reply that references time (\"good morning\" " +
+			"vs \"good evening\"), before suggesting bedtime / late-night activity, or when " +
+			"the player asks \"what time is it\" / \"几点了\".\n\n" +
+			"Side-effect: READ. Takes no parameters. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GameGetTimeInput) (*mcp.CallToolResult, GameGetTimeOutput, error) {
 		raw, err := br.Call(ctx, bridge.ActionGameGetTime, in)
 		if err != nil {
@@ -75,9 +79,11 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "game_get_weather",
-		Description: "Read today's in-game weather (sunny/rainy/snowy/stormy) plus the " +
-			"current season. Use this to make weather-aware small talk (\"brought an " +
-			"umbrella?\") or to gate outdoor activity suggestions. Takes no parameters.",
+		Description: "Read today's weather (sunny/rainy/snowy/stormy) and the current season. " +
+			"Separate boolean flags distinguish rain/snow/lightning for fine-grained checks.\n\n" +
+			"When to call: for weather-aware small talk (\"brought an umbrella?\"), before " +
+			"gating outdoor activity suggestions, or when the player asks about the weather.\n\n" +
+			"Side-effect: READ. Takes no parameters. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GameGetWeatherInput) (*mcp.CallToolResult, GameGetWeatherOutput, error) {
 		raw, err := br.Call(ctx, bridge.ActionGameGetWeather, in)
 		if err != nil {
@@ -92,10 +98,15 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "friendship_get",
-		Description: "Read the player's friendship level with a specific NPC (by internal " +
-			"name, e.g. \"Abigail\", \"XiaMi\"). Returns raw points, hearts (points/250), " +
-			"and relationship status (friendly/dating/engaged/married/none). Use this to " +
-			"calibrate warmth of dialogue — more hearts means more intimacy.",
+		Description: "Read the player's relationship with a specific NPC: raw points, " +
+			"hearts (points/250, capped at `max_hearts` which is usually 10), and a " +
+			"status label (friendly/dating/engaged/married/none).\n\n" +
+			"When to call: BEFORE any relationship-sensitive reply — gifts, apologies, " +
+			"romance, emotionally intense topics, or when the player asks \"do you like " +
+			"me?\" / \"我们关系怎么样\". Calibrate warmth of dialogue to heart count " +
+			"(0-2: polite distance, 3-6: friendly, 7+: intimate).\n\n" +
+			"Side-effect: READ. Requires a loaded save. Returns `invalid_params` if `npc` " +
+			"is empty, `npc_not_found` if the name does not resolve.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in FriendshipGetInput) (*mcp.CallToolResult, FriendshipGetOutput, error) {
 		if in.NPC == "" {
 			return nil, FriendshipGetOutput{}, fmt.Errorf("npc is required")

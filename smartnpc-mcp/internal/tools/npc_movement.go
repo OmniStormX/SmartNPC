@@ -115,11 +115,17 @@ var validDirections = map[string]bool{
 func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_move_to",
-		Description: "Pathfind an NPC to a target tile. Uses the game's PathFindController " +
-			"so it respects walls, doors, and map geometry. The `map` parameter is optional; " +
-			"if omitted the NPC stays on its current map. Returns immediately after the path " +
-			"request is queued — the NPC will walk there asynchronously. Use this to stage " +
-			"arrivals, chase the player, or reposition before a scheduled scene.",
+		Description: "Pathfind an NPC to a target tile using the game's PathFindController " +
+			"(respects walls, doors, terrain). If `map` differs from the NPC's current map, " +
+			"the NPC warps — cross-map pathing is deferred to a later milestone. Returns " +
+			"immediately; the NPC walks asynchronously.\n\n" +
+			"When to call: stage an arrival before a scene, reposition after a scheduled " +
+			"event, or when the player says \"go to X\". For human-friendly destinations " +
+			"like \"湖边\" / \"大门\", first call `npc_get_named_locations` to resolve the tile.\n\n" +
+			"Do NOT call this during casual dialogue just to show off — it's a high-impact " +
+			"write that visibly moves the character across the map.\n\n" +
+			"Side-effect: WRITE — moves a character. Requires a loaded save. Errors: " +
+			"`unknown_npc`, `unknown_map`, `pathfind_error`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcMoveToInput) (*mcp.CallToolResult, NpcMoveToOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcMoveToOutput{}, fmt.Errorf("npc is required")
@@ -138,9 +144,12 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_face_direction",
 		Description: "Turn an NPC to face one of four cardinal directions " +
-			"(up/down/left/right). Useful for reaction beats — e.g. face the player " +
-			"before speaking, or glance at an object mentioned in dialogue. " +
-			"No-ops the path controller; safe to call while the NPC is idle.",
+			"(up/down/left/right). Equivalent to `NPC.faceDirection(int)`; does not " +
+			"cancel any active PathFindController.\n\n" +
+			"When to call: reaction beats — face the player before speaking, glance at " +
+			"an object mentioned in dialogue, turn away when sulking.\n\n" +
+			"Side-effect: WRITE (low-impact visual). Safe during idle or movement. " +
+			"Errors: `invalid_params` if direction is not one of up/down/left/right.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcFaceDirectionInput) (*mcp.CallToolResult, NpcFaceDirectionOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcFaceDirectionOutput{}, fmt.Errorf("npc is required")
@@ -163,10 +172,12 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_get_position",
-		Description: "Read an NPC's current tile coordinates, map, and facing direction. " +
-			"Coordinates can be fractional while the NPC is mid-step. `is_moving` is true " +
-			"when a PathFindController is active. Use this to verify an `npc_move_to` " +
-			"actually arrived, or to compute distance before triggering a scene.",
+		Description: "Read an NPC's current tile coordinates, map, and facing. " +
+			"Coordinates can be fractional while the NPC is mid-step; `is_moving` is " +
+			"true when a PathFindController is active.\n\n" +
+			"When to call: verify that a prior `npc_move_to` or `npc_summon` actually " +
+			"arrived, or compute distance to the player before triggering a scene.\n\n" +
+			"Side-effect: READ. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetPositionInput) (*mcp.CallToolResult, NpcGetPositionOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetPositionOutput{}, fmt.Errorf("npc is required")
@@ -184,12 +195,14 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_get_named_locations",
-		Description: "Return the table of human-addressable landmarks (e.g. \"房子前面\", " +
-			"\"湖边\", \"大门\") you can move to. Each entry includes the canonical name, " +
-			"a list of aliases the player might say, and the exact tile coordinates. " +
-			"Use this when the player asks where you can go or when you need to disambiguate " +
-			"a fuzzy destination. The agent also parses these names automatically, so you " +
-			"usually don't need to call this — it exists for introspection. Takes no parameters.",
+		Description: "Return the table of human-addressable landmarks on the Farm " +
+			"(e.g. \"房子前面\", \"湖边\", \"大门\"). Each entry has a canonical name, " +
+			"aliases, target map, and exact tile coordinates.\n\n" +
+			"When to call: when the player asks \"where can you go\" / \"你能去哪\", or " +
+			"when a player destination is fuzzy (\"过来\" / \"来这边\") and you need to " +
+			"disambiguate before issuing `npc_move_to`.\n\n" +
+			"Side-effect: READ. Static data — takes no parameters, always available " +
+			"even without a loaded save.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ NpcGetNamedLocationsInput) (*mcp.CallToolResult, NpcGetNamedLocationsOutput, error) {
 		out := NpcGetNamedLocationsOutput{
 			OK:        true,

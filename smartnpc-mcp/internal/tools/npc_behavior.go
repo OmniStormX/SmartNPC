@@ -90,9 +90,13 @@ type NpcGetBehaviorOutput struct {
 func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_summon",
-		Description: "Summon an NPC to walk toward the player. The NPC warps to the map edge then pathfinds to the player. " +
-			"Use this when the player says \"come here\" / \"过来\" without naming a specific landmark — the mod picks a " +
-			"reasonable arrival tile. Returns once the summon request is queued; the NPC walks asynchronously.",
+		Description: "Make an NPC come to the player. The NPC warps to the nearest map " +
+			"edge then pathfinds to the player's current tile. Cancels any active " +
+			"follow/lead behavior.\n\n" +
+			"When to call: the player says \"come here\" / \"过来\" / \"到我这来\" without " +
+			"naming a specific landmark — the mod picks the arrival tile.\n\n" +
+			"Side-effect: WRITE (high-impact — visibly teleports + moves a character). " +
+			"Use only on explicit request. Errors: `unknown_npc`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcSummonInput) (*mcp.CallToolResult, NpcSummonOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcSummonOutput{}, fmt.Errorf("npc is required")
@@ -110,9 +114,13 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_follow_start",
-		Description: "Make an NPC follow the player. The NPC stays ~2 tiles behind, following across map transitions. " +
-			"Call `npc_follow_stop` to cancel. Only one follow behavior is active at a time per NPC; calling this again " +
-			"refreshes the target. Safe to call while the NPC is idle, summoning, or leading — the mod cancels the prior mode.",
+		Description: "Begin an NPC follow behavior. The NPC stays ~2 tiles behind the " +
+			"player, crossing map transitions. Only one follow is active per NPC; calling " +
+			"again refreshes the target. Calling during summon/lead cancels the prior mode.\n\n" +
+			"When to call: player says \"follow me\" / \"跟我来\" / \"跟着我走\". Also for " +
+			"tutorial escorts where the NPC tags along.\n\n" +
+			"Side-effect: WRITE (ongoing — runs until `npc_follow_stop` or new behavior). " +
+			"Errors: `unknown_npc`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcFollowStartInput) (*mcp.CallToolResult, NpcFollowStartOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcFollowStartOutput{}, fmt.Errorf("npc is required")
@@ -130,8 +138,12 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_follow_stop",
-		Description: "Stop an NPC from following the player. Idempotent — calling it when the NPC is not following " +
-			"simply returns ok=true. Use when the player says \"stop following\" / \"别跟了\" / \"停下\".",
+		Description: "Stop an NPC from following the player. Idempotent — returns " +
+			"`ok=true` even if the NPC was not following.\n\n" +
+			"When to call: player says \"stop following\" / \"别跟了\" / \"停下\" / " +
+			"\"我要一个人待会\". Also before triggering a scene that needs the NPC " +
+			"stationary.\n\n" +
+			"Side-effect: WRITE (cancels ongoing follow). Errors: `unknown_npc`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcFollowStopInput) (*mcp.CallToolResult, NpcFollowStopOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcFollowStopOutput{}, fmt.Errorf("npc is required")
@@ -149,9 +161,13 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_lead_to",
-		Description: "Ask an NPC to lead the way to a destination. The NPC walks ahead of the player toward the target " +
-			"tile, pausing when the player falls too far behind. Unlike `npc_move_to`, this mode actively coordinates with " +
-			"the player's position. `map` is optional; defaults to the NPC's current map.",
+		Description: "Ask an NPC to lead the player to a destination tile. The NPC walks " +
+			"ahead, pauses when the player falls behind, and resumes when they catch up. " +
+			"`map` defaults to the NPC's current map.\n\n" +
+			"When to call: player says \"带我去 X\" / \"take me to Y\" / \"show me the way\". " +
+			"Choose this over `npc_move_to` when the player is expected to follow the NPC.\n\n" +
+			"Side-effect: WRITE (ongoing — coordinates with player position). Errors: " +
+			"`unknown_npc`, `unknown_map`, `pathfind_error`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcLeadToInput) (*mcp.CallToolResult, NpcLeadToOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcLeadToOutput{}, fmt.Errorf("npc is required")
@@ -169,9 +185,12 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_get_behavior",
-		Description: "Query an NPC's current behavior mode. Returns one of: `idle`, `summoning`, `following`, `leading`. " +
-			"Use this to check whether a prior behavior command is still active before issuing a new one, or to describe " +
-			"the NPC's current state in dialogue.",
+		Description: "Query an NPC's current high-level behavior mode: `idle`, " +
+			"`summoning`, `following`, or `leading`.\n\n" +
+			"When to call: check if a prior behavior command is still in flight before " +
+			"issuing a new one, or describe the NPC's state in dialogue (\"我已经在跟着你了\" / " +
+			"\"I'm right behind you\").\n\n" +
+			"Side-effect: READ. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetBehaviorInput) (*mcp.CallToolResult, NpcGetBehaviorOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetBehaviorOutput{}, fmt.Errorf("npc is required")

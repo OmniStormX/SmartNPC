@@ -13,50 +13,113 @@
 | **M1.5** | 工程化外壳：Taskfile + GitHub Actions CI + Release workflow | ✅ 已完成 |
 | **M2** | SMAPI Mod + WebSocket 桥接 + 游戏内聊天 | ✅ 已完成 |
 | **M3** | NPC 精灵系统 + 自定义 NPC 注册 | ✅ 已完成 |
-| **M4** | Agent 对话系统 + 聊天 UI + 游戏状态工具 | 🔧 进行中 |
-| **M5** | SQLite 记忆 + 调度 + 多 NPC 编排 | ⬜ 未开始 |
+| **M4** | Agent 对话系统 + 聊天 UI + 游戏状态工具 | ✅ 已完成 |
+| **M5 (旧)** | Go agent 内置 SQLite 记忆 + 调度 + 多 NPC 编排 | ⛔ **冻结** — 重定向为 M5(Hermes-first) |
+| **M5 (Hermes-first)** | smartnpc-agent 退出主链路；MCP 强化 + Hermes profile per NPC | ✅ 代码就绪，5.6/5.7/5.D 待实机验证 |
 
 ---
 
-## M4 — Agent 对话系统 + 聊天 UI + 游戏状态工具 🔧
+## ⛔ smartnpc-agent 冻结声明
 
-**目标**：玩家能通过自定义聊天窗口与 AI NPC 自由对话；Agent 能感知游戏状态（时间/天气/好感度）。
+**自 2026-05-11 起**，`smartnpc-agent/` **不再接受新功能**：
 
-### 已完成
+- 不再向 `smartnpc-agent/internal/` 添加 memory / scheduler / multi-NPC pool / event router 等模块
+- `internal/agent/`、`internal/llm/`、`personas/` 仅作为回归对照保留
+- commit `b56d439` 落地的 M5 第一版（memory / delegation / proactive / group chat / QQ-UI）**不再继续扩展**，作为"旧路线对照实现"封存
+- 仅允许：bug fix、依赖升级、为对照测试服务的最小改动
 
-| # | 任务 | 状态 | 关键产物 |
-|---|------|------|---------|
-| 4.1 | OpenAI 兼容 provider + Hermes 后端 | ✅ | `smartnpc-agent/internal/llm/openai.go` |
-| 4.2 | Persona JSON loader + soul_notes | ✅ | `smartnpc-agent/internal/agent/chat/persona.go` |
-| 4.3 | XiaMi NPC 注册 + 精灵管线 | ✅ | `smapi-mod/NPC/XiaMiData.cs`, `build_spritesheet.py` |
-| 4.4 | Agent NPC Registry + 对话限制移除 | ✅ | `AgentNpcRegistry.cs`, `NpcDialoguePatch.cs` |
-| 4.5 | `npc_interact` event 广播 | ✅ | Mod → ws → mcp → agent notification |
-| 4.6 | `chat_message` event（ChatWindow → Agent） | ✅ | agent 侧 `extractChatMessage()` |
-| 4.7 | ChatWindow 聊天窗口 UI | ✅ | `smapi-mod/UI/ChatWindow.cs` |
-| 4.8 | FriendListWindow 好友列表 UI | ✅ | `smapi-mod/UI/FriendListWindow.cs` (F2 快捷键) |
-| 4.9 | ChatMessageStore 消息存储 | ✅ | `smapi-mod/UI/ChatMessageStore.cs` |
-| 4.10 | 游戏状态查询工具 (MCP) | ✅ | `game_get_time`, `game_get_weather`, `friendship_get` |
-| 4.11 | ChatHandler 路由到 UI / DrawDialogue | ✅ | `chat_say` 回复自动追加到聊天窗口 |
-
-### 待验证
-
-| # | 任务 | 状态 | 说明 |
-|---|------|------|------|
-| 4.12 | 全栈端到端验证 | ⏳ 待测 | 点击 NPC → 聊天窗口 → AI 回复 |
-| 4.13 | F2 好友列表远程聊天验证 | ⏳ 待测 | 不面对面也能聊天 |
-| 4.14 | 游戏状态工具 LLM 调用验证 | ⏳ 待测 | 问"几点了"NPC 能回答正确时间 |
-
-### 已知问题 / 待修复
-
-| 问题 | 优先级 | 说明 |
-|------|--------|------|
-| `npc_interact` 直接点击可能不触发 agent | P1 | 需验证完整链路：mod → ws → mcp → agent → LLM → chat_say |
-| ChatWindow 文本输入中文可能不work | P2 | SDV TextBox 对中文 IME 支持有限 |
-| 好感度注入 system prompt | P3 | Agent 回复前先查 friendship，M4 后期或 M5 实现 |
+**原因**：详见 [REFACTOR.md](../REFACTOR.md)。当前项目同时存在两个 Agent 中心（Go agent + Hermes Agent），抽象重复且边界不清。Hermes-first 路线把决策/记忆/技能/反思全部交给 Hermes，Go 侧只保留游戏能力边界。
 
 ---
 
-## M4 文件清单
+## M5 (Hermes-first) — Hermes-first NPC runtime 🔧
+
+**目标**：把 NPC 决策/记忆/人格/技能/反思全部迁移到 Hermes profile；smartnpc-mcp 强化为正式 MCP Server；smartnpc-agent 退出主运行链路。
+
+### 目标架构
+
+```
+Stardew Valley / SMAPI Mod
+        |
+        | WebSocket JSON envelope (port :18745)
+        v
+smartnpc-mcp
+  - MCP Server（stdio + streamable HTTP）
+  - 游戏协议适配
+  - tool schema / event notification
+  - 参数校验 / 限流 / 幂等
+        |
+        | MCP Streamable HTTP（正式）/ stdio（dev）
+        v
+Hermes Agent Profile (per NPC)
+  - SOUL.md（人格）
+  - memory（state.db / 可选 memory provider plugin）
+  - skills（行为流程）
+  - tool planning + tool calling
+  - reflection / cron（主动行为）
+```
+
+### 任务拆分
+
+| Phase | # | 任务 | 状态 | 关键产物 |
+|---|---|---|---|---|
+| 0 | 5.0 | 冻结 smartnpc-agent，重写路线图，更新 CLAUDE.md | ✅ | 本文档 + CLAUDE.md |
+| 0 | 5.0b | 确认 Hermes 是否原生接 MCP notification 作 trigger（决定 5.4 走方案 A/B/C） | ✅ | `docs/hermes-event-trigger.md`（锁定方案 B） |
+| 1 | 5.1 | smartnpc-mcp 加 streamable HTTP transport（`--http :3000`） | ✅ | `cmd/smartnpc-mcp/main.go::runHTTP` |
+| 1 | 5.2 | 重写 tool description 为"操作手册式"，给 LLM 看 | ✅ | `smartnpc-mcp/internal/tools/*.go` description 字段 |
+| 1 | 5.3 | 新增 `npc_send_message` / `npc_broadcast_event` / `npc_inbox_*` 正式 MCP tool | ✅ | `smartnpc-mcp/internal/tools/npc_message.go` |
+| 1 | 5.4 | 事件 payload 规范化（chat_message / npc_interact 已实现；day_started / location_changed / friendship_changed 保留 schema） | ✅ | `smartnpc-mcp/internal/events/` + `docs/events.md` |
+| 2 | 5.5 | 起 `hermes/profiles/xiami/`：SOUL.md + skills + mcp.yaml | ✅ | `hermes/profiles/xiami/` + `hermes/install.sh`；`hermes mcp test smartnpc_game` 可 discover 工具 |
+| 2 | 5.6 | 跑通"玩家聊天 → Hermes profile → chat_say"端到端 | 🧪 代码就绪 | `smartnpc-mcp/cmd/smartnpc-mcp/pipeline_test.go` + `docs/manual-e2e-verification.md` |
+| 2 | 5.7 | 跑通"问时间/天气/好感度 → Hermes 自动调 game_* 工具" | 🧪 代码就绪 | 同上 |
+| 3 | 5.8 | 事件触发链路实装（方案 B：smartnpc-mcp outbound HTTP → Hermes Gateway） | ✅ | `smartnpc-mcp/internal/hermesrelay/` + main.go `--hermes-*` flags |
+| 3 | 5.9 | NPC 主动打招呼（npc_interact event → Hermes） | ✅ | `hermes/profiles/xiami/skills/smartnpc/proactive-greeting/SKILL.md` |
+| 4 | 5.10 | 长期记忆迁移：Hermes 内置 state.db + FTS5 | ✅ | `hermes/profiles/xiami/skills/smartnpc/memory-policy/SKILL.md` (Hermes 内置 state.db 直接用) |
+| 4 | 5.11 | 反思 / cron 主动行为 | ✅ | `hermes/profiles/xiami/cron-recipes.md` |
+| 4 | 5.12 | 多 NPC profile 路由：SMAPI mod 里 AudibleNPCResolver + TurnQueue | ✅ | `smapi-mod/NPC/AudibleNPCResolver.cs` + `TurnQueue.cs` + `ModEntry.cs` 接入 |
+| 5 | 5.13 | smartnpc-agent 降级为 dev harness | ✅ | `smartnpc-agent/README.md` + `CLAUDE.md` |
+| 5 | 5.14 | 文档拆分 | ✅ | `docs/architecture.md` + `hermes-profiles.md` + `mcp-tools.md` + `migration-smartnpc-agent.md` |
+
+### 5.0b 事件触发方案对比
+
+| 方案 | smartnpc-mcp 改动 | 实时性 | 前提 |
+|---|---|---|---|
+| **A. MCP notification → Hermes trigger** | 仅发 notification | 最好 | Hermes 必须支持 notification 作为 agent 入口 |
+| **B. smartnpc-mcp POST 到 Hermes Gateway** | 加 HTTP outbound client + Hermes 路由配置 | 好 | Hermes 暴露可被外部 POST 注入消息的端点（已知 `/v1/responses` + `conversation:` 满足） |
+| **C. Hermes 轮询 `game_next_event`** | 加 2 个事件队列工具（`game_next_event` / `game_ack_event`） | 弱（秒级延迟） | 无外部依赖 |
+
+5.0b 完成后写明结论并锁定方案，再启动 5.8。
+
+### 应保留在 smartnpc-mcp / SMAPI mod 的"硬逻辑"
+
+不要把所有规则都扔给 Hermes prompt。以下规则**必须**在 MCP server 或 SMAPI mod 里硬校验：
+
+1. 工具参数合法性
+2. NPC 是否存在
+3. 地点是否可达
+4. 当前游戏状态是否允许操作
+5. 写操作权限（改好感度、给物品、传送）
+6. tool timeout / retry / reconnect
+7. 高频工具限流
+8. 同一 NPC 同时多条消息的并发顺序
+9. `chat_say` 文本长度、特殊字符、UI 限制
+10. 游戏主线程调用安全
+
+Hermes prompt / skill 是软约束；MCP handler 才是硬边界。
+
+### 里程碑验收
+
+- [ ] **M5.A**：smartnpc-mcp `--http :3000` 启动成功，Hermes profile 通过 `mcp_servers:` 接入并能调用 `chat_say`
+- [ ] **M5.B**：玩家在 ChatWindow 输入 → Hermes XiaMi profile 回复 → `chat_say` 显示在游戏内
+- [ ] **M5.C**：玩家问"现在几点"，XiaMi profile 自动调 `game_get_time` 后回复正确时间
+- [ ] **M5.D**：NPC `npc_interact` 事件触发 Hermes，NPC 主动打招呼（依赖 5.0b 选定方案）
+- [ ] **M5.E**：3 天未互动 cron 触发 → XiaMi 主动行为
+- [ ] **M5.F**：第二个 NPC profile 上线，AudibleNPCResolver 路由正确
+- [ ] **M5.G**：smartnpc-agent 从启动文档下线，README 仅展示 Hermes 路径
+
+---
+
+## M4 文件清单（保留作为历史）
 
 ### C# Mod 新增/修改
 
@@ -89,34 +152,9 @@ smartnpc-mcp/internal/
     └── protocol.go             ← 新 action 常量
 ```
 
-### Go Agent 修改
-
-```
-smartnpc-agent/internal/agent/chat/
-└── chat.go                     ← 处理 chat_message / npc_interact event
-```
-
 ---
 
-## M5 — 记忆 / 调度 / 多 NPC 编排（计划）
-
-**目标**：14+ NPC 并发自主行为，跨 session 记忆持久化，主动事件触发。
-
-| # | 任务 | 关键产物 |
-|---|------|---------|
-| 5.1 | SQLite + FTS5 记忆存储 | `smartnpc-agent/internal/memory/{store,sqlite}.go` |
-| 5.2 | 好感度注入 system prompt | Agent 回复前查 `friendship_get`，动态调整语气 |
-| 5.3 | 跨 NPC 消息队列 | `smartnpc-agent/internal/relay/message_queue.go` |
-| 5.4 | Cron 调度 + 主动行为 | `smartnpc-agent/internal/scheduler/cron.go` |
-| 5.5 | Agent 池（多 NPC 并发） | `smartnpc-agent/internal/orchestr/pool.go` |
-| 5.6 | 事件路由 | MCP notifications → trigger |
-| 5.7 | 多 NPC persona 模板 | `persona/templates/*.json` |
-
-**里程碑**：玩家 3 天没找 XiaMi，她主动在农场搭话。
-
----
-
-## 启动全栈
+## 启动全栈（M4 当前路径，待 M5 完成后由 Hermes 路径替代）
 
 ```cmd
 :: 1. 构建
@@ -129,7 +167,7 @@ hermes -p xiami gateway run --accept-hooks
 task mod:install
 "D:\Stardew Valley\StardewModdingAPI.exe"
 
-:: 4. Agent（新 cmd 窗口）
+:: 4. Agent（新 cmd 窗口）—— M5 完成后此步骤替换为 Hermes profile run
 cd /d d:\SmartNPC\smartnpc-agent
 bin\smartnpc-agent.exe ^
   -mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
@@ -141,4 +179,17 @@ bin\smartnpc-agent.exe ^
   -model xiami ^
   -speaker XiaMi ^
   -persona ..\smartnpc-agent\personas\xiami.json
+```
+
+**M5 完成后正式启动方式**（草案，最终以 5.13 文档为准）：
+
+```cmd
+:: 1. SMAPI 启动游戏
+"D:\Stardew Valley\StardewModdingAPI.exe"
+
+:: 2. smartnpc-mcp（新 cmd 窗口）
+smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws
+
+:: 3. Hermes profile per NPC（WSL）
+hermes -p xiami gateway run --accept-hooks
 ```
