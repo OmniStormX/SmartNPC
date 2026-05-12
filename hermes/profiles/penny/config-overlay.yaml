@@ -1,0 +1,19 @@
+# Config overlay for hermes/profiles/penny/config.yaml — see xiami for the
+# full template. Port 8646 is reserved for Penny per
+# hermes/runtime-config.yaml.
+
+mcp_servers:
+  smartnpc_game:
+    url: http://__HOST_IP__:3000/mcp
+    timeout: 30
+    connect_timeout: 10
+    tools:
+      exclude: []
+      resources: false
+      prompts: false
+
+API_SERVER_ENABLED: true
+API_SERVER_KEY: smartnpc-test-key
+API_SERVER_HOST: 0.0.0.0
+API_SERVER_PORT: 8646
+API_SERVER_MODEL_NAME: penny
