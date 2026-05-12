@@ -139,9 +139,32 @@ isolated; the `instructions` field re-asserts persona on every turn.
 | Hermes profile gateway | WSL | `:8642` | `hermes -p xiami gateway run` |
 
 Each new NPC profile gets its own gateway port (`API_SERVER_PORT` in
-the profile's `config.yaml`). One smartnpc-mcp instance can fan events
-out to multiple profiles by running multiple processes with different
-`--hermes-*` flag sets — or, future work, by reading a routing config.
+the profile's `config.yaml`). A single `smartnpc-mcp` process fans
+events out to all live profiles by reading
+`hermes/runtime-config.yaml`:
+
+```
+SMAPI Mod (C#)
+   │ ws :18745 (single client)
+   ▼
+smartnpc-mcp (Go, single process)
+   ├── :3000/mcp  (Streamable HTTP) ◀── Hermes profile (MCP client)
+   │                                      ├── xiami      (gateway :8642)
+   │                                      └── abigail    (gateway :8643)
+   │                                  (haley:8644, harvey:8645, penny:8646,
+   │                                   sebastian:8647 — file-ready, not launched)
+   │
+   └── hermesrelay outbound  ── routed by event.npc → matching gateway
+```
+
+The fan-out routing is driven by `hermes/runtime-config.yaml` (consumed via
+mcp's `--hermes-config` flag). Each entry maps an NPC's PascalCase internal
+name (`npc_filter`) to a Hermes Gateway base URL plus conversation/model
+identifiers and an env-var name (`api_key_env`) whose resolved value goes
+into the outbound `Authorization: Bearer` header. Events whose `npc` field
+doesn't match any entry are dropped with a Debug log. The mod's WebSocket
+server only accepts one client, which is why mcp does the fan-out instead
+of running multiple mcp instances.
 
 ## Why we picked this shape (one paragraph)
 

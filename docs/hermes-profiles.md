@@ -33,6 +33,25 @@ After `install.sh`, the live profile additionally contains:
 └── logs/                  ← daemon logs (auto)
 ```
 
+## Multi-profile fan-out: `hermes/runtime-config.yaml`
+
+The single `smartnpc-mcp` process learns which Hermes Gateway to POST to
+from `hermes/runtime-config.yaml`. The file maps NPC internal name
+(`npc_filter`, PascalCase, case-sensitive) to gateway URL + conversation
++ model + bearer-token env var. See the file itself for the schema.
+
+When you add an NPC, update **three** things together:
+
+1. `hermes/profiles/<name>/config-overlay.yaml` — `API_SERVER_PORT` +
+   `API_SERVER_MODEL_NAME`.
+2. `hermes/runtime-config.yaml` — append a `profiles:` entry with the
+   same port and model.
+3. `scripts/start_hermes_profiles.sh` — extend `PORT_OF` map if not
+   already there.
+
+Mismatches between (1) and (2) cause silent message loss (events route to
+an empty port).
+
 ## File-by-file
 
 ### `SOUL.md` — identity layer (timeless)
@@ -147,9 +166,10 @@ Adding a second NPC (e.g. Abigail):
 5. Add an Agent-managed NPC entry in
    [`smapi-mod/NPC/AgentNpcRegistry`](../smapi-mod/NPC/AgentNpcRegistry.cs)
    if the NPC isn't already registered.
-6. Run smartnpc-mcp **with a second `--hermes-*` flag set**, or run
-   a second mcp instance pointed at the Abigail gateway (future
-   work: a `--hermes-config` file for multi-profile fan-out).
+6. Add the new NPC to `hermes/runtime-config.yaml` with a unique
+   `gateway_url` port matching the new profile's `config-overlay.yaml`.
+   Re-run `install.sh`; the next mcp restart picks up the new profile
+   automatically.
 
 ## Conventions
 

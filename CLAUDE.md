@@ -16,8 +16,9 @@ SmartNPC — 星露谷物语 AI NPC 系统，基于 MCP 构建：
 
 **正式链路（Hermes-first，M5 起）：**
 ```
-SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ──MCP HTTP── Hermes Agent Profile
-                                          └── hermesrelay ──POST /v1/responses── Hermes Gateway
+SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ──MCP HTTP── 6× Hermes Agent Profile
+                                          │                              (xiami, abigail, haley, harvey, penny, sebastian)
+                                          └── hermesrelay ──POST /v1/responses──> route by runtime-config.yaml
 ```
 
 **调试链路（旧，smartnpc-agent 已冻结）：**
@@ -81,8 +82,8 @@ hermes gateway run --accept-hooks
 ```cmd
 cd D:\SmartNPC\smartnpc-mcp
 bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
-  --hermes-url http://192.168.59.118:8642 --hermes-conversation xiami ^
-  --hermes-model hermes-agent --hermes-npc XiaMi --log-level debug
+  --hermes-config D:\SmartNPC\hermes\runtime-config.yaml ^
+  --log-level debug
 ```
 此模式下 mcp 同时暴露 Streamable HTTP 给 Hermes 做 MCP 客户端，并通过 hermesrelay 将游戏事件转发给 Hermes Gateway。
 
@@ -214,7 +215,7 @@ git tag v0.x.0 && git push origin v0.x.0
 | M3 NPC 行为工具集（query/perception/movement/mail/chat/behavior） | ✅ |
 | M4 OpenAI provider + 单 NPC agent loop + dual-LLM + 多 NPC router | ✅ |
 | M5 (旧) SQLite 记忆 + 委派 + proactive + group chat + QQ-style UI（commit `b56d439`）| ⛔ **冻结**，重定向 |
-| M5 (Hermes-first) smartnpc-mcp 强化 + Hermes profile per NPC，smartnpc-agent 退出主链路 | ✅ 代码就绪，待实机端到端验证 |
+| M5 (Hermes-first) smartnpc-mcp 强化 + Hermes profile per NPC，smartnpc-agent 退出主链路 | ✅ 代码 + 6 NPC 配置就绪 — 待实机端到端验证（默认起 xiami + abigail） |
 
 每个 milestone 完成后等用户验证再进入下一个。
 

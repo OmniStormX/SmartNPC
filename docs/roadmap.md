@@ -15,7 +15,7 @@
 | **M3** | NPC 精灵系统 + 自定义 NPC 注册 | ✅ 已完成 |
 | **M4** | Agent 对话系统 + 聊天 UI + 游戏状态工具 | ✅ 已完成 |
 | **M5 (旧)** | Go agent 内置 SQLite 记忆 + 调度 + 多 NPC 编排 | ⛔ **冻结** — 重定向为 M5(Hermes-first) |
-| **M5 (Hermes-first)** | smartnpc-agent 退出主链路；MCP 强化 + Hermes profile per NPC | ✅ 代码就绪，5.6/5.7/5.D 待实机验证 |
+| **M5 (Hermes-first)** | smartnpc-agent 退出主链路；MCP 强化 + Hermes profile per NPC | ✅ 代码 + 6 NPC 配置就绪 — 待实机端到端验证（默认起 xiami + abigail） |
 
 ---
 
@@ -116,6 +116,18 @@ Hermes prompt / skill 是软约束；MCP handler 才是硬边界。
 - [ ] **M5.E**：3 天未互动 cron 触发 → XiaMi 主动行为
 - [ ] **M5.F**：第二个 NPC profile 上线，AudibleNPCResolver 路由正确
 - [ ] **M5.G**：smartnpc-agent 从启动文档下线，README 仅展示 Hermes 路径
+
+---
+
+## M6 — Hermes-first 完工与归档
+
+M5 实机验证通过后启动。
+
+| # | 任务 | 备注 |
+|---|------|------|
+| 6.1 | Group chat orchestration（Hermes 侧） | 当前 mod 端 group UI 仍在；Hermes profile 需要补 group-chat skill / cron |
+| 6.2 | smartnpc-agent 归档 | `smartnpc-agent/` → `archive/smartnpc-agent/`；从 `go.work` 与 root `Taskfile.yml` 移除 |
+| 6.3 | 移除 mcp 兼容旧链路的 legacy flags | 删除 `--hermes-url` / `--hermes-npc` / `--hermes-conversation` / `--hermes-model`；统一用 `--hermes-config` |
 
 ---
 

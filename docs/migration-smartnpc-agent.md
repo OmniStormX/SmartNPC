@@ -84,9 +84,19 @@ the primary control surface the LLM sees — keep them rich. See
 | Event router | smartnpc-mcp event metadata + hermesrelay NPC filter + smapi-mod AudibleNPCResolver |
 | Persona templates | `hermes/profiles/<name>/` template (SOUL + skills + overlay) |
 
+Behavior-style delegation (the Go agent's `consult_npc`) is now handled
+by the new `smartnpc-inter-npc-message` skill, which composes the
+`npc_send_message` / `npc_inbox_*` MCP tools into the same "ask another
+NPC and incorporate their answer" pattern.
+
 ## Behavior parity checklist
 
 What works on the new stack vs the frozen Go stack:
+
+All 6 NPCs (XiaMi + Abigail + Haley + Harvey + Penny + Sebastian) share
+the same baseline skills (game-tool-policy, proactive-greeting,
+memory-policy, inter-npc-message), so each row below applies uniformly
+across the roster.
 
 | Scenario | Frozen Go agent | Hermes-first |
 |---|---|---|
