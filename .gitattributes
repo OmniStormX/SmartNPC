@@ -1,0 +1,12 @@
+# Pin Windows batch files to CRLF line endings so cmd.exe can parse them.
+# Without this, an LF-only run.bat causes cmd to drop 1-3 chars off the
+# start of each command (symptom: 'tlocal' is not recognized as a command,
+# meaning setlocal got chopped to tlocal).
+*.bat text eol=crlf
+
+# Same logic for .cmd if we ever ship one.
+*.cmd text eol=crlf
+
+# Bash scripts must stay LF — Windows tools that produce CRLF will break
+# the WSL bash shebang line.
+*.sh text eol=lf
