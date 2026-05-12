@@ -15,7 +15,7 @@
 | **M3** | NPC 精灵系统 + 自定义 NPC 注册 | ✅ 已完成 |
 | **M4** | Agent 对话系统 + 聊天 UI + 游戏状态工具 | ✅ 已完成 |
 | **M5 (旧)** | Go agent 内置 SQLite 记忆 + 调度 + 多 NPC 编排 | ⛔ **冻结** — 重定向为 M5(Hermes-first) |
-| **M5 (Hermes-first)** | smartnpc-agent 退出主链路；MCP 强化 + Hermes profile per NPC | ✅ 代码 + 6 NPC 配置就绪 — 待实机端到端验证（默认起 xiami + abigail） |
+| **M5 (Hermes-first)** | smartnpc-agent 退出主链路；MCP 强化 + Hermes profile per NPC | ✅ 代码 + 6 NPC 配置就绪 + 实机端到端验证通过（2026-05-12，含 delegate-fix） |
 
 ---
 
@@ -70,8 +70,8 @@ Hermes Agent Profile (per NPC)
 | 1 | 5.3 | 新增 `npc_send_message` / `npc_broadcast_event` / `npc_inbox_*` 正式 MCP tool | ✅ | `smartnpc-mcp/internal/tools/npc_message.go` |
 | 1 | 5.4 | 事件 payload 规范化（chat_message / npc_interact 已实现；day_started / location_changed / friendship_changed 保留 schema） | ✅ | `smartnpc-mcp/internal/events/` + `docs/events.md` |
 | 2 | 5.5 | 起 `hermes/profiles/xiami/`：SOUL.md + skills + mcp.yaml | ✅ | `hermes/profiles/xiami/` + `hermes/install.sh`；`hermes mcp test smartnpc_game` 可 discover 工具 |
-| 2 | 5.6 | 跑通"玩家聊天 → Hermes profile → chat_say"端到端 | 🧪 代码就绪 | `smartnpc-mcp/cmd/smartnpc-mcp/pipeline_test.go` + `docs/manual-e2e-verification.md` |
-| 2 | 5.7 | 跑通"问时间/天气/好感度 → Hermes 自动调 game_* 工具" | 🧪 代码就绪 | 同上 |
+| 2 | 5.6 | 跑通"玩家聊天 → Hermes profile → chat_say"端到端 | ✅ | `smartnpc-mcp/cmd/smartnpc-mcp/pipeline_test.go` + `docs/manual-e2e-verification.md`；E2E 验证 2026-05-12（含 delegate-fix） |
+| 2 | 5.7 | 跑通"问时间/天气/好感度 → Hermes 自动调 game_* 工具" | ✅ | 同上 |
 | 3 | 5.8 | 事件触发链路实装（方案 B：smartnpc-mcp outbound HTTP → Hermes Gateway） | ✅ | `smartnpc-mcp/internal/hermesrelay/` + main.go `--hermes-*` flags |
 | 3 | 5.9 | NPC 主动打招呼（npc_interact event → Hermes） | ✅ | `hermes/profiles/xiami/skills/smartnpc/proactive-greeting/SKILL.md` |
 | 4 | 5.10 | 长期记忆迁移：Hermes 内置 state.db + FTS5 | ✅ | `hermes/profiles/xiami/skills/smartnpc/memory-policy/SKILL.md` (Hermes 内置 state.db 直接用) |

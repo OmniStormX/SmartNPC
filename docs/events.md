@@ -11,7 +11,11 @@ Two sources emit events into the MCP notification stream consumers see:
    [`tools.MakeEventForwarder`](../smartnpc-mcp/internal/tools/events.go).
 2. **Synthetic events** — emitted by `smartnpc-mcp` itself (e.g. inter-NPC
    messaging via `npc_send_message`). Uses the same envelope shape so
-   consumers see one uniform stream.
+   consumers see one uniform stream, and (since 2026-05-12) flows
+   through the same `bridge.EventHandler` chain mod events traverse —
+   so audible-routing, hermesrelay POST, and group-dispatch fire
+   identically regardless of source. See
+   [ADR-0001](./adr/0001-synthetic-events-go-through-hermesrelay.md).
 
 All MCP notifications wrap the event in this envelope:
 
@@ -171,6 +175,12 @@ character entered or left its visibility radius). No final schema yet.
 Fanout of a `npc_send_message` tool call — one NPC talking privately to
 another. Each message is also persisted in an in-memory mailbox accessible
 via `npc_inbox_get` / `npc_inbox_ack`.
+
+Like mod events, this is dispatched to MCP notification subscribers AND
+POSTed to the Hermes Gateway via `hermesrelay` so the recipient NPC's
+profile wakes for a turn. The recipient is matched against
+`hermes/runtime-config.yaml` `match.npc` rules using the `to` field
+(see [`events.RecipientNPC`](../smartnpc-mcp/internal/events/events.go)).
 
 Emitted by [`smartnpc-mcp/internal/tools/npc_message.go`](../smartnpc-mcp/internal/tools/npc_message.go).
 

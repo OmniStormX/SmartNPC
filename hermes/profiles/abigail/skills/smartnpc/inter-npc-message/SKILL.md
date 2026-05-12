@@ -1,7 +1,7 @@
 ---
 name: smartnpc-inter-npc-message
-description: When the player asks about or asks you to involve another NPC, send them a message instead of fabricating their response. When you receive a message from another NPC, react in character and reply back.
-version: 0.1.0
+description: When the player asks about or asks you to involve another NPC, send them a message instead of fabricating their response. When you receive a message from another NPC, pull it from your inbox and react in character — out loud only if the player is actually here to hear it.
+version: 0.2.0
 author: SmartNPC Project
 license: MIT
 metadata:
@@ -12,10 +12,10 @@ metadata:
 # Inter-NPC messaging policy
 
 You can talk to other NPCs through the `npc_send_message` MCP tool. The
-tool puts a message into the recipient's mailbox AND fires an event that
-the recipient's profile sees. Use this any time the player's request
-involves another NPC — never fabricate another NPC's voice or pretend you
-did something on their behalf.
+tool puts a message into the recipient's mailbox AND fires an
+`event_npc_message` that wakes the recipient's profile. Use this any
+time the player's request involves another NPC — never fabricate
+another NPC's voice or pretend you did something on their behalf.
 
 ## When YOU are the asker
 
@@ -43,18 +43,58 @@ back.
 
 ## When YOU are the receiver
 
-When an `event_npc_message` notification arrives (you can also poll
-`npc_inbox_get`), inspect the `kind` field:
+The relay only wakes you with a one-line summary like *"NPC Penny says
+to you (privately): ..."* — it does **not** include the message `kind`,
+`id`, or other structured fields. You must pull those yourself.
 
-| kind | Behavior |
-|---|---|
-| `query` | A peer is asking you a question. Answer it briefly in character via `chat_say`. Then call `npc_send_message(to=<from>, kind="reply", text=<your answer>)` so the asker gets a structured copy of your answer. |
-| `behavioral` | A peer is asking you to do something. Read `text`, decide which game tool fits (`npc_move_to`, `npc_summon`, `npc_face_direction`, `mail_send`, ...), call it, then `chat_say` a short in-character confirmation. Reply via `npc_send_message(kind="reply", text="<confirmation>")` so the asker can paraphrase. |
-| `reply` | A peer is answering your earlier `query` or confirming your `behavioral` request. Fold the contents into your **next** reply to the player (e.g. "Penny says she's on her way"). Do NOT send a counter-reply. |
+### Mandatory flow
+
+1. **Pull the inbox first.** As soon as you wake from an
+   `event_npc_message`, call `npc_inbox_get(npc=<your own internal name>)`
+   to get the structured items (`id`, `from`, `kind`, `text`,
+   `timestamp`). Do NOT decide what to say based on the wake-up text
+   alone — it's a teaser, not the message.
+
+2. **Decide if the player can hear you, before any `chat_say`.** The
+   player may have walked off, opened a menu, or be mid-cutscene. Use
+   the same softness rule as `proactive-greeting`:
+   - `npc_get_position(npc=<your own name>)` → your `map`
+   - `player_get_status` → player's `location` and `busy`
+   - **Audible** ⇔ `npc.map == player.location` && `!player.busy`
+   - We have no player tile coordinates today, so map equality + not
+     busy is the best soft signal. Treat it as "probably in earshot",
+     not "definitely close".
+
+3. **For each inbox item, branch on `kind`:**
+
+   | kind | Audible path | Not-audible path (silent ack) |
+   |---|---|---|
+   | `query` | Compose the answer in character, then `npc_send_message(to=<from>, kind="reply", text=<your answer>)`. **Do NOT `chat_say` to the player** — they don't yet know this peer asked you anything; speaking unprompted is jarring. The asker will paraphrase your reply on their next turn. | Same: just `npc_send_message(kind="reply", ...)`. No `chat_say` either way. |
+   | `behavioral` | Read `text`, decide which game tool fits (`npc_summon`, `npc_move_to`, `npc_lead_to`, `npc_face_direction`, `mail_send`, ...), call it. Then ONE short `chat_say` in character ("好，这就来"). Then `npc_send_message(to=<from>, kind="reply", text="<short confirmation>")`. | Run the tool if it makes sense without the player watching (e.g. `npc_move_to`). **Skip `chat_say`.** Still send the `reply` so the asker can update the player. Save the moment to memory ("玩家通过 <from> 让我去 X，他不在场，我自己过去了"). |
+   | `reply` | A peer is answering your earlier `query` or confirming your `behavioral` request. Fold the contents into your **next** reply to the player (e.g. "Penny says she's on her way"). Do NOT counter-reply, do NOT `chat_say` right now if the player isn't here. | Save to memory only ("Penny 回复：图书馆下午读书会"). Surface it next time the player shows up. |
+
+4. **Persist what matters.** If the player isn't audible, or if the
+   message will still matter on a later turn (delegation, promise,
+   schedule shift), commit a short note via the `memory` toolset before
+   you ack — see `smartnpc-memory-policy` for what to write. Example:
+   "Spring 5 下午：Abigail 替玩家来问我今晚去不去墓地。"
+
+5. **Ack every item you handled.** Call
+   `npc_inbox_ack(npc=<your own name>, ids=[<id1>, <id2>, ...])` so the
+   item doesn't replay. Even silent-ack items must be acked.
+
+### Hard rule — no ping-pong
+
+Avoid auto-replying to an incoming `npc_message` event with another
+`npc_send_message` back to the original sender beyond the structured
+`kind="reply"` channel. If a reply is needed, set `kind="reply"` and
+call **once** per inbox item. Never send a `kind="query"` or
+`kind="behavioral"` back to a peer just because they messaged you —
+that loops both profiles indefinitely.
 
 ## Concrete examples
 
-### Example A — query
+### Example A — query, peer doesn't speak to player
 
 > Player → XiaMi: "潘妮今天打算去哪里？"
 
@@ -66,13 +106,18 @@ npc_send_message(to="Penny", kind="query",
 ```
 XiaMi's own `chat_say`: "等等，我帮你问问她。"
 
-Penny receives the query, replies via `chat_say`: "图书馆吧，下午有
-读书会。" + sends `npc_send_message(to="XiaMi", kind="reply",
-text="图书馆下午读书会")`.
+Penny wakes from `event_npc_message`, calls `npc_inbox_get`, sees
+`kind="query"`. Penny checks audibility — player is in XiaMi's map, not
+Penny's — **not audible to Penny**. Penny only sends:
+```
+npc_send_message(to="XiaMi", kind="reply",
+                 text="图书馆下午读书会")
+```
+then `npc_inbox_ack(ids=[<id>])`. Penny does **not** `chat_say`.
 
-XiaMi on next turn: "潘妮说下午要去图书馆。"
+XiaMi's next turn: "潘妮说下午要去图书馆。"
 
-### Example B — behavioral
+### Example B — behavioral, audible
 
 > Player → XiaMi: "让阿比盖尔到我这儿来"
 
@@ -84,14 +129,29 @@ npc_send_message(to="Abigail", kind="behavioral",
 ```
 XiaMi's own `chat_say`: "好啊，我喊她。"
 
-Abigail receives, calls `npc_summon(npc="Abigail")`, then
-`chat_say`: "嘿，我这就过来。" + replies
-`npc_send_message(to="XiaMi", kind="reply", text="OK on my way")`.
+Abigail wakes, `npc_inbox_get` returns `kind="behavioral"`. Abigail
+checks audibility — same map, not busy. Calls
+`npc_summon(npc="Abigail")`, then `chat_say`: "嘿，我这就过来。", then
+```
+npc_send_message(to="XiaMi", kind="reply", text="OK on my way")
+```
++ `npc_inbox_ack(ids=[<id>])`.
+
+### Example C — behavioral, player walked off
+
+Same setup, but Abigail's map check shows player is now in town.
+Abigail still calls `npc_summon` (action makes sense even unobserved),
+**skips** `chat_say`, sends the `reply`, writes a memory note
+"Spring 5: 玩家通过 XiaMi 让我去找他，但我到的时候他已经走了，下次见
+面提一句。", and acks. No empty room shouting.
 
 ## Failure modes
 
 - `npc_send_message` returns an error → say something neutral in
   character ("我喊了，但她大概没听见"). Do NOT mention the error code.
+- `npc_inbox_get` returns empty after wake (rare race) → ack nothing,
+  no `chat_say`, write a memory note "收到一条 npc_message 但 inbox
+  空了，可能是延迟". Move on.
 - Recipient never replies (no `reply` event arrives) → mention it in
   passing on a later turn ("她那边好像没回音"). Do NOT chase by re-
   sending — the mailbox is store-and-forward; she'll see it eventually.
@@ -99,4 +159,6 @@ Abigail receives, calls `npc_summon(npc="Abigail")`, then
 ## See also
 
 - `smartnpc-game-tool-policy` — overall tool-use rules
-- `npc_send_message` tool description in mcp-tools.md
+- `smartnpc-proactive-greeting` — same audibility / `busy` pattern
+- `smartnpc-memory-policy` — what to commit, what not to
+- `npc_send_message` / `npc_inbox_get` / `npc_inbox_ack` tool descriptions

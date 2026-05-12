@@ -128,6 +128,14 @@ SMAPI Mod
                             └──> SMAPI Mod ws → 游戏内显示
 ```
 
+**对合成事件的扩展（2026-05-12）**：`smartnpc-mcp` 内部工具
+(`npc_send_message` / `npc_broadcast_event`) 产生的 synthetic event 走
+**同一条 outbound 路径**——经由共享的 `bridge.EventHandler` 注入
+`hermesrelay`，最终 POST 到 Hermes Gateway。这不改变 Plan B 的论断
+(Hermes 仍不消费 inbound MCP notification)；只是 outbound 入口从"仅
+ws 来源"扩展到"ws 来源 + tool-handler 来源"。Plan A 的排除依旧成立。
+详见 [ADR-0001](./adr/0001-synthetic-events-go-through-hermesrelay.md)。
+
 **关键属性**：
 
 | 项 | 值 |

@@ -18,13 +18,19 @@ import (
 
 // Inter-NPC messaging. These tools let one NPC's Hermes profile (or the
 // legacy smartnpc-agent dev harness) send messages to other NPCs through
-// smartnpc-mcp. The recipient can pick them up in two ways:
+// smartnpc-mcp. The recipient is reached three ways, all driven from
+// the same emit site:
 //
-//  1. Push: by subscribing to MCP logging notifications with name
+//  1. Hermes profile wake (primary): the synthetic event is fed
+//     through the shared bridge.EventHandler so hermesrelay POSTs the
+//     recipient's Hermes Gateway, identical to a mod-sourced event.
+//     See ADR-0001 (docs/adr/0001-synthetic-events-go-through-hermesrelay.md).
+//
+//  2. MCP push notification: by subscribing to MCP logging notifications with name
 //     bridge.EventNpcMessage (targeted) or bridge.EventNpcBroadcast (fanout).
 //     The forwarder (internal/tools/events.go) already delivers these.
 //
-//  2. Pull: by calling npc_inbox_get. This is useful for consumers that
+//  3. Inbox pull: by calling npc_inbox_get. This is useful for consumers that
 //     can't subscribe to notifications (e.g. an agent loop driven by
 //     /v1/responses on a per-turn basis) or as a catch-up mechanism.
 //
@@ -177,20 +183,32 @@ type NpcInboxAckOutput struct {
 // registerNpcMessage wires the inter-NPC messaging tools onto the server.
 // The mailbox is scoped to this registration; tests can call
 // registerNpcMessage twice on different servers for isolation.
-func registerNpcMessage(s *mcp.Server, logger *slog.Logger) {
+//
+// hermes, when non-nil, is the same bridge.EventHandler the ws router uses
+// to forward mod events to the Hermes Gateway. Synthetic events emitted
+// here (npc_send_message / npc_broadcast_event) are fed back through it so
+// the recipient NPC's Hermes profile is woken up immediately, without
+// waiting for the recipient to talk to the player first.
+func registerNpcMessage(s *mcp.Server, logger *slog.Logger, hermes bridge.EventHandler) {
 	box := newMailbox(64)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_send_message",
-		Description: "Send a private message from one NPC to another. The recipient's " +
-			"Hermes profile (or other MCP client) can pick it up either by subscribing " +
-			"to MCP notifications (event name \"npc_message\") or by calling " +
-			"`npc_inbox_get`. Messages are buffered in-memory per recipient with a FIFO " +
-			"queue; oldest is dropped when the queue exceeds 64 entries.\n\n" +
+		Description: "Send a private message from one NPC to another. The synthetic " +
+			"event is dispatched THREE ways from a single emit site: (1) the " +
+			"recipient's Hermes profile is woken via Gateway POST through hermesrelay " +
+			"(primary — recipient takes a turn), (2) any MCP notification subscriber " +
+			"sees an `npc_message` event, (3) the message is buffered in an in-memory " +
+			"FIFO inbox readable via `npc_inbox_get`. The mailbox is bounded at 64 " +
+			"entries per recipient; oldest is dropped on overflow.\n\n" +
 			"When to call: NPC-to-NPC coordination — gossiping, alerting a friend, " +
 			"delegating a task. Do NOT use this to talk to the player (use `chat_say`).\n\n" +
 			"Constraints: plain UTF-8 text, short. `from` and `to` must be NPC internal " +
 			"names, not display names or player.\n\n" +
+			"Avoid auto-replying to an incoming `npc_message` event with another " +
+			"`npc_send_message` to the original sender — this can cause an infinite " +
+			"ping-pong loop. If a reply is needed, set `kind=\"reply\"` and only call " +
+			"once per inbox item.\n\n" +
 			"Side-effect: WRITE (in-memory mailbox + fan-out notification). Always " +
 			"available — does not require a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcSendMessageInput) (*mcp.CallToolResult, NpcSendMessageOutput, error) {
@@ -216,7 +234,7 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger) {
 
 		// Fan out as a synthetic MCP notification so push consumers see it.
 		payload, _ := json.Marshal(msg)
-		emitSyntheticEvent(ctx, s, logger, bridge.EventNpcMessage, payload)
+		emitSyntheticEvent(ctx, s, logger, hermes, bridge.EventNpcMessage, payload)
 
 		return nil, NpcSendMessageOutput{OK: true, ID: msg.ID, Timestamp: msg.Timestamp}, nil
 	})
@@ -224,9 +242,11 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_broadcast_event",
 		Description: "Broadcast an event from one NPC to every other subscribed NPC " +
-			"(no explicit recipient). Fire-and-forget — the event is emitted as an " +
-			"MCP notification (name \"npc_broadcast\") but is NOT queued in any inbox. " +
-			"Consumers that are offline miss it.\n\n" +
+			"(no explicit recipient). The synthetic event is dispatched two ways from " +
+			"a single emit site: (1) every routed Hermes profile receives a Gateway " +
+			"POST through hermesrelay (primary — each subscribed NPC may take a turn), " +
+			"and (2) any MCP notification subscriber sees an `npc_broadcast` event. " +
+			"Fire-and-forget — NOT queued in any inbox; offline consumers miss it.\n\n" +
 			"When to call: world-wide signals that matter to many NPCs at once — " +
 			"\"the mines are flooding\", \"wedding reception starting\", \"party at the saloon\". " +
 			"For one-to-one messages prefer `npc_send_message`.\n\n" +
@@ -253,7 +273,7 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger) {
 			Data:      in.Data,
 			Timestamp: ts,
 		})
-		emitSyntheticEvent(ctx, s, logger, bridge.EventNpcBroadcast, payload)
+		emitSyntheticEvent(ctx, s, logger, hermes, bridge.EventNpcBroadcast, payload)
 
 		return nil, NpcBroadcastEventOutput{OK: true, Timestamp: ts}, nil
 	})
@@ -301,7 +321,14 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger) {
 // game mod) through the same MCP logging notification channel used for
 // mod events. Uses the same envelope shape as MakeEventForwarder so
 // consumers see one uniform stream.
-func emitSyntheticEvent(ctx context.Context, server *mcp.Server, logger *slog.Logger, name string, data json.RawMessage) {
+//
+// When hermes is non-nil, the same event is also dispatched to the Hermes
+// relay so the recipient NPC's profile receives a /v1/responses POST and
+// wakes up immediately. We deliberately DETACH from the caller's context
+// (context.Background) — the tool handler returns as soon as Enqueue is
+// done, which would otherwise cancel the in-flight Hermes POST. The hermes
+// relay must outlive the tool call.
+func emitSyntheticEvent(ctx context.Context, server *mcp.Server, logger *slog.Logger, hermes bridge.EventHandler, name string, data json.RawMessage) {
 	payload := map[string]any{
 		"kind":      "stardew/event",
 		"name":      name,
@@ -317,4 +344,7 @@ func emitSyntheticEvent(ctx context.Context, server *mcp.Server, logger *slog.Lo
 		}
 		return true
 	})
+	if hermes != nil {
+		go hermes(context.Background(), name, data)
+	}
 }

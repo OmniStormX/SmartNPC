@@ -226,7 +226,7 @@ git tag v0.x.0 && git push origin v0.x.0
 | 5.0 / 5.0b | 冻结声明 + Hermes 触发方案锁定 B | `REFACTOR.md` / `docs/hermes-event-trigger.md` |
 | 5.1 | smartnpc-mcp `--http :3000` Streamable HTTP | `cmd/smartnpc-mcp/main.go::runHTTP` |
 | 5.2 | tool description 操作手册化（when to call / side-effect） | `smartnpc-mcp/internal/tools/*.go` |
-| 5.3 | inter-NPC 工具 `npc_send_message` / `_broadcast_event` / `_inbox_*` | `internal/tools/npc_message.go` |
+| 5.3 | inter-NPC 工具 `npc_send_message` / `_broadcast_event` / `_inbox_*`（合成事件复用 hermesrelay outbound 路径，触发 recipient profile） | `internal/tools/npc_message.go` + ADR-0001 |
 | 5.4 | 事件 payload 规范化（typed structs + reserved schemas） | `internal/events/` + `docs/events.md` |
 | 5.5 | `hermes/profiles/xiami/`（SOUL.md + skill + overlay） | `hermes/` + `hermes/install.sh` |
 | 5.8 | hermesrelay outbound HTTP → Hermes Gateway | `internal/hermesrelay/` |
@@ -236,6 +236,8 @@ git tag v0.x.0 && git push origin v0.x.0
 | 5.14 | 文档拆分（architecture / hermes-profiles / mcp-tools / migration） | `docs/` |
 
 **待验证（5.6 / 5.7）**：实机跑通"玩家聊天 → Hermes → chat_say"和"问时间 → Hermes 自动调 game_get_time"。代码全部就绪，pipeline 集成测试已有；需要游戏 + Hermes gateway + mcp HTTP 模式同时跑一次完整 happy path。
+
+> 详见 [ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md) — synthetic events 为何复用 hermesrelay outbound 路径。
 
 ## smartnpc-agent 冻结声明（2026-05-11 起）
 

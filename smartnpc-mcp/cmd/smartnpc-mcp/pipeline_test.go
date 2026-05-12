@@ -95,7 +95,7 @@ func TestPipeline_ChatMessageReachesHermes(t *testing.T) {
 
 	// Register tools so the MCP server is realistic — they aren't
 	// exercised in this test but ensure RegisterAll didn't change shape.
-	tools.RegisterAll(mcpServer, br, logger)
+	tools.RegisterAll(mcpServer, br, nil, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

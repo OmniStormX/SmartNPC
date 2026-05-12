@@ -178,8 +178,15 @@ Static table of human-addressable farm landmarks (湖边, 大门, ...).
 
 ### `npc_send_message`
 
-Send a private message from one NPC to another. Recipient picks it up
-either via MCP notification (`npc_message`) or by polling `npc_inbox_get`.
+Send a private message from one NPC to another. Recipient is reached
+three ways from a single emit site:
+
+1. **Hermes profile wake** (primary): the synthetic event is fed
+   through the shared `bridge.EventHandler` so hermesrelay POSTs the
+   recipient's Hermes Gateway, identical to a mod-sourced event. See
+   [ADR-0001](./adr/0001-synthetic-events-go-through-hermesrelay.md).
+2. MCP push notification (`npc_message`).
+3. Inbox pull via `npc_inbox_get`.
 
 Inputs: `from`, `to`, `text`, optional `kind`. Errors: `invalid_params`
 when from/to/text are empty or from == to.
@@ -187,7 +194,9 @@ when from/to/text are empty or from == to.
 ### `npc_broadcast_event`
 
 Fire-and-forget broadcast to every subscribed NPC. Not queued in any
-inbox. Use for world-wide signals.
+inbox. Use for world-wide signals. Like `npc_send_message`, fans out
+through the shared `bridge.EventHandler` — every routed Hermes profile
+receives a Gateway POST.
 
 Inputs: `from`, `kind`, optional `data` (JSON).
 

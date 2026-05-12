@@ -102,6 +102,14 @@ isolated; the `instructions` field re-asserts persona on every turn.
                                bridge.EventHandler chain:
                                  1. MCP notification fan-out  (legacy MCP subscribers)
                                  2. hermesrelay.HandleEvent   ← Plan B
+
+[NPC A tool call: npc_send_message]   npc_message {from=A, to=B, text}
+[NPC A tool call: npc_broadcast]      npc_broadcast {from=A, kind, data}
+                                       │
+                                       ▼  (registerNpcMessage → emitSyntheticEvent
+                                            feeds the SAME bridge.EventHandler;
+                                            ctx is detached — see ADR-0001)
+                                  → joins step 1 + step 2 above
                                        │
                                        │ POST http://gateway:8642/v1/responses
                                        │ {
@@ -127,7 +135,7 @@ isolated; the `instructions` field re-asserts persona on every turn.
 | Layer | Filter |
 |---|---|
 | `smapi-mod` AudibleNPCResolver | Player-typed legacy chat with no addressee → nearest Agent-managed NPC within 8 tiles |
-| `smartnpc-mcp` hermesrelay `--hermes-npc` | Events whose `npc` / `to` / `target` matches this profile's NPC name; broadcast events (no NPC field) pass through |
+| `smartnpc-mcp` hermesrelay `--hermes-npc` | Events (mod-sourced **and** synthetic) whose `npc` / `to` / `target` matches this profile's NPC name; broadcast events (no NPC field) pass through |
 | Hermes conversation | Per-NPC dialog memory isolation via the `conversation:` field |
 
 ## Process layout (production)
@@ -154,7 +162,7 @@ smartnpc-mcp (Go, single process)
    │                                  (haley:8644, harvey:8645, penny:8646,
    │                                   sebastian:8647 — file-ready, not launched)
    │
-   └── hermesrelay outbound  ── routed by event.npc → matching gateway
+   └── hermesrelay outbound  ── routed by event.npc/to/target → matching gateway
 ```
 
 The fan-out routing is driven by `hermes/runtime-config.yaml` (consumed via

@@ -159,7 +159,7 @@ func main() {
 		}
 	}
 
-	tools.RegisterAll(server, br, logger)
+	tools.RegisterAll(server, br, hermesHandler, logger)
 
 	if *httpAddr != "" {
 		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin)

@@ -535,8 +535,8 @@ WebSocket bridge. They are exposed to MCP clients only. See
 
 | tool                    | side-effect | description                                                              |
 |-------------------------|-------------|--------------------------------------------------------------------------|
-| `npc_send_message`      | WRITE       | NPC-to-NPC private message; buffered in an in-memory FIFO inbox          |
-| `npc_broadcast_event`   | WRITE       | NPC-to-all fire-and-forget event; no inbox                               |
+| `npc_send_message`      | WRITE       | NPC-to-NPC private message; buffered in an in-memory FIFO inbox AND triggers the recipient's Hermes profile via hermesrelay |
+| `npc_broadcast_event`   | WRITE       | NPC-to-all fire-and-forget event; no inbox; fans out to every routed Hermes profile via hermesrelay                          |
 | `npc_inbox_get`         | READ        | Peek pending messages queued for a recipient NPC                         |
 | `npc_inbox_ack`         | WRITE       | Drop messages from an inbox by id                                        |
 | `npc_get_named_locations` | READ      | Return the static table of human-addressable Farm landmarks              |
