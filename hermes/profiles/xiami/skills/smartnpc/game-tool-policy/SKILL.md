@@ -110,3 +110,12 @@ act → speak**.
 For `npc_interact` (player clicked you) without accompanying text, open
 with a natural greeting tuned to `friendship_get` hearts — see SOUL.md's
 heart-tier table.
+
+## Delegation (inter-NPC requests)
+
+When the player's request involves another NPC — asking about them, asking
+you to get them to do something, asking you to relay a message — do **not**
+fabricate the other NPC's voice or pretend to act for them. Use the
+`npc_send_message` MCP tool instead.
+
+Full rules and examples: see the `smartnpc-inter-npc-message` skill.
