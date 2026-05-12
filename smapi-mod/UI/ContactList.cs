@@ -34,6 +34,7 @@ namespace SmartNPC.Bridge
         private readonly Action<string> _onSelect;
         private readonly Action<List<string>>? _onCreateGroup;
         private readonly Action? _onDisbandGroup;
+        private readonly GroupChatManager? _groupMgr;
 
         private Rectangle _bounds;
         private string? _selected;
@@ -52,20 +53,26 @@ namespace SmartNPC.Bridge
             UnreadTracker unread,
             Action<string> onSelect,
             Action<List<string>>? onCreateGroup = null,
-            Action? onDisbandGroup = null)
+            Action? onDisbandGroup = null,
+            GroupChatManager? groupMgr = null)
         {
             _store = store;
             _unread = unread;
             _onSelect = onSelect;
             _onCreateGroup = onCreateGroup;
             _onDisbandGroup = onDisbandGroup;
+            _groupMgr = groupMgr;
         }
 
         public string? SelectedNpc => _selected;
         public bool IsMultiSelectMode => _multiSelectMode;
 
-        /// <summary>Whether a group chat entry exists (active group).</summary>
-        public bool HasActiveGroup => _store.GetHistory(GroupChatManager.GroupKey).Count > 0;
+        /// <summary>Whether a group chat is currently in progress. Delegates to
+        /// GroupChatManager so disband / re-create flips this immediately;
+        /// the chat history under GroupKey is intentionally kept across
+        /// disband (carries the "群聊已结束" system line) and must not be
+        /// used as the activity signal.</summary>
+        public bool HasActiveGroup => _groupMgr?.IsActive == true;
 
         public void SetBounds(Rectangle bounds)
         {
@@ -89,7 +96,7 @@ namespace SmartNPC.Bridge
                 .ToList();
 
             // If a group chat is active, insert the group entry at the top.
-            if (_store.GetHistory(GroupChatManager.GroupKey).Count > 0)
+            if (_groupMgr?.IsActive == true)
             {
                 _orderedNpcs.Remove(GroupChatManager.GroupKey);
                 _orderedNpcs.Insert(0, GroupChatManager.GroupKey);

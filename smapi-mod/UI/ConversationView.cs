@@ -152,12 +152,12 @@ namespace SmartNPC.Bridge
             {
                 var msg = messages[i];
 
-                // In group mode, prepend speaker name for non-player messages.
-                string displayText = msg.Text;
-                if (isGroupMode && !msg.IsPlayer && msg.Speaker != "系统")
-                    displayText = $"[{msg.Speaker}] {msg.Text}";
+                // In group mode, NPC bubbles get a small speaker label above
+                // the bubble (Discord/QQ-style). System messages and the
+                // player's own messages keep the plain bubble.
+                bool showSpeakerLabel = isGroupMode && !msg.IsPlayer && msg.Speaker != "系统";
 
-                string wrapped = Game1.parseText(displayText, Game1.smallFont, maxBubbleWidth - BubblePadding * 2);
+                string wrapped = Game1.parseText(msg.Text, Game1.smallFont, maxBubbleWidth - BubblePadding * 2);
                 Vector2 textSize = Game1.smallFont.MeasureString(wrapped);
 
                 int bubbleW = (int)textSize.X + BubblePadding * 2;
@@ -180,8 +180,21 @@ namespace SmartNPC.Bridge
                     timeX = bubbleX + bubbleW + 8;
                 }
 
+                // Reserve space above the bubble for the speaker label.
+                int labelHeight = 0;
+                if (showSpeakerLabel)
+                    labelHeight = (int)Game1.tinyFont.MeasureString(msg.Speaker).Y + 2;
+
                 int bubbleY = y - bubbleH;
-                if (bubbleY < areaTop) break;
+                if (bubbleY - labelHeight < areaTop) break;
+
+                // Speaker label (drawn first so its line sits above the bubble).
+                if (showSpeakerLabel)
+                {
+                    b.DrawString(Game1.tinyFont, msg.Speaker,
+                        new Vector2(bubbleX + 2, bubbleY - labelHeight),
+                        new Color(110, 110, 110));
+                }
 
                 // Bubble box.
                 Rectangle bubble = new(bubbleX, bubbleY, bubbleW, bubbleH);
@@ -199,7 +212,7 @@ namespace SmartNPC.Bridge
                 b.DrawString(Game1.tinyFont, ts,
                     new Vector2(timeX, bubbleY + 2), Color.Gray);
 
-                y = bubbleY - BubbleSpacing;
+                y = bubbleY - labelHeight - BubbleSpacing;
             }
 
             // "Waiting" hint when last message is player's.
@@ -306,7 +319,11 @@ namespace SmartNPC.Bridge
             string text = sender.Text?.Trim() ?? "";
             if (string.IsNullOrEmpty(text) || _npcName == null) return;
 
-            _store.Add(_npcName, Game1.player.Name, text, isPlayer: true);
+            // In group mode, GroupChatManager.SendPlayerMessage owns the
+            // store write (speaker = "我"). Adding it here too would render
+            // the player's line twice in the transcript.
+            if (_npcName != GroupChatManager.GroupKey)
+                _store.Add(_npcName, Game1.player.Name, text, isPlayer: true);
             _onSend(_npcName, text);
             sender.Text = "";
             _scrollOffset = 0;

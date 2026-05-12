@@ -64,7 +64,7 @@ namespace SmartNPC.Bridge
             _groupMgr = groupMgr;
 
             _contacts = new ContactList(_store, _unread, this.OnContactSelected,
-                this.OnCreateGroup, this.OnDisbandGroup);
+                this.OnCreateGroup, this.OnDisbandGroup, _groupMgr);
             _conversation = new ConversationView(_store, this.OnConversationSend);
 
             ApplyLayout();
@@ -196,9 +196,12 @@ namespace SmartNPC.Bridge
             if (_groupMgr == null) return;
             _groupMgr.EndGroup();
             _contacts.Refresh();
-            // Switch to first available NPC.
+            // Switch to first available NPC; if none, clear the conversation
+            // pane so it doesn't keep rendering the (now-defunct) group view.
             if (_contacts.NpcNames.Count > 0)
                 _contacts.Select(_contacts.NpcNames[0]);
+            else
+                _conversation.SetNpc(null);
         }
 
         // ── Public API used by ModEntry ─────────────────────────────────────
