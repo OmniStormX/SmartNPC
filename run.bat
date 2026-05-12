@@ -36,6 +36,9 @@ echo.
 
 rem ---- Step 4: Start Hermes gateway in WSL ----
 echo [4/5] Starting Hermes gateway in WSL...
+rem Ensure ~/.hermes/config.yaml routes session_search to gpt-4o-mini
+rem (the default gpt-5.5 rejects temperature!=1, breaking session summary).
+wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/scripts/ensure_hermes_aux.sh"
 start "Hermes Gateway" wsl -d Ubuntu-22.04 bash -ic "hermes gateway run --accept-hooks"
 echo [OK] Hermes gateway starting in background window.
 echo      Waiting for Hermes to become healthy...

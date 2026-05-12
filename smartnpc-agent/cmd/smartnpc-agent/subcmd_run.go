@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -243,7 +244,7 @@ func runAgent(ctx context.Context, mcpBin string, mcpExtraArgs []string, args []
 	// ── Group chat orchestrator ───────────────────────────────────────
 	// Always wire group support in multi-NPC mode so /group commands work.
 	if len(agents) > 1 {
-		setupGroupChat(router, cli.Session(), nil)
+		setupGroupChat(router, cli.Session(), slog.Default())
 		fmt.Fprintf(os.Stderr, "group chat ENABLED (use /group NPC1 NPC2 in game chat to start)\n")
 	}
 

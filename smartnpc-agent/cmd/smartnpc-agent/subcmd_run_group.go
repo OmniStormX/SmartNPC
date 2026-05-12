@@ -22,8 +22,14 @@ func (g *groupHandlerAdapter) CreateGroup(participants []string) (string, error)
 	return g.orch.CreateGroup(participants)
 }
 
-func (g *groupHandlerAdapter) OnPlayerMessage(ctx context.Context, groupID, text string) {
-	g.orch.OnMessage(ctx, groupID, group.GroupMessage{
+func (g *groupHandlerAdapter) OnPlayerMessage(_ context.Context, groupID, text string) {
+	// The caller's ctx is bound to the MCP LoggingMessageHandler invocation
+	// and gets cancelled the moment that handler returns. The orchestrator
+	// dispatches replies on goroutines with staggered delays (1-4s), so we
+	// must detach to a fresh context here — otherwise every dispatched
+	// goroutine hits <-ctx.Done() inside dispatchAsync and bails before
+	// running PromptInGroup.
+	g.orch.OnMessage(context.Background(), groupID, group.GroupMessage{
 		Speaker: group.SpeakerPlayer,
 		Content: text,
 	})
@@ -40,12 +46,16 @@ func setupGroupChat(router *chat.Router, session *mcp.ClientSession, logger *slo
 		if session == nil {
 			return
 		}
-		// Send the NPC's group reply to the game via chat_say.
+		// Send the NPC's group reply to the game via chat_say with
+		// channel=group so the mod routes it exclusively to the group panel,
+		// without polluting the NPC's private 1-on-1 history.
 		_, _ = session.CallTool(ctx, &mcp.CallToolParams{
 			Name: "chat_say",
 			Arguments: map[string]any{
-				"speaker": npcName,
-				"text":    reply,
+				"speaker":  npcName,
+				"text":     reply,
+				"channel":  "group",
+				"group_id": groupID,
 			},
 		})
 	}

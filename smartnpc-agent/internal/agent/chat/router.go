@@ -297,22 +297,30 @@ func (r *Router) HandleNotification() func(context.Context, *mcp.LoggingMessageR
 			return
 		}
 
-		// chat_received is untargeted (player typing in the global box).
-		// When a group is active, route to the group orchestrator.
-		// Otherwise route to the most recently interacted agent.
-		if text, ok := extractChatReceivedText(req); ok {
+		// chat_received is untargeted. The player can be typing in either:
+		//   source="player"       → Ctrl+T global chat box → lastActive NPC
+		//   source="player_group" → group-chat panel       → group orchestrator
+		// Routing is driven by source, NOT by activeGroupID, so an active
+		// group can't siphon messages that were typed into the Ctrl+T box.
+		if text, source, ok := extractChatReceivedRaw(req); ok {
 			r.mu.RLock()
 			gh := r.groupHandler
 			gid := r.activeGroupID
 			last := r.lastActive
 			r.mu.RUnlock()
 
-			// Group mode takes priority.
-			if gh != nil && gid != "" {
+			if source == "player_group" {
+				if gh == nil || gid == "" {
+					if logger != nil {
+						logger.Debug("player_group chat_received dropped: no active group", "text", text)
+					}
+					return
+				}
 				gh.OnPlayerMessage(ctx, gid, text)
 				return
 			}
 
+			// Non-group source → standard per-NPC routing by lastActive.
 			if last == "" {
 				if logger != nil {
 					logger.Debug("chat_received dropped: no active speaker yet", "text", text)

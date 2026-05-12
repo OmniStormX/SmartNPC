@@ -16,6 +16,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
@@ -279,13 +280,27 @@ namespace SmartNPC.Bridge
         }
 
         /// <summary>Wired into <see cref="ChatHandler"/>: fires on the game thread
-        /// for every NPC reply that arrives. Drives toasts + panel refresh.</summary>
-        private void OnIncomingChatMessage(string npcName, string displayName, string text)
+        /// for every NPC reply that arrives. Drives toasts + panel refresh.
+        /// <para>
+        /// channel == "group": the reply belongs to the group chat surface —
+        /// store it there, do NOT push toast / refresh per-NPC panel.
+        /// channel == "" / "private": normal 1-on-1 reply. Do NOT leak it into
+        /// the group panel even if a group is active.
+        /// </para>
+        /// </summary>
+        private void OnIncomingChatMessage(string npcName, string displayName, string text, string channel)
         {
-            // If a group chat is active, also store the message in group history.
-            if (_groupMgr != null && _groupMgr.IsActive)
+            bool isGroup = string.Equals(channel, "group", System.StringComparison.OrdinalIgnoreCase);
+
+            if (isGroup)
             {
-                _groupMgr.OnNpcReply(npcName, text);
+                _groupMgr?.OnNpcReply(npcName, text);
+                // If the panel is open on the group conversation, refresh it
+                // so the new bubble appears; otherwise stay silent (no toast
+                // for group chatter).
+                if (Game1.activeClickableMenu is ChatPanel gp)
+                    gp.RefreshContacts();
+                return;
             }
 
             if (Game1.activeClickableMenu is ChatPanel panel)
@@ -323,7 +338,35 @@ namespace SmartNPC.Bridge
                 return System.Threading.Tasks.Task.CompletedTask;
             }
 
-            return _ws.BroadcastEvent("chat_received", new { text, source = "player" });
+            // The player typed into the in-game chat box without explicitly
+            // addressing an NPC. Emit a single chat_received event with the
+            // list of Agent-managed NPCs in earshot; smartnpc-mcp owns the
+            // policy of whether to synthesize a chat_message for the nearest
+            // one. Keeping all routing logic on the Go side per CLAUDE.md
+            // ("C# 只放 SMAPI 胶水，业务逻辑在 Go").
+            var audible = AudibleNPCResolver.ResolveAroundPlayer()
+                .Select(e => new
+                {
+                    name = e.Name,
+                    map = e.Map,
+                    distance = e.Distance,
+                    x = e.TileX,
+                    y = e.TileY,
+                })
+                .ToArray();
+
+            if (audible.Length > 0)
+            {
+                Monitor.Log($"[AudibleRouting] {audible.Length} NPC(s) in earshot; nearest={audible[0].name} d={audible[0].distance:F1}t",
+                    StardewModdingAPI.LogLevel.Debug);
+            }
+
+            return _ws.BroadcastEvent("chat_received", new
+            {
+                text,
+                source = "player",
+                audible_npcs = audible,
+            });
         }
 
         protected override void Dispose(bool disposing)

@@ -12,9 +12,15 @@ import (
 
 // ChatSayInput drives the `chat_say` tool.
 type ChatSayInput struct {
-	Speaker string `json:"speaker"         jsonschema:"display name shown in the chat box, e.g. \"SmartNPC\""`
-	Text    string `json:"text"            jsonschema:"message body, plain text"`
-	Color   string `json:"color,omitempty" jsonschema:"optional color: white|yellow|green|red|cyan|blue|purple|gray (default yellow)"`
+	Speaker string `json:"speaker"           jsonschema:"display name shown in the chat box, e.g. \"SmartNPC\""`
+	Text    string `json:"text"              jsonschema:"message body, plain text"`
+	Color   string `json:"color,omitempty"   jsonschema:"optional color: white|yellow|green|red|cyan|blue|purple|gray (default yellow)"`
+	// Channel scopes the reply to a conversation surface. "group" routes the
+	// line exclusively to the group chat panel; "private" (default, empty) is
+	// the standard per-NPC 1-on-1 channel. Mod-side uses this to prevent a
+	// group reply from polluting a private NPC panel and vice versa.
+	Channel string `json:"channel,omitempty" jsonschema:"conversation channel: \"group\" for group-chat replies, empty/\"private\" for 1-on-1 (default)"`
+	GroupID string `json:"group_id,omitempty" jsonschema:"optional group id (required only when channel=\"group\")"`
 }
 
 // ChatSayOutput is the structured success response.
@@ -37,7 +43,9 @@ func registerChat(s *mcp.Server, br *bridge.WSClient) {
 			"- Stay in character: never reveal you are an AI / agent / Hermes / tool caller.\n" +
 			"- `speaker` should match the NPC's display name (e.g. \"XiaMi\"). The mod attributes " +
 			"  the line to that NPC's chat bubble.\n" +
-			"- `color` is optional cosmetic (yellow default). Use sparingly for emphasis.\n\n" +
+			"- `color` is optional cosmetic (yellow default). Use sparingly for emphasis.\n" +
+			"- `channel` defaults to private (1-on-1). Set `channel=\"group\"` with `group_id` " +
+			"  ONLY when replying inside an active group chat; otherwise leave empty.\n\n" +
 			"Side-effect: WRITE — visible to the player. Requires the StardewMCPBridge mod " +
 			"with a save loaded; otherwise returns `mod_not_ready`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ChatSayInput) (*mcp.CallToolResult, ChatSayOutput, error) {

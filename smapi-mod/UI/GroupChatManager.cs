@@ -82,9 +82,17 @@ namespace SmartNPC.Bridge
             // Store locally.
             _store.Add(GroupKey, "我", text, true);
 
-            // Send to agent — uses chat_received which the router routes to group
-            // when activeGroupID is set.
-            _ws?.BroadcastEvent("chat_received", new { text, source = "player" });
+            // Send to agent — uses chat_received with source="player_group" so
+            // the router routes it to the group orchestrator regardless of
+            // whether the Ctrl+T global chat box also happens to be active.
+            // Plain source="player" stays reserved for non-group chat so the
+            // two surfaces can't pollute each other.
+            _ws?.BroadcastEvent("chat_received", new
+            {
+                text,
+                source = "player_group",
+                group_id = _activeGroupId ?? string.Empty,
+            });
         }
 
         /// <summary>

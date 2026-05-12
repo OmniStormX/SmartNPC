@@ -243,9 +243,10 @@ func (a *Agent) toolSpecsLocked() []llm.ToolSpec {
 					peerList = append(peerList, s)
 				}
 			}
-			desc := "IMPORTANT: When the player asks about another NPC's thoughts, feelings, plans, schedule, opinions, or current status, you MUST call this tool to consult them directly instead of guessing. " +
-				"Also use it when the player says '帮我问', '去问问', 'ask X for me'. " +
-				"You will receive their real answer and can rephrase it in your own voice. " +
+			desc := "Consult another NPC and fold their real answer back into your own reply. Two use cases:\n" +
+				"1. QUERY — the player asks about another NPC's thoughts, feelings, plans, schedule, opinions, or current status. Do NOT guess; call this tool and rephrase their real answer.\n" +
+				"2. DELEGATION — the player asks you to get another NPC to DO something: come here, go somewhere, deliver a message, perform a task. Pass the request verbatim via `question`; the target NPC's own agent will execute the action (summon, move, mail, etc.) and reply in their own voice.\n" +
+				"Trigger phrases include: \"帮我问 / 去问问 / ask X\", \"叫/让/请 X 过来 / 过去 / 做…\", \"告诉 X …\", \"把 X 喊来\".\n" +
 				"Available NPCs to consult: " + strings.Join(peerList, ", ") + "."
 			out = append(out, llm.ToolSpec{
 				Name:        ConsultToolName,
@@ -789,7 +790,9 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	if a.router != nil {
 		peers := a.router.Speakers()
 		if len(peers) >= 2 {
-			extra += "\n\n[Delegation rule] When the player asks about another NPC's personal thoughts, plans, feelings, schedule, or opinions — or explicitly says \"帮我问/去问问/ask X\" — you MUST call consult_npc to get their real answer. Do NOT fabricate what another NPC thinks or says."
+			extra += "\n\n[Delegation rule] You MUST call consult_npc when the player's message involves another NPC. Two patterns:\n" +
+				"• QUERY (information): \"帮我问/去问问/ask X about Y\", or any question about X's thoughts / plans / feelings / schedule / opinions / status → consult_npc(npc_name=X, question=原问题).\n" +
+				"• DELEGATION (action): \"叫/让/请 X 过来\", \"让 X 去做…\", \"告诉 X …\", \"把 X 喊来\" → consult_npc(npc_name=X, question=\"玩家想请你<X 要做的事>\", context=\"来自 " + a.cfg.Speaker + " 转达的请求\"). X's own agent will actually execute the action — do NOT pretend you did it yourself, and do NOT fabricate X's reply."
 		}
 	}
 

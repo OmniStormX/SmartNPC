@@ -34,7 +34,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/smartnpc/smartnpc-agent/internal/llm"
 	"github.com/smartnpc/smartnpc-agent/internal/memory"
@@ -48,9 +51,14 @@ const (
 	MaxDelegateDepth = 2
 
 	// DefaultDelegateTimeout caps a single ConsultAgent call. The decision
-	// layer's overall budget (cfg.Timeout) is much larger; this lets one slow
-	// peer fail fast without dragging the parent turn down.
-	DefaultDelegateTimeout = 10 * time.Second
+	// layer's overall budget (cfg.Timeout, typically 90s) is much larger;
+	// this lets one slow peer fail fast without dragging the parent turn
+	// down. Sized for dual-LLM consultees: decision stage ≈ 5-10s + persona
+	// stage ≈ 5-15s, so a flat 10s budget would starve persona every time
+	// (observed: persona stage failing with "context deadline exceeded"
+	// right after decision returned). 45s gives ~2× the typical end-to-end
+	// pipeline so slow tool chains still fit.
+	DefaultDelegateTimeout = 45 * time.Second
 
 	// ConsultToolName is the synthetic tool name surfaced to the decision
 	// layer. It is intercepted in executeTool — never routed to the real MCP
@@ -238,6 +246,7 @@ func (a *Agent) executeConsult(ctx context.Context, tc llm.ToolCall) (string, er
 	a.mu.Lock()
 	router := a.router
 	speaker := a.cfg.Speaker
+	session := a.session
 	a.mu.Unlock()
 	if router == nil {
 		return jsonConsultErr(fallbackAnswer("(unknown)", ErrDelegateNoRouter)), nil
@@ -253,6 +262,23 @@ func (a *Agent) executeConsult(ctx context.Context, tc llm.ToolCall) (string, er
 		return jsonConsultErr(fallbackAnswer(target, err)), nil
 	}
 	a.cfg.Logger.Info("consult_npc success", "from", speaker, "to", target, "answer_len", len(resp.Answer))
+
+	// Surface B's reply in-game so the player hears the consulted NPC
+	// acknowledge the request (default behaviour for behavior-style delegation
+	// where B executes a tool — chat_move, mail_send, etc. — and would
+	// otherwise stay silent). A's persona layer still paraphrases via the
+	// JSON tool result returned below.
+	if session != nil && resp.Consulted != "" && strings.TrimSpace(resp.Answer) != "" {
+		if _, sayErr := session.CallTool(ctx, &mcp.CallToolParams{
+			Name: "chat_say",
+			Arguments: map[string]any{
+				"speaker": resp.Consulted,
+				"text":    resp.Answer,
+			},
+		}); sayErr != nil {
+			a.cfg.Logger.Warn("consult_npc chat_say failed", "speaker", resp.Consulted, "err", sayErr)
+		}
+	}
 
 	// Record the consultation in the asker's long-term memory so future
 	// conversations can reference it (e.g. "I asked Harvey about this before").
