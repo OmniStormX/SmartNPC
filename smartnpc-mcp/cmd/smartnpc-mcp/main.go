@@ -71,6 +71,10 @@ func main() {
 		hermesPersonaFile = flag.String("hermes-persona-file", "",
 			"optional path to a markdown file whose contents are sent as the "+
 				"Hermes `instructions` field on every event POST")
+		hermesConfig = flag.String("hermes-config", "",
+			"path to a YAML file with a `profiles:` array (one entry per NPC) "+
+				"for multi-profile fan-out. When set, takes precedence over "+
+				"--hermes-url / --hermes-npc / --hermes-conversation / --hermes-model.")
 	)
 	flag.Parse()
 
@@ -99,12 +103,28 @@ func main() {
 		Version: version,
 	}, &mcp.ServerOptions{Logger: logger})
 
-	// Construct the Hermes relay before the bridge so the event router
-	// can include it. nil = disabled.
-	var relay *hermesrelay.Relay
-	if *hermesURL != "" {
-		var err error
-		relay, err = hermesrelay.New(hermesrelay.Config{
+	// Build the hermes event handler. Precedence:
+	//   1. --hermes-config (multi-profile) — preferred for production
+	//   2. --hermes-url + sibling flags     — legacy single-target
+	//   3. neither                           — relay disabled
+	var hermesHandler bridge.EventHandler
+	switch {
+	case *hermesConfig != "":
+		cfgs, err := hermesrelay.LoadConfigFile(*hermesConfig)
+		if err != nil {
+			logger.Error("hermes-config load failed", "path", *hermesConfig, "err", err)
+			os.Exit(1)
+		}
+		group, err := hermesrelay.NewGroup(cfgs, logger)
+		if err != nil {
+			logger.Error("hermesrelay group init failed", "err", err)
+			os.Exit(1)
+		}
+		hermesHandler = group.HandleEvent
+		logger.Info("hermes relay enabled (multi-profile)",
+			"config", *hermesConfig, "profiles", len(group.Relays()))
+	case *hermesURL != "":
+		single, err := hermesrelay.New(hermesrelay.Config{
 			URL:          *hermesURL,
 			APIKey:       *hermesAPIKey,
 			Conversation: *hermesConversation,
@@ -116,13 +136,12 @@ func main() {
 			logger.Error("hermesrelay init failed", "err", err)
 			os.Exit(1)
 		}
-		logger.Info("hermes relay enabled",
-			"url", *hermesURL,
-			"conversation", *hermesConversation,
-			"model", *hermesModel,
-			"npc_filter", *hermesNPC,
-			"persona_file", *hermesPersonaFile,
-		)
+		hermesHandler = single.HandleEvent
+		logger.Info("hermes relay enabled (single-profile, legacy flags)",
+			"url", *hermesURL, "conversation", *hermesConversation,
+			"npc_filter", *hermesNPC)
+	default:
+		hermesHandler = nil
 	}
 
 	// Wire the ws bridge first so we can attach event forwarders during
@@ -132,7 +151,7 @@ func main() {
 		// Construct first, then bind the handler — the handler needs to
 		// reference the client to issue chat_say in echo mode.
 		br = bridge.NewWSClient(bridge.WSClientOptions{URL: *wsURL, Logger: logger})
-		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, relay))
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler))
 		if err := br.Connect(ctx); err != nil {
 			// Mod may not be running yet. The ws client retries in the
 			// background; meanwhile non-mod tools (ping) still work.
@@ -222,7 +241,7 @@ func runHTTP(ctx context.Context, logger *slog.Logger, server *mcp.Server, addr 
 //
 // br may be nil during initial wiring; in that case echo-mode is a no-op.
 // relay may be nil; in that case the Hermes forwarding is skipped.
-func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay *hermesrelay.Relay) bridge.EventHandler {
+func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay bridge.EventHandler) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
 
 	return func(ctx context.Context, name string, data json.RawMessage) {
@@ -243,10 +262,10 @@ func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, ec
 		case synthOK:
 			forward(ctx, bridge.EventChatMessage, synthData)
 			if relay != nil {
-				relay.HandleEvent(ctx, bridge.EventChatMessage, synthData)
+				relay(ctx, bridge.EventChatMessage, synthData)
 			}
 		case relay != nil:
-			relay.HandleEvent(ctx, name, data)
+			relay(ctx, name, data)
 		}
 
 		if !echo || br == nil || name != bridge.EventChatReceived {
