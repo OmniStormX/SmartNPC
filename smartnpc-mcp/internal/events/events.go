@@ -177,7 +177,7 @@ func IsSynthetic(name string) bool {
 // RecipientNPC extracts the recipient NPC name from a raw event payload by
 // probing the common recipient fields (npc / to / target) in priority order.
 //
-// Used by hermesrelay.shouldRoute to decide whether an event should be
+// Used by hermesrelay.ShouldRoute to decide whether an event should be
 // forwarded to a specific NPC's Hermes profile.
 //
 // Returns:

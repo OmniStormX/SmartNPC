@@ -88,18 +88,21 @@ func New(cfg Config, logger *slog.Logger) (*Relay, error) {
 // goroutine — the bridge read loop never blocks on a slow Hermes. We detach
 // from the caller's context so a ws reconnect doesn't cancel in-flight POSTs.
 func (r *Relay) HandleEvent(_ context.Context, name string, data json.RawMessage) {
-	if !r.shouldRoute(name, data) {
+	if !r.ShouldRoute(name, data) {
 		return
 	}
 	input := events.FormatForHermes(name, data)
 	go r.post(input, name)
 }
 
-// shouldRoute returns true when this event matches the relay's NPC filter.
+// ShouldRoute reports whether this event matches the relay's NPC filter.
 // Events with no recipient field pass (broadcast). Malformed payloads are
 // dropped when a filter is configured — the safe default for an NPC filter
 // is "do not deliver" rather than "deliver to everyone".
-func (r *Relay) shouldRoute(name string, data json.RawMessage) bool {
+//
+// Exported so a Group can route a single event across multiple relays
+// without each one re-doing the parse.
+func (r *Relay) ShouldRoute(name string, data json.RawMessage) bool {
 	if r.cfg.NPCName == "" {
 		return true
 	}

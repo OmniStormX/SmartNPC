@@ -176,9 +176,9 @@ func TestRelay_RoutingFilter(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &Relay{cfg: Config{NPCName: tc.npc}, logger: slog.Default()}
-			got := r.shouldRoute(tc.event, json.RawMessage(tc.payload))
+			got := r.ShouldRoute(tc.event, json.RawMessage(tc.payload))
 			if got != tc.want {
-				t.Errorf("shouldRoute = %v want %v", got, tc.want)
+				t.Errorf("ShouldRoute = %v want %v", got, tc.want)
 			}
 		})
 	}
