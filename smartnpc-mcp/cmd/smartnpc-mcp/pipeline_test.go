@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -333,5 +337,73 @@ func TestPipeline_AudibleChatReceivedSynthesizesChatMessage(t *testing.T) {
 	// FormatForHermes for chat_message renders as "Farmer says to you: 你好".
 	if !strings.Contains(bodies[0].Input, "says to you") {
 		t.Errorf("expected chat_message phrasing, got: %q", bodies[0].Input)
+	}
+}
+
+func TestPipeline_HermesConfigMultiProfile(t *testing.T) {
+	// Two fake Hermes gateways (one for XiaMi, one for Abigail). Each
+	// counts the requests it receives. We then synthesize a chat_message
+	// event for Abigail and assert only her gateway is hit.
+
+	var xiamiHits, abigailHits atomic.Int32
+
+	makeGW := func(hits *atomic.Int32) *httptest.Server {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			hits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		})
+		return httptest.NewServer(mux)
+	}
+	xiamiGW := makeGW(&xiamiHits)
+	defer xiamiGW.Close()
+	abigailGW := makeGW(&abigailHits)
+	defer abigailGW.Close()
+
+	// Write a runtime-config.yaml fixture pointing at both gateways.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "runtime-config.yaml")
+	yamlBody := fmt.Sprintf(`profiles:
+  - name: xiami
+    npc_filter: XiaMi
+    gateway_url: %s
+    conversation: xiami
+    model: hermes-agent
+  - name: abigail
+    npc_filter: Abigail
+    gateway_url: %s
+    conversation: abigail
+    model: hermes-agent
+`, xiamiGW.URL, abigailGW.URL)
+	if err := os.WriteFile(cfgPath, []byte(yamlBody), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfgs, err := hermesrelay.LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	group, err := hermesrelay.NewGroup(cfgs, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewGroup: %v", err)
+	}
+
+	// Synthesize a chat_message for Abigail and dispatch via the group.
+	group.HandleEvent(context.Background(), "chat_message",
+		json.RawMessage(`{"npc":"Abigail","text":"hi","source":"player"}`))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if abigailHits.Load() == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := abigailHits.Load(); got != 1 {
+		t.Errorf("abigail gateway hits = %d, want 1", got)
+	}
+	if got := xiamiHits.Load(); got != 0 {
+		t.Errorf("xiami gateway hits = %d, want 0 (cross-pollination!)", got)
 	}
 }
