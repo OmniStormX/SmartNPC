@@ -1,80 +1,91 @@
 @echo off
 setlocal
-title SmartNPC Launcher
+title SmartNPC Launcher (Hermes-first)
 cd /d D:\SmartNPC
 
 echo ============================================
-echo   SmartNPC - One-Click Launcher
+echo   SmartNPC - Hermes-first One-Click Launcher
 echo ============================================
 echo.
 
 rem ---- Step 1: Build ----
-echo [1/5] Building mod + agent + mcp ...
+echo [1/6] Building mod + mcp ...
 call C:\Users\synchen\go\bin\task.exe mod:build
-if errorlevel 1 goto build_fail
-call C:\Users\synchen\go\bin\task.exe agent:build
 if errorlevel 1 goto build_fail
 call C:\Users\synchen\go\bin\task.exe mcp:build
 if errorlevel 1 goto build_fail
 echo [OK] Build complete.
 echo.
 
-rem ---- Step 2: Kill existing game process ----
-echo [2/5] Killing existing game process (if any)...
+rem ---- Step 2: Kill old processes ----
+echo [2/6] Killing existing game / mcp / agent processes (if any)...
 powershell -NoProfile -Command "Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue | Stop-Process -Force"
-powershell -NoProfile -Command "Get-Process -Name 'smartnpc-agent','smartnpc-mcp' -ErrorAction SilentlyContinue | Stop-Process -Force"
+powershell -NoProfile -Command "Get-Process -Name 'smartnpc-mcp','smartnpc-agent' -ErrorAction SilentlyContinue | Stop-Process -Force"
 timeout /t 1 /nobreak >nul
 echo [OK] Old processes cleared.
 echo.
 
-rem ---- Step 3: Install mod ----
-echo [3/5] Installing mod to game directory...
+rem ---- Step 3: Install mod + sync hermes profiles + ensure auxiliary model ----
+echo [3/6] Installing mod, syncing Hermes profiles, ensuring auxiliary model...
 call C:\Users\synchen\go\bin\task.exe mod:install
 if errorlevel 1 goto install_fail
-echo [OK] Mod installed.
+wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/hermes/install.sh"
+if errorlevel 1 goto install_fail
+wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/scripts/ensure_hermes_aux.sh"
+echo [OK] Mod installed, Hermes profiles synced, session_search routed to gpt-4o-mini.
 echo.
 
-rem ---- Step 4: Start Hermes gateway in WSL ----
-echo [4/5] Starting Hermes gateway in WSL...
-rem Ensure ~/.hermes/config.yaml routes session_search to gpt-4o-mini
-rem (the default gpt-5.5 rejects temperature!=1, breaking session summary).
-wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/scripts/ensure_hermes_aux.sh"
-start "Hermes Gateway" wsl -d Ubuntu-22.04 bash -ic "hermes gateway run --accept-hooks"
-echo [OK] Hermes gateway starting in background window.
-echo      Waiting for Hermes to become healthy...
+rem ---- Step 4: Start Hermes Gateways for the active profiles ----
+rem Default active set: xiami + abigail. To add others (haley/harvey/penny/sebastian),
+rem append to ACTIVE_PROFILES below. Each additional gateway adds ~300-500MB RAM
+rem and 30-60s startup; balance accordingly.
+echo [4/6] Starting Hermes Gateways (xiami + abigail)...
+set ACTIVE_PROFILES=xiami,abigail
+start "Hermes Gateways" wsl -d Ubuntu-22.04 bash -ic "bash /mnt/d/SmartNPC/scripts/start_hermes_profiles.sh %ACTIVE_PROFILES%"
+echo      Waiting for both gateways to become healthy (up to 90s each)...
 
-:wait_hermes
+:wait_xiami
 timeout /t 5 /nobreak >nul
 curl -sS http://192.168.59.118:8642/health >nul 2>&1
 if errorlevel 1 (
-echo      ... still waiting for Hermes gateway
-goto wait_hermes
+echo      ... waiting for xiami
+goto wait_xiami
 )
-echo [OK] Hermes gateway is healthy.
+:wait_abigail
+curl -sS http://192.168.59.118:8643/health >nul 2>&1
+if errorlevel 1 (
+timeout /t 5 /nobreak >nul
+echo      ... waiting for abigail
+goto wait_abigail
+)
+echo [OK] Both gateways healthy.
 echo.
 
-rem ---- Step 5: Start game via SMAPI ----
-echo [5/5] Launching Stardew Valley via SMAPI...
+rem ---- Step 5: Start mcp in --http mode with multi-profile fan-out ----
+echo [5/6] Starting smartnpc-mcp (--http :3000, --hermes-config multi-profile)...
+rem SMARTNPC_HERMES_KEY must match API_SERVER_KEY in each profile's config-overlay.yaml.
+rem Default 'smartnpc-test-key' matches the shipped overlays.
+if not defined SMARTNPC_HERMES_KEY set SMARTNPC_HERMES_KEY=smartnpc-test-key
+start "smartnpc-mcp" cmd /k smartnpc-mcp\bin\smartnpc-mcp.exe ^
+    --http :3000 ^
+    --ws-url ws://127.0.0.1:18745/ws ^
+    --hermes-config D:\SmartNPC\hermes\runtime-config.yaml ^
+    --hermes-api-key %SMARTNPC_HERMES_KEY% ^
+    --log-level debug
+timeout /t 3 /nobreak >nul
+echo [OK] mcp launched.
+echo.
+
+rem ---- Step 6: Launch the game ----
+echo [6/6] Launching Stardew Valley via SMAPI...
 start "" "D:\Stardew Valley\StardewModdingAPI.exe"
 echo [OK] Game launching. Load a save file.
 echo.
-echo Waiting 15s for game to initialize...
-timeout /t 15 /nobreak >nul
-
-rem ---- Step 6: Start Agent ----
-echo.
-echo Starting SmartNPC multi-NPC Agent (Ctrl+C to stop)...
-echo.
-cd /d D:\SmartNPC\smartnpc-agent
-rem Dual-LLM mode:
-rem   --decision-url : tool-reliable decision model (GPT-5.5 via internal proxy)
-rem   --persona-url  : local Hermes gateway (role-play layer, same key)
-rem   --personas-dir : load every *.json under personas/ and route events by
-rem                    the event's `npc` field (multi-NPC mode).
-rem Override DECISION_URL / DECISION_MODEL env to swap endpoints without editing this script.
-if not defined DECISION_URL   set DECISION_URL=http://v2.open.venus.oa.com/llmproxy
-if not defined DECISION_MODEL set DECISION_MODEL=gpt-5.5
-bin\smartnpc-agent.exe --mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe --mcp-args "--ws-url ws://127.0.0.1:18745/ws" --log-level debug run --personas-dir personas --persona-url http://192.168.59.118:8642/v1 --api-key smartnpc-test-key --decision-url %DECISION_URL% --decision-model %DECISION_MODEL%
+echo ===========================
+echo   Active NPCs: %ACTIVE_PROFILES%
+echo   To enable haley/harvey/penny/sebastian, edit ACTIVE_PROFILES above.
+echo   Group chat: M6 (not orchestrated yet — UI works but no NPC replies).
+echo ===========================
 goto :eof
 
 :build_fail
@@ -83,6 +94,6 @@ pause
 exit /b 1
 
 :install_fail
-echo [ERROR] mod:install failed.
+echo [ERROR] Mod or Hermes install failed.
 pause
 exit /b 1
