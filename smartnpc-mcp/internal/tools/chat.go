@@ -41,8 +41,11 @@ func registerChat(s *mcp.Server, br *bridge.WSClient) {
 			"- Plain UTF-8 text only. No markdown, code fences, JSON, emoji-as-image.\n" +
 			"- Keep `text` short — one to three sentences. The SDV chat box truncates long lines.\n" +
 			"- Stay in character: never reveal you are an AI / agent / Hermes / tool caller.\n" +
-			"- `speaker` should match the NPC's display name (e.g. \"XiaMi\"). The mod attributes " +
-			"  the line to that NPC's chat bubble.\n" +
+			"- `speaker` MUST be the NPC's English internal name (PascalCase), e.g. \"XiaMi\", " +
+			"  \"Abigail\", \"Haley\", \"Harvey\", \"Penny\", \"Sebastian\". DO NOT use a Chinese " +
+			"  display name like \"夏弥\" or \"阿比盖尔\" — the mod looks up NPCs by their internal " +
+			"  name and will silently misroute your reply to a non-existent panel. When in doubt, " +
+			"  use the same name the inbound event's `npc` field used.\n" +
 			"- `color` is optional cosmetic (yellow default). Use sparingly for emphasis.\n" +
 			"- `channel` defaults to private (1-on-1). Set `channel=\"group\"` with `group_id` " +
 			"  ONLY when replying inside an active group chat; otherwise leave empty.\n\n" +
