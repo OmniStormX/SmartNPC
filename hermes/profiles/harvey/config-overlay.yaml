@@ -24,10 +24,34 @@ mcp_servers:
     timeout: 60
     connect_timeout: 10
     tools:
-      # chat_say stays available — it's the visible-to-player dialogue
-      # channel and the only sanctioned way for Hermes to speak as Harvey.
-      # Add tool names here to hide them from this NPC.
-      exclude: []
+      # Explicit whitelist of tools Harvey may see. Narrower than the
+      # full mcp-tools catalog on purpose — a low-cardinality tool menu keeps
+      # the per-turn token bill down and reduces misfires on short, high-
+      # frequency chat turns. chat_say is the only sanctioned way to speak
+      # visibly; the rest cover read-only state, inter-NPC DM, and the
+      # proactive-visit / gift flow. Deliberately held back:
+      #   - ping, mail_send               (not NPC speech)
+      #   - npc_broadcast_event           (world-wide fan-out; admin only)
+      #   - npc_get_environment           (superset of granular tools below)
+      #   - npc_get_named_locations       (static table; redundant)
+      #   - npc_move_to / npc_face_direction (free-form physical action)
+      #   - npc_follow_start/stop / npc_lead_to (escort flow, off-scope)
+      # To drop the whitelist temporarily for debugging, swap to `exclude: []`.
+      include:
+        - chat_say
+        - friendship_get
+        - game_get_time
+        - game_get_weather
+        - player_get_status
+        - npc_get_position
+        - npc_get_nearby
+        - npc_get_behavior
+        - npc_send_message
+        - npc_inbox_get
+        - npc_inbox_ack
+        - npc_summon
+        - npc_emote
+        - npc_give_item
       resources: false
       prompts: false
 
@@ -43,3 +67,11 @@ API_SERVER_KEY: smartnpc-test-key
 API_SERVER_HOST: 0.0.0.0
 API_SERVER_PORT: 8645
 API_SERVER_MODEL_NAME: harvey
+
+# Note: model.context_length and compression.* tuning are NOT in this
+# overlay because Hermes' bootstrapped config.yaml already defines those
+# top-level keys, and install.sh does a dumb append — so writing them
+# here would create duplicate YAML keys, and PyYAML silently lets the
+# second (overlay) block clobber the bootstrap one (which carries the
+# real LLM provider/base_url). Tuning is applied via
+# scripts/apply_hermes_tuning.sh, which does a real per-key yaml merge.

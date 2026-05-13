@@ -31,8 +31,10 @@ call C:\Users\synchen\go\bin\task.exe mod:install
 if errorlevel 1 goto install_fail
 wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/hermes/install.sh"
 if errorlevel 1 goto install_fail
+wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/scripts/apply_hermes_tuning.sh"
+if errorlevel 1 goto install_fail
 wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/scripts/ensure_hermes_aux.sh"
-echo [OK] Mod installed, Hermes profiles synced, session_search routed to gpt-4o-mini.
+echo [OK] Mod installed, Hermes profiles synced, tuning applied, session_search routed to gpt-4o-mini.
 echo.
 
 rem ---- Step 4: Start mcp in --http mode with multi-profile fan-out ----
