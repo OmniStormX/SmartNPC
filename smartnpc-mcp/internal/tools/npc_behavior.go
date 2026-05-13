@@ -26,6 +26,22 @@ type NpcSummonOutput struct {
 	Message string `json:"message,omitempty" jsonschema:"optional status hint, e.g. \"warped\" or \"approaching\""`
 }
 
+// ── npc_emote ──────────────────────────────────────────────────
+
+// NpcEmoteInput asks the mod to show a Stardew-native emote bubble above the
+// NPC's head. Cosmetic only; the bubble fades on its own after ~1 second.
+type NpcEmoteInput struct {
+	NPC  string `json:"npc"  jsonschema:"NPC internal name, e.g. \"XiaMi\""`
+	Kind string `json:"kind,omitempty" jsonschema:"emote kind — one of: exclamation, question, heart, sleep, happy, sad, angry, music, sparkle (default), pause"`
+}
+
+// NpcEmoteOutput is the ack.
+type NpcEmoteOutput struct {
+	OK   bool   `json:"ok"             jsonschema:"true if the emote was queued"`
+	NPC  string `json:"npc"            jsonschema:"echo of the NPC name"`
+	Kind string `json:"kind,omitempty" jsonschema:"echo of the emote kind that was actually used (server may substitute on unknown kinds)"`
+}
+
 // ── npc_follow_start ───────────────────────────────────────────
 
 // NpcFollowStartInput begins a follow behavior.
@@ -106,6 +122,40 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			return nil, NpcSummonOutput{}, fmt.Errorf("npc_summon: %w", err)
 		}
 		var out NpcSummonOutput
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &out)
+		}
+		return nil, out, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_emote",
+		Description: "Show a Stardew-Valley emote bubble above the NPC's head. " +
+			"Uses the game's native Character.doEmote API — the bubble appears for " +
+			"about 1 second then fades on its own. Does not move the NPC, does not " +
+			"send a chat line, does not block subsequent tool calls.\n\n" +
+			"When to call: as a visual flourish accompanying a chat or action — " +
+			"`sparkle` when an NPC drops in proactively (paired with `npc_summon` + " +
+			"`chat_say`), `heart` after a positive interaction, `question` when " +
+			"the NPC reacts to something surprising. Skip when there is nothing " +
+			"to telegraph — the bubble is cheap but not free.\n\n" +
+			"Valid `kind` values (SDV native): `exclamation`, `question`, `heart`, " +
+			"`sleep`, `happy`, `sad`, `angry`, `music`, `sparkle`, `pause`. Unknown " +
+			"values fall back to `sparkle` and the server logs a warning.\n\n" +
+			"Side-effect: WRITE (visual only — cosmetic, no game-state mutation). " +
+			"Errors: `unknown_npc`, `mod_not_ready` (no save loaded).",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcEmoteInput) (*mcp.CallToolResult, NpcEmoteOutput, error) {
+		if in.NPC == "" {
+			return nil, NpcEmoteOutput{}, fmt.Errorf("npc is required")
+		}
+		if in.Kind == "" {
+			in.Kind = "sparkle"
+		}
+		raw, err := br.Call(ctx, bridge.ActionNpcEmote, in)
+		if err != nil {
+			return nil, NpcEmoteOutput{}, fmt.Errorf("npc_emote: %w", err)
+		}
+		var out NpcEmoteOutput
 		if len(raw) > 0 {
 			_ = json.Unmarshal(raw, &out)
 		}

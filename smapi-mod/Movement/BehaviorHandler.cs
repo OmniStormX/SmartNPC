@@ -199,6 +199,76 @@ namespace SmartNPC.Bridge
             return tcs.Task;
         }
 
+        // ── npc_emote ──────────────────────────────────────────────
+
+        // SDV's Character.doEmote(int) takes a numeric emote id. These IDs are
+        // defined in StardewValley.Character as public constants. Map the
+        // string kinds from the MCP tool to those numbers. "sparkle" has no
+        // native SDV equivalent — we reuse exclamationEmote (16) because the
+        // "!" bubble is the classic "someone just appeared / has something to
+        // say" visual, which matches the proactive-visit use case best.
+        private static int MapEmoteKind(string? kind)
+        {
+            return (kind ?? "sparkle").ToLowerInvariant() switch
+            {
+                "question" or "?" => 8,       // questionEmote
+                "angry" or "mad" => 12,        // angryEmote
+                "exclamation" or "!" or "sparkle" => 16, // exclamationEmote (sparkle → reuse)
+                "heart" or "love" => 20,       // heartEmote
+                "sleep" or "zzz" => 24,        // sleepEmote
+                "sad" => 28,                   // sadEmote
+                "happy" or "smile" => 32,      // happyEmote
+                "x" or "cross" => 36,          // xEmote
+                "pause" => 40,                 // pauseEmote
+                "music" or "note" => 56,       // musicNoteEmote
+                _ => 16,                       // unknown → exclamation (safe default)
+            };
+        }
+
+        public Task<Response> HandleEmote(string id, JsonElement @params)
+        {
+            if (!Context.IsWorldReady)
+                return Task.FromResult(Response.Failure(id, "mod_not_ready", "no save loaded"));
+
+            NpcEmoteParams? p;
+            try { p = JsonSerializer.Deserialize<NpcEmoteParams>(@params, JsonOpts.Web); }
+            catch (Exception ex) { return Task.FromResult(Response.Failure(id, "invalid_params", ex.Message)); }
+
+            if (p is null || string.IsNullOrWhiteSpace(p.Npc))
+                return Task.FromResult(Response.Failure(id, "invalid_params", "npc is required"));
+
+            string kind = string.IsNullOrWhiteSpace(p.Kind) ? "sparkle" : p.Kind!;
+            int emoteId = MapEmoteKind(kind);
+
+            var tcs = new TaskCompletionSource<Response>();
+            _pending.Enqueue(() =>
+            {
+                try
+                {
+                    NPC? npc = Game1.getCharacterFromName(p.Npc!);
+                    if (npc is null)
+                    {
+                        tcs.TrySetResult(Response.Failure(id, "npc_not_found", $"no NPC named '{p.Npc}'"));
+                        return;
+                    }
+
+                    npc.doEmote(emoteId);
+                    tcs.TrySetResult(Response.Success(id, new BehaviorResult
+                    {
+                        Ok = true,
+                        Npc = p.Npc,
+                        Mode = kind.ToLowerInvariant(),
+                        Message = $"emote {emoteId}",
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetResult(Response.Failure(id, "handler_error", ex.Message));
+                }
+            });
+            return tcs.Task;
+        }
+
         // ── npc_get_behavior ───────────────────────────────────────
 
         public Task<Response> HandleGetBehavior(string id, JsonElement @params)
@@ -248,6 +318,12 @@ namespace SmartNPC.Bridge
             [JsonPropertyName("x")]   public int X { get; set; }
             [JsonPropertyName("y")]   public int Y { get; set; }
             [JsonPropertyName("map")] public string? Map { get; set; }
+        }
+
+        private sealed class NpcEmoteParams
+        {
+            [JsonPropertyName("npc")]  public string? Npc  { get; set; }
+            [JsonPropertyName("kind")] public string? Kind { get; set; }
         }
 
         private sealed class BehaviorResult

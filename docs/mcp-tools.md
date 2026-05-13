@@ -61,6 +61,7 @@ A Hermes profile sees every tool listed below (minus any names in its
 | [`npc_move_to`](#npc_move_to) | pathfind to tile (same map) or warp (cross-map) |
 | [`npc_face_direction`](#npc_face_direction) | turn to up/down/left/right |
 | [`npc_summon`](#npc_summon) | warp to map edge + walk to player |
+| [`npc_emote`](#npc_emote) | show sparkle / `!` / heart bubble above head (~1 s) |
 | [`npc_follow_start`](#npc_follow_start) | ~2 tiles behind, follows across maps |
 | [`npc_follow_stop`](#npc_follow_stop) | cancel follow |
 | [`npc_lead_to`](#npc_lead_to) | lead player to a tile, coordinating with player position |
@@ -166,6 +167,14 @@ Read tile/map/facing/is_moving. Use to verify a prior move arrived.
 
 Warp NPC to map edge then walk to player. Use when player says "过来"
 without a landmark.
+
+### `npc_emote`
+
+Show a SDV-native emote bubble above the NPC's head (sparkle / `!` /
+heart / etc) for ~1 second. Pure visual flourish — pairs naturally
+with `npc_summon` when an NPC drops in proactively to telegraph "I
+just arrived". Defaults to `sparkle` which maps to the exclamation
+bubble. Does not move the NPC and does not send chat.
 
 ### `npc_follow_start` / `npc_follow_stop`
 

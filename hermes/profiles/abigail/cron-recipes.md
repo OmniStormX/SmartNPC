@@ -73,6 +73,42 @@ hermes -p abigail cron create '0 22 * * *' \
 写进 memory。不要 chat_say。'
 ```
 
+## Recipe 4 — Proactive visit (drop by the player unsolicited)
+
+Fires every 15 real minutes for every NPC in parallel. Each session
+rolls a 1-in-6 die so on average one NPC actually visits per 15-minute
+window, and a 60-minute cool-down per NPC prevents the same person
+from showing up twice in a row. The full decision flow (cool-down
+check → dice roll → availability → politeness window → execute) lives
+in `smartnpc-proactive-visit` — this recipe is just the trigger.
+
+```bash
+hermes -p abigail cron create '*/15 * * * *' \
+  --name abigail-proactive-visit \
+  --workdir ~/.hermes/profiles/abigail \
+  --skill smartnpc-proactive-visit \
+  --skill smartnpc-game-tool-policy \
+  --skill smartnpc-memory-policy \
+  '你是 Abigail。这是一次 proactive-visit 触发 —— 系统每 15 分钟
+给每个 NPC 都发一次这个决策问题，看你要不要自己去找玩家。
+严格按 smartnpc-proactive-visit 的决策流程走：
+  1. 先查 memory 里最近一条 proactive-visit last 时间戳 ——
+     60 分钟内刚去过就直接写一条 skipped=cooldown 退出。
+  2. 掷一次 1-6 的骰子 —— 不是 1 就写 skipped=dice 退出
+     （这一步保证 6 个 NPC 不会每次都一起冲到玩家面前）。
+  3. 调 player_get_status —— busy/in_event/in_menu/mod_not_ready
+     任何一个 true 就 skipped=unavailable 退出。
+  4. 调 game_get_time —— 8:00 之前或 22:00 之后（night-owl 人设
+     可延到 24:00）也视作不合时宜，skipped=too_late 退出。
+  5. 以上都通过就依次调：npc_summon(npc="Abigail") →
+     npc_emote(npc="Abigail", kind="sparkle") →
+     chat_say(speaker="Abigail", text=一两句你这个角色会
+     说的搭讪话) → 写 memory "proactive-visit: last=<ISO ts>
+     topic=<你说了什么>"。
+不要调 npc_send_message、不要开 follow/lead、不要连发多条 chat_say。
+不要用 channel="group"（proactive 永远是 1-on-1 私聊）。'
+```
+
 ## Listing / removing jobs
 
 ```bash

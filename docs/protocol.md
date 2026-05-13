@@ -398,6 +398,34 @@ Cancels any active follow/lead behavior on the NPC.
 - `invalid_params` — missing `npc`
 - `unknown_npc` — NPC not on current save
 
+### `npc_emote`  (client → server)
+
+Show a Stardew-native emote bubble above the NPC's head for ~1 second.
+Cosmetic only — does not move the NPC, does not send a chat line.
+Uses SDV's `Character.doEmote(int)` under the hood.
+
+**params**
+
+| field  | type   | required | notes                                                                                                   |
+|--------|--------|----------|---------------------------------------------------------------------------------------------------------|
+| `npc`  | string | yes      | NPC internal name                                                                                       |
+| `kind` | string | no       | `exclamation` / `question` / `heart` / `sleep` / `happy` / `sad` / `angry` / `music` / `sparkle` / `pause`. Defaults to `sparkle`. Unknown values fall back to `exclamation` (classic `!` bubble). |
+
+**response.data**
+
+| field     | type   | notes                                                                           |
+|-----------|--------|---------------------------------------------------------------------------------|
+| `ok`      | bool   | `true` once the emote is queued on the game thread                              |
+| `npc`     | string | echo                                                                            |
+| `mode`    | string | the `kind` that was actually used (may differ from input on unknown-kind fallback) |
+| `message` | string | `"emote <id>"` where `<id>` is the raw SDV emote integer                        |
+
+**errors**
+
+- `mod_not_ready` — no save loaded
+- `invalid_params` — missing `npc`
+- `unknown_npc` — NPC not on current save
+
 ### `npc_follow_start`  (client → server)
 
 Begin a follow behavior — the NPC stays ~2 tiles behind the player, crossing
