@@ -8,6 +8,9 @@
 
 using System;
 using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
 using StardewModdingAPI;
 using StardewValley;
 
@@ -19,8 +22,10 @@ namespace SmartNPC.Bridge
         private const string CmdDebug      = "smartnpc_debug";
         private const string CmdTeleport   = "smartnpc_teleport";
         private const string CmdProactive  = "smartnpc_proactive";
+        private const string CmdStatus     = "smartnpc_status";
 
         private static readonly Random s_rng = new();
+        private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
         public static void Register(ICommandHelper commands, IMonitor log, WebSocketServer ws)
         {
@@ -58,7 +63,17 @@ namespace SmartNPC.Bridge
                     $"  {CmdProactive} <NpcName>  Target a specific NPC (PascalCase).",
                 callback: (_, args) => HandleProactive(args, log, ws));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}", LogLevel.Trace);
+            commands.Add(
+                name: CmdStatus,
+                documentation:
+                    "Show the runtime status of the SmartNPC stack: ws connection " +
+                    "to mcp, mcp uptime, and per-profile Hermes Gateway health.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdStatus}                            Use default mcp HTTP base http://127.0.0.1:3000.\n" +
+                    $"  {CmdStatus} http://<host>:<port>       Override mcp HTTP base URL.",
+                callback: (_, args) => HandleStatus(args, log, ws));
+
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -291,6 +306,115 @@ namespace SmartNPC.Bridge
                 $"watch the mcp + hermes logs for the resulting npc_summon / " +
                 $"npc_emote / chat_say calls.",
                 LogLevel.Info);
+        }
+
+        // ── smartnpc_status ────────────────────────────────────────────
+
+        // Local DTO matching mcp's /status response shape. Kept in this file
+        // (not a shared header) so the contract is visible right next to the
+        // command that consumes it.
+        private sealed class StatusSnapshot
+        {
+            public string? version { get; set; }
+            public long uptime_seconds { get; set; }
+            public string? started_at { get; set; }
+            public string? generated_at { get; set; }
+            public string? mod_ws_url { get; set; }
+            public bool mod_ws_connected { get; set; }
+            public StatusProfile[]? profiles { get; set; }
+        }
+
+        private sealed class StatusProfile
+        {
+            public string? npc_filter { get; set; }
+            public string? gateway_url { get; set; }
+            public string? conversation { get; set; }
+            public string? model { get; set; }
+            public bool healthy { get; set; }
+            public long latency_ms { get; set; }
+            public string? error { get; set; }
+        }
+
+        private static void HandleStatus(string[] args, IMonitor log, WebSocketServer ws)
+        {
+            string baseUrl = (args.Length >= 1 && !string.IsNullOrWhiteSpace(args[0]))
+                ? args[0].TrimEnd('/')
+                : "http://127.0.0.1:3000";
+            string url = baseUrl + "/status";
+
+            // Brief mod-side preface so the operator immediately sees ws
+            // server liveness even if mcp's HTTP is down.
+            int wsClients = ws.ConnectedClientCount;
+            string wsLabel = wsClients > 0 ? $"up, {wsClients} client(s)" : "up, no clients";
+            log.Log($"[smartnpc_status] mod ws server: {wsLabel}", LogLevel.Info);
+            log.Log($"[smartnpc_status] querying mcp at {url} ...", LogLevel.Info);
+
+            StatusSnapshot? snap;
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                using var resp = s_http.GetAsync(url, cts.Token).GetAwaiter().GetResult();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    log.Log($"  mcp /status returned HTTP {(int)resp.StatusCode}; mcp may be unreachable or version-skewed.", LogLevel.Warn);
+                    return;
+                }
+                string body = resp.Content.ReadAsStringAsync(cts.Token).GetAwaiter().GetResult();
+                snap = JsonSerializer.Deserialize<StatusSnapshot>(body, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                log.Log($"  mcp /status request failed: {ex.GetType().Name}: {ex.Message}", LogLevel.Error);
+                log.Log($"  is mcp running at {baseUrl}? try: bin\\smartnpc-mcp.exe --http :3000 --hermes-config ...", LogLevel.Info);
+                return;
+            }
+
+            if (snap is null)
+            {
+                log.Log("  mcp /status response was empty / unparseable", LogLevel.Warn);
+                return;
+            }
+
+            log.Log($"  mcp version={snap.version} uptime={FormatDuration(snap.uptime_seconds)} (started {snap.started_at})", LogLevel.Info);
+            log.Log($"  mcp ↔ mod ws ({snap.mod_ws_url}): {(snap.mod_ws_connected ? "CONNECTED" : "DISCONNECTED")}",
+                snap.mod_ws_connected ? LogLevel.Info : LogLevel.Warn);
+
+            if (snap.profiles is null || snap.profiles.Length == 0)
+            {
+                log.Log("  no Hermes profiles configured (mcp running without --hermes-config / --hermes-url)", LogLevel.Info);
+                return;
+            }
+
+            int healthy = snap.profiles.Count(p => p.healthy);
+            log.Log($"  hermes profiles: {healthy}/{snap.profiles.Length} healthy", LogLevel.Info);
+            foreach (var p in snap.profiles)
+            {
+                string label = string.IsNullOrEmpty(p.npc_filter)
+                    ? p.conversation ?? "<noname>"
+                    : p.npc_filter!;
+                if (p.healthy)
+                {
+                    log.Log($"    ✓ {label,-12} {p.gateway_url}  ({p.latency_ms}ms)", LogLevel.Info);
+                }
+                else
+                {
+                    log.Log($"    ✗ {label,-12} {p.gateway_url}  ({p.latency_ms}ms)  err: {p.error}", LogLevel.Warn);
+                }
+            }
+        }
+
+        private static string FormatDuration(long seconds)
+        {
+            if (seconds < 60) return $"{seconds}s";
+            long minutes = seconds / 60;
+            long secs = seconds % 60;
+            if (minutes < 60) return $"{minutes}m{secs}s";
+            long hours = minutes / 60;
+            minutes %= 60;
+            return $"{hours}h{minutes}m";
         }
     }
 }

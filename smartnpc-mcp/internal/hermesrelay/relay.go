@@ -173,3 +173,10 @@ func (r *Relay) post(input, eventName string) {
 		"event", eventName, "status", resp.StatusCode,
 		"conversation", r.cfg.Conversation)
 }
+
+// Cfg returns the resolved configuration this relay was built with. Used by
+// status reporters to enumerate live profiles without reaching into private
+// fields.
+func (r *Relay) Cfg() Config {
+	return r.cfg
+}

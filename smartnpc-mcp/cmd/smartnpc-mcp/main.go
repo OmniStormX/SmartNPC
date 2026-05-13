@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -38,6 +40,8 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
+	startTime := time.Now()
+
 	var (
 		showVersion = flag.Bool("version", false, "print version and exit")
 		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
@@ -108,6 +112,7 @@ func main() {
 	//   2. --hermes-url + sibling flags     — legacy single-target
 	//   3. neither                           — relay disabled
 	var hermesHandler bridge.EventHandler
+	var hermesRelays []*hermesrelay.Relay // collected for /status reporting
 	switch {
 	case *hermesConfig != "":
 		cfgs, err := hermesrelay.LoadConfigFile(*hermesConfig)
@@ -121,6 +126,7 @@ func main() {
 			os.Exit(1)
 		}
 		hermesHandler = group.HandleEvent
+		hermesRelays = group.Relays()
 		logger.Info("hermes relay enabled (multi-profile)",
 			"config", *hermesConfig, "profiles", len(group.Relays()))
 	case *hermesURL != "":
@@ -137,6 +143,7 @@ func main() {
 			os.Exit(1)
 		}
 		hermesHandler = single.HandleEvent
+		hermesRelays = []*hermesrelay.Relay{single}
 		logger.Info("hermes relay enabled (single-profile, legacy flags)",
 			"url", *hermesURL, "conversation", *hermesConversation,
 			"npc_filter", *hermesNPC)
@@ -162,7 +169,8 @@ func main() {
 	tools.RegisterAll(server, br, hermesHandler, logger)
 
 	if *httpAddr != "" {
-		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin)
+		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin,
+			startTime, *wsURL, br, hermesRelays)
 	} else {
 		runStdio(ctx, logger, server)
 	}
@@ -180,7 +188,23 @@ func runStdio(ctx context.Context, logger *slog.Logger, server *mcp.Server) {
 
 // runHTTP serves the MCP server over Streamable HTTP at /mcp. Suitable for
 // remote MCP clients (e.g. Hermes inside WSL connecting to the Windows host).
-func runHTTP(ctx context.Context, logger *slog.Logger, server *mcp.Server, addr string, allowAnyOrigin bool) {
+//
+// Also exposes /healthz (liveness, no dependencies) and /status (operator
+// dashboard: ws connection state + per-profile gateway health probe). The
+// status endpoint is read-only and probes each Hermes Gateway's /health URL
+// in parallel with a short per-call timeout so a single dead gateway can't
+// stall the response.
+func runHTTP(
+	ctx context.Context,
+	logger *slog.Logger,
+	server *mcp.Server,
+	addr string,
+	allowAnyOrigin bool,
+	startTime time.Time,
+	wsURL string,
+	br *bridge.WSClient,
+	hermesRelays []*hermesrelay.Relay,
+) {
 	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{
@@ -203,6 +227,11 @@ func runHTTP(ctx context.Context, logger *slog.Logger, server *mcp.Server, addr 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		snap := buildStatusSnapshot(r.Context(), startTime, wsURL, br, hermesRelays)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(snap)
 	})
 
 	httpServer := &http.Server{
@@ -326,4 +355,109 @@ func synthChatMessageFromAudible(data json.RawMessage) (json.RawMessage, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+// statusProfile is the per-Hermes-profile slice of the /status response.
+// Each entry corresponds to one entry in --hermes-config.yaml (or the single
+// --hermes-url profile in legacy mode).
+type statusProfile struct {
+	NPCFilter    string `json:"npc_filter,omitempty"`
+	GatewayURL   string `json:"gateway_url"`
+	Conversation string `json:"conversation,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Healthy      bool   `json:"healthy"`
+	LatencyMS    int64  `json:"latency_ms,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// statusSnapshot is the body of the /status response — a single read-only
+// view of mcp's runtime state. Generated on demand; not cached.
+type statusSnapshot struct {
+	Version        string          `json:"version"`
+	UptimeSeconds  int64           `json:"uptime_seconds"`
+	StartedAt      string          `json:"started_at"`
+	GeneratedAt    string          `json:"generated_at"`
+	ModWSURL       string          `json:"mod_ws_url,omitempty"`
+	ModWSConnected bool            `json:"mod_ws_connected"`
+	Profiles       []statusProfile `json:"profiles"`
+}
+
+// buildStatusSnapshot collects the live state into a statusSnapshot. Each
+// profile gateway is probed in parallel with a 2-second timeout so a single
+// dead gateway can't stall the response. The probe is HTTP GET on the URL
+// derived from cfg.URL by stripping the /v1/responses suffix and appending
+// /health (the convention Hermes Gateway uses).
+func buildStatusSnapshot(
+	ctx context.Context,
+	startTime time.Time,
+	wsURL string,
+	br *bridge.WSClient,
+	relays []*hermesrelay.Relay,
+) statusSnapshot {
+	now := time.Now()
+	snap := statusSnapshot{
+		Version:       version,
+		UptimeSeconds: int64(now.Sub(startTime).Seconds()),
+		StartedAt:     startTime.UTC().Format(time.RFC3339),
+		GeneratedAt:   now.UTC().Format(time.RFC3339),
+		ModWSURL:      wsURL,
+		Profiles:      make([]statusProfile, len(relays)),
+	}
+	if br != nil {
+		snap.ModWSConnected = br.Connected()
+	}
+
+	if len(relays) == 0 {
+		return snap
+	}
+
+	// Per-profile health probe in parallel.
+	const probeTimeout = 2 * time.Second
+	httpClient := &http.Client{Timeout: probeTimeout}
+	var wg sync.WaitGroup
+	for i, r := range relays {
+		wg.Add(1)
+		go func(idx int, rr *hermesrelay.Relay) {
+			defer wg.Done()
+			cfg := rr.Cfg()
+			ps := statusProfile{
+				GatewayURL:   cfg.URL,
+				Conversation: cfg.Conversation,
+				Model:        cfg.Model,
+				NPCFilter:    cfg.NPCName,
+			}
+			// Hermes Gateway exposes /health on the same host:port as
+			// /v1/responses. Strip the responses suffix so we hit the
+			// liveness endpoint instead of the agent endpoint.
+			base := strings.TrimSuffix(cfg.URL, "/v1/responses")
+			base = strings.TrimSuffix(base, "/")
+			healthURL := base + "/health"
+
+			pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+			defer cancel()
+			req, err := http.NewRequestWithContext(pctx, http.MethodGet, healthURL, nil)
+			if err != nil {
+				ps.Error = "build request: " + err.Error()
+				snap.Profiles[idx] = ps
+				return
+			}
+			start := time.Now()
+			resp, err := httpClient.Do(req)
+			ps.LatencyMS = time.Since(start).Milliseconds()
+			if err != nil {
+				ps.Error = err.Error()
+				snap.Profiles[idx] = ps
+				return
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				ps.Healthy = true
+			} else {
+				ps.Error = fmt.Sprintf("status %d", resp.StatusCode)
+			}
+			snap.Profiles[idx] = ps
+		}(i, r)
+	}
+	wg.Wait()
+	return snap
 }

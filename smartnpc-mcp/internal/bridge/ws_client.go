@@ -314,3 +314,12 @@ func (c *WSClient) failPending(err error) {
 		_ = id
 	}
 }
+
+// Connected reports whether the client currently has a live ws connection to
+// the mod. Used by status reporters. Racy by design — a caller may see true
+// here and still get EOF on the next Call; that is OK for status display.
+func (c *WSClient) Connected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn != nil && !c.closed
+}

@@ -141,6 +141,15 @@ namespace SmartNPC.Bridge
             await this.SendJson(resp).ConfigureAwait(false);
         }
 
+        // ── status ──────────────────────────────────────────────────────
+
+        // The mod's ws server is single-client by design (only one mcp at a
+        // time); ConnectedClientCount returns 0 or 1. Exposed for status
+        // commands so operators can confirm liveness from inside the game
+        // without poking around at the network level.
+        public int ConnectedClientCount =>
+            (_current is { State: WebSocketState.Open }) ? 1 : 0;
+
         // ── outbound ────────────────────────────────────────────────────
 
         public Task BroadcastEvent(string name, object? data)
