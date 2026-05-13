@@ -22,8 +22,11 @@ type PingOutput struct {
 // registerMeta installs introspection / liveness tools.
 func registerMeta(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "ping",
-		Description: "Liveness check. Returns the server timestamp and echoes the input message.",
+		Name: "ping",
+		Description: "Liveness check. Returns the server's current UTC timestamp and " +
+			"echoes back `message`. Use during startup, health checks, or to verify " +
+			"the MCP connection is alive before attempting game-state tools.\n\n" +
+			"Side-effect: READ — no game state is touched; works even when no save is loaded.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in PingInput) (*mcp.CallToolResult, PingOutput, error) {
 		return nil, PingOutput{
 			OK:        true,

@@ -1,0 +1,45 @@
+# Config overlay for hermes/profiles/harvey/config.yaml
+#
+# Two blocks that must be merged into ~/.hermes/profiles/harvey/config.yaml:
+#
+#   1. mcp_servers  — so Hermes connects to smartnpc-mcp's MCP server
+#                     and discovers game tools (chat_say, game_get_time, ...).
+#   2. API_SERVER_* — so Hermes Gateway opens a REST endpoint that the
+#                     smartnpc-mcp hermesrelay can POST events to.
+#
+# install.sh appends both to the target config.yaml on first sync (it does
+# NOT overwrite an existing top-level mcp_servers: block — review manually
+# in that case). __HOST_IP__ is substituted to the WSL default gateway IP.
+#
+# Prerequisites:
+#   - smartnpc-mcp running in --http :3000 mode (task mcp:run)
+#   - Hermes Gateway started against this profile:
+#       hermes -p harvey gateway run --accept-hooks
+
+mcp_servers:
+  smartnpc_game:
+    # WSL→Windows host IP; install.sh fills this in automatically.
+    # On mirrored-mode WSL you can use http://127.0.0.1:3000/mcp instead.
+    url: http://__HOST_IP__:3000/mcp
+    timeout: 30
+    connect_timeout: 10
+    tools:
+      # chat_say stays available — it's the visible-to-player dialogue
+      # channel and the only sanctioned way for Hermes to speak as Harvey.
+      # Add tool names here to hide them from this NPC.
+      exclude: []
+      resources: false
+      prompts: false
+
+# REST gateway so external systems (smartnpc-mcp hermesrelay, curl) can
+# inject messages into this profile's conversation. The gateway exposes
+# /v1/responses (OpenAI Responses API shape) on API_SERVER_PORT.
+#
+# IMPORTANT: each profile that wants its own gateway needs a unique port.
+# If you run harvey and another profile gateway simultaneously, bump the
+# port here.
+API_SERVER_ENABLED: true
+API_SERVER_KEY: smartnpc-test-key
+API_SERVER_HOST: 0.0.0.0
+API_SERVER_PORT: 8645
+API_SERVER_MODEL_NAME: harvey

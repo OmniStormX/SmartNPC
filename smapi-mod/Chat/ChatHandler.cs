@@ -1,7 +1,11 @@
-// Handles the `chat_say` ws action. Routes NPC replies to:
-// - Mode A (NpcChatBar): close bar → native DialogueBox → reopen bar
-// - Mode B (ChatPanel): in-panel rendering (no DialogueBox)
-// - Fallback: native DialogueBox when neither UI is open
+// Handles the `chat_say` ws action. Routes replies into the chat history
+// store, increments the unread counter, and either:
+//   - feeds a NotificationToast (panel closed), or
+//   - lets the open ChatPanel render the new bubble (panel open + selected
+//     conversation matches).
+//
+// Falls back to the game's native DialogueBox only when the panel is closed
+// AND a notification handler hasn't been wired (defensive default).
 
 using System;
 using System.Collections.Concurrent;
@@ -20,15 +24,29 @@ namespace SmartNPC.Bridge
         private readonly IMonitor _log;
         private readonly ConcurrentQueue<ChatSayParams> _pending = new();
         private ChatMessageStore? _store;
-
-        private string? _pendingReopenNpc;
-        private bool    _awaitingDialogueClose;
+        private UnreadTracker? _unread;
+        // (npcName, displayName, text, channel) → push toast / refresh panel.
+        // channel is "group" for group-chat replies, "" / "private" otherwise.
+        private Action<string, string, string, string>? _onMessage;
 
         public ChatHandler(IMonitor log) { _log = log; }
 
         public void SetMessageStore(ChatMessageStore store)
         {
             _store = store;
+        }
+
+        public void SetUnreadTracker(UnreadTracker unread)
+        {
+            _unread = unread;
+        }
+
+        /// <summary>Wire a callback fired on the game thread for every NPC
+        /// message that arrives. ModEntry uses this to push toasts / refresh
+        /// the panel.</summary>
+        public void SetMessageNotifier(Action<string, string, string, string> onMessage)
+        {
+            _onMessage = onMessage;
         }
 
         public Task<Response> Handle(string id, JsonElement @params)
@@ -55,75 +73,43 @@ namespace SmartNPC.Bridge
             {
                 if (p is null) continue;
 
-                // Always store for history.
-                _store?.Add(p.Speaker!, p.Speaker!, p.Text!, isPlayer: false);
+                string channel = (p.Channel ?? "").ToLowerInvariant();
+                bool isGroup = channel == "group";
 
                 NPC? npc = Game1.getCharacterFromName(p.Speaker!);
+                string displayName = npc?.displayName ?? p.Speaker!;
 
-                // ─── Mode A: NpcChatBar active for this speaker ───
-                if (NpcChatBar.ActiveBarNpc == p.Speaker)
+                if (!isGroup)
                 {
-                    if (npc != null)
-                    {
-                        _pendingReopenNpc = p.Speaker;
-                        _awaitingDialogueClose = true;
+                    // Private (1-on-1) reply: add to per-NPC store + unread.
+                    // Group replies deliberately skip this so they don't
+                    // pollute the NPC's private conversation history.
+                    _store?.Add(p.Speaker!, p.Speaker!, p.Text!, isPlayer: false);
 
-                        if (Game1.activeClickableMenu is NpcChatBar)
-                            Game1.exitActiveMenu();
-
-                        var dialogue = new Dialogue(npc, "SmartNPC:response", p.Text!);
-                        Game1.DrawDialogue(dialogue);
-                        _log.Log($"dialogue (bar reopen): <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                    }
-                    continue;
+                    // If the ChatPanel is open and this conversation is
+                    // selected, the user is actively reading — do not
+                    // increment unread.
+                    bool isActiveConversation = ChatPanel.IsOpen && ChatPanel.ActiveNpc == p.Speaker;
+                    if (!isActiveConversation)
+                        _unread?.IncrementUnread(p.Speaker!);
                 }
 
-                // ─── Mode B: ChatPanel open ───
-                if (ChatPanel.IsOpen)
-                {
-                    // Message already stored above — ChatPanel reads from store
-                    // each frame, so it appears live. No DialogueBox.
-                    _log.Log($"panel msg: <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                    continue;
-                }
+                // Fan out to the panel/toast layer. The notifier decides
+                // whether this message lands in a per-NPC surface or a group
+                // surface based on the channel.
+                _onMessage?.Invoke(p.Speaker!, displayName, p.Text!, channel);
 
-                // ─── Fallback: neither UI open ───
-                if (Game1.activeClickableMenu is DialogueBox) continue;
-
-                if (npc != null)
-                {
-                    var dialogue = new Dialogue(npc, "SmartNPC:response", p.Text!);
-                    Game1.DrawDialogue(dialogue);
-                    _log.Log($"dialogue: <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                }
-                else
-                {
-                    Game1.chatBox?.addInfoMessage($"<{p.Speaker}> {p.Text}");
-                    _log.Log($"chat: <{p.Speaker}> {p.Text}", LogLevel.Trace);
-                }
+                _log.Log($"chat_say → {(isGroup ? "group" : "private")}: <{p.Speaker}> {p.Text}", LogLevel.Trace);
             }
-        }
-
-        /// <summary>
-        /// Returns NPC name whose NpcChatBar should be reopened after the
-        /// DialogueBox has been dismissed; null otherwise.
-        /// </summary>
-        public string? ConsumePendingReopen()
-        {
-            if (!_awaitingDialogueClose) return null;
-            if (Game1.activeClickableMenu is DialogueBox) return null;
-
-            string? npc = _pendingReopenNpc;
-            _pendingReopenNpc      = null;
-            _awaitingDialogueClose = false;
-            return npc;
         }
 
         private sealed class ChatSayParams
         {
-            [JsonPropertyName("speaker")] public string? Speaker { get; set; }
-            [JsonPropertyName("text")]    public string? Text    { get; set; }
-            [JsonPropertyName("color")]   public string? Color   { get; set; }
+            [JsonPropertyName("speaker")]  public string? Speaker { get; set; }
+            [JsonPropertyName("text")]     public string? Text    { get; set; }
+            [JsonPropertyName("color")]    public string? Color   { get; set; }
+            [JsonPropertyName("channel")]  public string? Channel { get; set; }
+            [JsonPropertyName("group_id")] public string? GroupId { get; set; }
         }
     }
 }

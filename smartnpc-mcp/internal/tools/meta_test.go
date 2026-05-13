@@ -18,7 +18,7 @@ func TestPingEndToEnd(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name: "smartnpc-mcp-test", Version: "test",
 	}, nil)
-	RegisterAll(server, nil)
+	RegisterAll(server, nil, nil, nil)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {

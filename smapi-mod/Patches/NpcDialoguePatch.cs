@@ -1,5 +1,6 @@
-// Harmony prefix on NPC.checkAction — for Agent-managed NPCs, open the
-// NpcChatBar (minimal input bar) and broadcast an npc_interact ws event.
+// Harmony prefix on NPC.checkAction — for Agent-managed NPCs, open the QQ-
+// style ChatPanel instead of the default dialogue flow, and broadcast a ws
+// event.
 
 using System.Collections.Concurrent;
 using HarmonyLib;
@@ -13,7 +14,7 @@ namespace SmartNPC.Bridge
         private static IMonitor? _log;
         private static WebSocketServer? _ws;
         private static ChatMessageStore? _store;
-        private static System.Action<string>? _openNpcChatBar;
+        private static System.Action<string>? _openChatWindow;
 
         private static readonly ConcurrentQueue<string> _pendingInteractions = new();
 
@@ -32,10 +33,10 @@ namespace SmartNPC.Bridge
             _ws = ws;
         }
 
-        public static void SetUI(ChatMessageStore store, System.Action<string> openNpcChatBar)
+        public static void SetUI(ChatMessageStore store, System.Action<string> openChatWindow)
         {
             _store = store;
-            _openNpcChatBar = openNpcChatBar;
+            _openChatWindow = openChatWindow;
         }
 
         public static void PumpInteractions()
@@ -60,11 +61,8 @@ namespace SmartNPC.Bridge
             // Face the player.
             __instance.faceTowardFarmerForPeriod(2000, 4, faceAway: false, Game1.player);
 
-            // Open the minimal chat bar (or switch panel if panel is open).
-            // Do NOT send npc_interact yet — only send when the player actually
-            // types a message. This avoids triggering AI responses when the
-            // player just opens and closes the bar without saying anything.
-            _openNpcChatBar?.Invoke(__instance.Name);
+            // Open chat window UI.
+            _openChatWindow?.Invoke(__instance.Name);
 
             __result = true;
             return false;

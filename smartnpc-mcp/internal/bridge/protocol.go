@@ -12,9 +12,34 @@ const (
 )
 
 // EventName constants — the canonical set of server-pushed events.
+//
+// Implemented today (emitted by the SMAPI mod):
+//
+//   - EventChatMessage    — player sent a line in the chat panel (targeted)
+//   - EventChatReceived   — legacy / group-chat channel (generic)
+//   - EventNpcInteract    — player clicked an Agent-managed NPC
+//
+// Reserved for future mod work (schema frozen in docs/events.md so
+// downstream consumers — hermesrelay, Hermes profile — can code against
+// the envelope before the mod side lands):
+//
+//   - EventDayStarted
+//   - EventLocationChanged
+//   - EventFriendshipChanged
 const (
-	EventChatReceived       = "chat_received"
+	EventChatMessage         = "chat_message"
+	EventChatReceived        = "chat_received"
+	EventNpcInteract         = "npc_interact"
+	EventGroupCreate         = "group_create" // legacy group chat signal
+	EventDayStarted          = "day_started"
+	EventLocationChanged     = "location_changed"
+	EventFriendshipChanged   = "friendship_changed"
 	EventNpcPerceptionUpdate = "npc_perception_update" // reserved, not emitted yet
+
+	// Synthetic (mcp-originated, not from mod) — inter-NPC messaging fan-out.
+	// See internal/tools/npc_message.go.
+	EventNpcMessage          = "npc_message"
+	EventNpcBroadcast        = "npc_broadcast"
 )
 
 // ActionName constants — the canonical set of client-issued requests.
@@ -34,6 +59,7 @@ const (
 	ActionNpcFollowStop     = "npc_follow_stop"
 	ActionNpcLeadTo         = "npc_lead_to"
 	ActionNpcGetBehavior    = "npc_get_behavior"
+	ActionPlayerGetStatus   = "player_get_status"
 )
 
 // Request is a client → server RPC call.

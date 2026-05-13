@@ -78,11 +78,14 @@ func registerNpcPerception(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_get_nearby",
 		Description: "Scan the NPC's current map for other characters (NPCs and players) " +
-			"inside the given visibility radius (default 10 tiles). Returns an array " +
-			"sorted by distance with name, type, tile coordinates, distance, and facing " +
-			"direction. Use this before speaking or acting so the NPC can react to who " +
-			"is actually around — e.g. greet a passing villager, notice the player " +
-			"approaching, or avoid talking when alone. Read-only; does not affect game state.",
+			"inside the visibility radius (default 10 tiles). Returns entries sorted by " +
+			"distance with name, type, tile coords, distance, and facing direction.\n\n" +
+			"When to call: BEFORE reacting to the environment — e.g. greet a passing " +
+			"villager by name, notice the player approaching, or avoid speaking when alone. " +
+			"Also useful before `npc_send_message` to confirm another NPC is actually in " +
+			"earshot before simulating inter-NPC dialogue.\n\n" +
+			"Side-effect: READ. Cached ~1 Hz on the mod side; custom `radius` triggers " +
+			"an on-demand scan. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetNearbyInput) (*mcp.CallToolResult, NpcGetNearbyOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetNearbyOutput{}, fmt.Errorf("npc is required")
@@ -100,11 +103,13 @@ func registerNpcPerception(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_get_environment",
-		Description: "Read a bundle of environmental context for the NPC: its current " +
-			"map and tile position, time of day, season, weather, and a short list of " +
-			"salient nearby objects (crops, furniture, terrain). Use this to craft " +
-			"situational dialogue (\"it's raining, maybe stay inside\", \"the crops " +
-			"look ready\") without issuing multiple queries. Read-only.",
+		Description: "Read a bundle of environmental context for the NPC in one call: " +
+			"current map, tile position, facing, clock (time-of-day/hour/minute), season, " +
+			"weather, and a short list of salient nearby objects (crops, furniture, terrain).\n\n" +
+			"When to call: for situational dialogue (\"it's raining, maybe stay inside\", " +
+			"\"the crops look ready\") when you want one round-trip instead of calling " +
+			"`game_get_time` + `game_get_weather` + `npc_get_position` separately.\n\n" +
+			"Side-effect: READ. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetEnvironmentInput) (*mcp.CallToolResult, NpcGetEnvironmentOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetEnvironmentOutput{}, fmt.Errorf("npc is required")

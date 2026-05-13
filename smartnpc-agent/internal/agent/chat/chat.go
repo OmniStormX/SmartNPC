@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/smartnpc/smartnpc-agent/internal/llm"
+	"github.com/smartnpc/smartnpc-agent/internal/memory"
 )
 
 const (
@@ -63,6 +64,38 @@ type Config struct {
 	FriendshipTimeout time.Duration
 	// Logger for diagnostics.
 	Logger *slog.Logger
+
+	// ── Long-term memory (optional) ────────────────────────────────
+	// Memory, when non-nil, enables SQLite-backed persistence: every
+	// chat turn opens/reuses a conversation, mirrors all messages, and
+	// injects a ContextBundle digest into the system prompt. Defaults
+	// to disabled so existing tests / call sites stay byte-for-byte
+	// identical. The Store lifetime is owned by the caller — Agent
+	// neither opens nor closes it.
+	Memory memory.Store
+	// MemoryDBPath, when non-empty AND Memory is nil, makes New() open a
+	// SQLite store at the given path automatically and own its lifetime
+	// (Close() will close it). Provides a one-line opt-in for callers
+	// that don't want to wire memory.Open themselves. Defaults to
+	// "data/smartnpc_memory.db" when callers leave both Memory and
+	// MemoryDBPath blank but explicitly enable persistence via
+	// EnableMemoryByDefault.
+	MemoryDBPath string
+	// EnableMemoryByDefault toggles the auto-open path described under
+	// MemoryDBPath: when true and both Memory + MemoryDBPath are zero,
+	// the agent opens "data/smartnpc_memory.db". Off by default so
+	// existing tests stay deterministic.
+	EnableMemoryByDefault bool
+	// MemoryIdleTimeout overrides memory.DefaultIdleTimeout. Only
+	// consulted when Memory != nil.
+	MemoryIdleTimeout time.Duration
+	// MemoryGameDateFn returns the current in-game date string (e.g.
+	// "Spring 5"), used by ConversationTracker to roll over a
+	// conversation when the day changes. Optional; nil ⇒ ignored.
+	MemoryGameDateFn func() string
+	// MemorySummarizer overrides the LLM provider used for asynchronous
+	// memory extraction. Defaults to the persona Provider.
+	MemorySummarizer *memory.Summarizer
 }
 
 // Agent holds conversation state and handles incoming chat notifications.
@@ -72,19 +105,17 @@ type Agent struct {
 	history []llm.Message
 	session *mcp.ClientSession
 	tools   []llm.ToolSpec
-	// router is a back-reference used by the npc_send_message local tool so
-	// one agent can deliver messages to another. Set via SetRouter() after the
-	// router is constructed.
-	router interface {
-		DeliverNPCMessage(fromNPC, toNPC, message string) bool
-		Speakers() []string
-	}
+	// router is the multi-NPC router this agent is registered with, if any.
+	// Used to dispatch consult_npc tool calls to peer agents. nil → consult is
+	// unavailable (single-NPC deployments).
+	router *Router
 	// locations is the named-location table used by the move-intent parser.
 	// Initialized from cfg.Persona.NamedLocations when present, else defaults.
 	locations *LocationTable
-	// lastUserMsgTime tracks when the last player message arrived, used by the
-	// proactive ticker to avoid interrupting active conversations.
-	lastUserMsgTime time.Time
+	// memory bundles the optional long-term-memory wiring. nil when
+	// Config.Memory was not supplied. Mutated only through helpers in
+	// memory_integration.go so the chat path stays clean.
+	memory *memoryWiring
 	// replyDone is an optional test hook: when non-nil, every completed
 	// respondAndSay call sends on it (non-blocking). Tests use this to wait
 	// for the async goroutine dispatched by HandleNotification without
@@ -128,6 +159,16 @@ func New(cfg Config) *Agent {
 		locs = DefaultLocations()
 	}
 	a.locations = NewLocationTable(locs)
+
+	// Wire the optional memory subsystem. Errors here only happen for
+	// genuine misconfiguration (e.g. nil store sneaking past the type
+	// system); we log and proceed without memory rather than refusing to
+	// start the agent — chat remains usable without persistence.
+	if mem, err := initMemory(cfg); err != nil {
+		cfg.Logger.Warn("memory init failed; running without persistence", "err", err)
+	} else {
+		a.memory = mem
+	}
 	return a
 }
 
@@ -139,44 +180,21 @@ func (a *Agent) SetSession(session *mcp.ClientSession) {
 	a.session = session
 }
 
+// Close releases resources held by the Agent. Currently flushes the
+// long-term memory tracker (closing every still-open conversation). Safe
+// to call multiple times; safe to call when memory is disabled.
+func (a *Agent) Close() error {
+	a.memoryFlush()
+	return nil
+}
+
 // Speaker returns the NPC display name this agent is bound to. Useful for
 // diagnostics and for routers that key agents by speaker.
 func (a *Agent) Speaker() string {
 	return a.cfg.Speaker
 }
 
-// SetRouter wires the back-reference to the Router so this agent can use the
-// npc_send_message local tool to deliver messages to other NPC agents. Must be
-// called after the Router has been fully constructed.
-func (a *Agent) SetRouter(r interface {
-	DeliverNPCMessage(fromNPC, toNPC, message string) bool
-	Speakers() []string
-}) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.router = r
-}
-
-// ReceiveNPCMessage injects a message from another NPC into this agent's
-// history and triggers an asynchronous response. The message appears as a
-// system-tagged entry so the LLM sees it as world context rather than player
-// input. The agent will then formulate an in-character reply and speak it via
-// chat_say (which the game displays as a normal dialogue).
-func (a *Agent) ReceiveNPCMessage(fromNPC, message string) {
-	injected := fmt.Sprintf("[%s 给你传话说：「%s」请你自然地回应这条来自 NPC 同伴的消息，可以选择通过 npc_send_message 回复对方。]", fromNPC, message)
-	a.cfg.Logger.Info("received NPC message", "from", fromNPC, "message", message)
-
-	a.mu.Lock()
-	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: injected})
-	a.trimHistory()
-	a.mu.Unlock()
-
-	go a.respondAndSay(injected)
-}
-
 // LoadTools fetches available MCP tools and caches them for LLM requests.
-// Additionally registers local-only tools (like npc_send_message) that the
-// LLM can invoke but are handled in-process.
 func (a *Agent) LoadTools(ctx context.Context) error {
 	a.mu.Lock()
 	s := a.session
@@ -192,9 +210,6 @@ func (a *Agent) LoadTools(ctx context.Context) error {
 
 	specs := convertMCPTools(res.Tools)
 
-	// Append local-only tools visible to the LLM.
-	specs = append(specs, a.localToolSpecs()...)
-
 	a.mu.Lock()
 	a.tools = specs
 	a.mu.Unlock()
@@ -202,41 +217,50 @@ func (a *Agent) LoadTools(ctx context.Context) error {
 	return nil
 }
 
-// localToolSpecs returns tool definitions for in-process tools that don't
-// require an MCP roundtrip. These are registered alongside MCP tools so the
-// LLM sees them in the same tool catalogue.
-func (a *Agent) localToolSpecs() []llm.ToolSpec {
-	return []llm.ToolSpec{
-		{
-			Name:        "npc_send_message",
-			Description: "Send a message to another NPC. The recipient NPC will receive your message and may respond. Use this to gossip, relay information, ask for help, or maintain social relationships with other NPCs.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"to": map[string]any{
-						"type":        "string",
-						"description": "The internal name of the recipient NPC (e.g. \"Abigail\", \"Sebastian\", \"XiaMi\")",
-					},
-					"message": map[string]any{
-						"type":        "string",
-						"description": "The message content to deliver to the other NPC",
-					},
-				},
-				"required": []string{"to", "message"},
-			},
-		},
-	}
-}
-
 // Tools returns a copy of the tool specs currently visible to the LLM. The
 // caller is free to mutate the returned slice; internal state is unaffected.
 func (a *Agent) Tools() []llm.ToolSpec {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := make([]llm.ToolSpec, len(a.tools))
-	copy(out, a.tools)
+	return a.toolSpecsLocked()
+}
+
+// toolSpecsLocked returns the tool list to advertise to the LLM, including
+// the synthetic consult_npc tool when this agent is part of a router with
+// peers. Caller must hold a.mu.
+func (a *Agent) toolSpecsLocked() []llm.ToolSpec {
+	out := make([]llm.ToolSpec, 0, len(a.tools)+1)
+	out = append(out, a.tools...)
+	if a.router != nil {
+		// Only expose consult when at least one peer exists. r.Speakers()
+		// briefly takes its own lock; that's safe — we don't keep both.
+		peers := a.router.Speakers()
+		if len(peers) >= 2 {
+			peerList := make([]string, 0, len(peers)-1)
+			self := normalizeSpeaker(a.cfg.Speaker)
+			for _, s := range peers {
+				if normalizeSpeaker(s) != self {
+					peerList = append(peerList, s)
+				}
+			}
+			desc := "Consult another NPC and fold their real answer back into your own reply. Two use cases:\n" +
+				"1. QUERY — the player asks about another NPC's thoughts, feelings, plans, schedule, opinions, or current status. Do NOT guess; call this tool and rephrase their real answer.\n" +
+				"2. DELEGATION — the player asks you to get another NPC to DO something: come here, go somewhere, deliver a message, perform a task. Pass the request verbatim via `question`; the target NPC's own agent will execute the action (summon, move, mail, etc.) and reply in their own voice.\n" +
+				"Trigger phrases include: \"帮我问 / 去问问 / ask X\", \"叫/让/请 X 过来 / 过去 / 做…\", \"告诉 X …\", \"把 X 喊来\".\n" +
+				"Available NPCs to consult: " + strings.Join(peerList, ", ") + "."
+			out = append(out, llm.ToolSpec{
+				Name:        ConsultToolName,
+				Description: desc,
+				InputSchema: consultToolSpec(),
+			})
+		}
+	}
 	return out
 }
+
+// attachRouter is implemented in delegate.go alongside the rest of the
+// consult_npc plumbing so F2 (memory) and F3 (delegation) share one
+// canonical definition.
 
 // convertMCPTools turns MCP tool descriptors into the provider-agnostic
 // llm.ToolSpec shape. The MCP SDK exposes InputSchema as an opaque value that
@@ -331,11 +355,6 @@ func (a *Agent) respondAndSay(userText string) {
 	// for the async goroutine without sleeping. Done is best-effort; a
 	// nil/unbuffered-and-unread channel simply gets skipped.
 	defer a.signalReplyDone()
-
-	// Track last user interaction so the proactive ticker can skip if active.
-	a.mu.Lock()
-	a.lastUserMsgTime = time.Now()
-	a.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Timeout)
 	defer cancel()
@@ -646,15 +665,8 @@ func (a *Agent) applyMoveIntent(ctx context.Context, userText string) string {
 		if loc.Map != "" {
 			args["map"] = loc.Map
 		}
-		moveRes, err := s.CallTool(ctx, &mcp.CallToolParams{Name: "npc_move_to", Arguments: args})
-		if err != nil {
+		if _, err := s.CallTool(ctx, &mcp.CallToolParams{Name: "npc_move_to", Arguments: args}); err != nil {
 			a.cfg.Logger.Warn("auto npc_move_to failed", "err", err, "location", loc.Name)
-		} else {
-			a.cfg.Logger.Info("auto npc_move_to result",
-				"location", loc.Name,
-				"args", args,
-				"result", extractToolText(moveRes),
-			)
 		}
 	}
 
@@ -697,15 +709,8 @@ func (a *Agent) applyBehaviorIntent(ctx context.Context, userText string) (strin
 		if s == nil {
 			return
 		}
-		res, err := s.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
-		if err != nil {
+		if _, err := s.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args}); err != nil {
 			a.cfg.Logger.Warn("auto behavior tool failed", "name", name, "err", err)
-		} else {
-			a.cfg.Logger.Info("auto behavior tool result",
-				"name", name,
-				"args", args,
-				"result", extractToolText(res),
-			)
 		}
 	}
 
@@ -760,6 +765,13 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 		return a.respondDual(ctx, userText)
 	}
 
+	// Open or reuse the persistent conversation BEFORE we do any
+	// LLM-bound work so messages hitting the store all share one id.
+	convID, err := a.memoryStartTurn()
+	if err != nil {
+		a.cfg.Logger.Warn("memory start turn failed", "err", err)
+	}
+
 	// Look up friendship tier up front so the LLM can calibrate tone before it
 	// picks any tools itself. A short timeout keeps a slow/missing bridge from
 	// stalling the chat turn; on failure we fall back to an empty addendum.
@@ -769,24 +781,45 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	// it doesn't proactively call the tools itself.
 	gameStateCtx := a.getGameStateContext(ctx)
 
-	extra := friendshipCtx
-	if gameStateCtx != "" {
-		if extra != "" {
-			extra += "\n\n"
+	// Long-term memory digest (may be empty for a fresh NPC).
+	memoryCtx := a.memoryContextAddendum()
+
+	extra := joinContextBlocks(friendshipCtx, gameStateCtx, memoryCtx)
+
+	// Inject consult_npc guidance when peers are available.
+	if a.router != nil {
+		peers := a.router.Speakers()
+		if len(peers) >= 2 {
+			extra += "\n\n[Delegation rule] You MUST call consult_npc when the player's message involves another NPC. Two patterns:\n" +
+				"• QUERY (information): \"帮我问/去问问/ask X about Y\", or any question about X's thoughts / plans / feelings / schedule / opinions / status → consult_npc(npc_name=X, question=原问题).\n" +
+				"• DELEGATION (action): \"叫/让/请 X 过来\", \"让 X 去做…\", \"告诉 X …\", \"把 X 喊来\" → consult_npc(npc_name=X, question=\"玩家想请你<X 要做的事>\", context=\"来自 " + a.cfg.Speaker + " 转达的请求\"). X's own agent will actually execute the action — do NOT pretend you did it yourself, and do NOT fabricate X's reply."
 		}
-		extra += gameStateCtx
 	}
 
-	// All tool invocations (move, follow, summon, etc.) are delegated to the
-	// LLM's own judgment via normal tool_calls. No keyword-based pre-processing.
-	effectiveUserText := userText
+	// Parse behavior intent FIRST — verbs like "跟着我"/"别跟了"/"带我去X" take
+	// priority over plain move-intent because they often overlap (e.g.
+	// "带我去湖边" is simultaneously a lead and a move). When behavior-intent
+	// fires we skip applyMoveIntent to avoid double-dispatching.
+	effectiveUserText, handledByBehavior := a.applyBehaviorIntent(ctx, userText)
+	if !handledByBehavior {
+		// Parse move intent BEFORE the LLM round. If the player wants to go
+		// somewhere named, fire npc_move_to directly so the motion starts
+		// regardless of whether the model emits tool_calls. Then annotate the
+		// user message so the LLM can narrate the action in character.
+		effectiveUserText = a.applyMoveIntent(ctx, userText)
+	}
 
 	a.mu.Lock()
 	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: effectiveUserText})
 	a.trimHistory()
 	msgs := a.buildMessages(extra)
-	tools := a.tools
+	tools := a.toolSpecsLocked()
+	tools = append(tools, a.memoryToolSpecs()...)
 	a.mu.Unlock()
+
+	// Mirror the user turn into SQLite. Best-effort: failures are logged
+	// inside memoryAppend.
+	a.memoryAppend(convID, "user", effectiveUserText, nil)
 
 	for round := 0; round < maxToolRounds; round++ {
 		resp, err := a.cfg.Provider.Chat(ctx, llm.ChatRequest{
@@ -809,25 +842,16 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 			a.history = append(a.history, llm.Message{Role: llm.RoleAssistant, Content: reply})
 			a.trimHistory()
 			a.mu.Unlock()
+			a.memoryAppend(convID, "assistant", reply, nil)
+			a.memoryNoteTurn(convID)
 			return reply, nil
-		}
-
-		// Model wants tool calls — log the structured data for debugging.
-		for i, tc := range resp.ToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			a.cfg.Logger.Info("LLM tool_call",
-				"round", round,
-				"index", i,
-				"id", tc.ID,
-				"name", tc.Name,
-				"arguments", string(argsJSON),
-			)
 		}
 
 		// Model wants tool calls — execute them and feed results back.
 		// First, append assistant message with tool calls to history.
 		assistantMsg := llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls}
 		msgs = append(msgs, assistantMsg)
+		a.memoryAppend(convID, "assistant", "", resp.ToolCalls)
 
 		for _, tc := range resp.ToolCalls {
 			result, err := a.executeTool(ctx, tc)
@@ -840,13 +864,8 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 				Name:       tc.Name,
 				ToolCallID: tc.ID,
 			})
-			a.cfg.Logger.Info("tool result",
-				"name", tc.Name,
-				"call_id", tc.ID,
-				"arguments", func() string { b, _ := json.Marshal(tc.Arguments); return string(b) }(),
-				"success", err == nil,
-				"result", truncateStr(result, 500),
-			)
+			a.memoryAppend(convID, "tool", result, nil)
+			a.cfg.Logger.Debug("tool executed", "name", tc.Name, "result_len", len(result))
 		}
 	}
 
@@ -867,15 +886,26 @@ func (a *Agent) respond(ctx context.Context, userText string) (string, error) {
 	a.history = append(a.history, llm.Message{Role: llm.RoleAssistant, Content: reply})
 	a.trimHistory()
 	a.mu.Unlock()
+	a.memoryAppend(convID, "assistant", reply, nil)
+	a.memoryNoteTurn(convID)
 	return reply, nil
 }
 
-// executeTool calls an MCP tool via the session, or handles local-only tools
-// (like npc_send_message) in-process without going through the bridge.
+// executeTool calls an MCP tool via the session.
 func (a *Agent) executeTool(ctx context.Context, tc llm.ToolCall) (string, error) {
-	// Local tools: handled in-process without MCP roundtrip.
-	if result, handled := a.executeLocalTool(tc); handled {
-		return result, nil
+	// Log every tool call for debugging delegation and tool selection.
+	a.cfg.Logger.Info("tool executing", "tool", tc.Name, "args", tc.Arguments)
+
+	// In-process memory tools are dispatched without touching MCP; this
+	// also lets memory_* work in unit tests that don't wire a session.
+	if out, ok := a.memoryToolDispatch(tc); ok {
+		return out, nil
+	}
+
+	// Synthetic consult_npc tool — routed through the in-process Router
+	// instead of the MCP server.
+	if tc.Name == ConsultToolName {
+		return a.executeConsult(ctx, tc)
 	}
 
 	a.mu.Lock()
@@ -914,44 +944,6 @@ func (a *Agent) executeTool(ctx context.Context, tc llm.ToolCall) (string, error
 	return out, nil
 }
 
-// executeLocalTool handles tools that run in-process (no MCP roundtrip).
-// Returns (result, true) if handled, ("", false) if the tool should be
-// routed to MCP normally.
-func (a *Agent) executeLocalTool(tc llm.ToolCall) (string, bool) {
-	switch tc.Name {
-	case "npc_send_message":
-		return a.handleNpcSendMessage(tc.Arguments), true
-	default:
-		return "", false
-	}
-}
-
-// handleNpcSendMessage implements the local npc_send_message tool. It delivers
-// a message from this agent to another NPC agent via the router.
-func (a *Agent) handleNpcSendMessage(args map[string]any) string {
-	toNPC, _ := args["to"].(string)
-	message, _ := args["message"].(string)
-	if toNPC == "" || message == "" {
-		return `{"ok":false,"error":"missing required fields: to, message"}`
-	}
-
-	a.mu.Lock()
-	r := a.router
-	speaker := a.cfg.Speaker
-	a.mu.Unlock()
-
-	if r == nil {
-		return `{"ok":false,"error":"router not configured, cannot send inter-NPC messages"}`
-	}
-
-	if ok := r.DeliverNPCMessage(speaker, toNPC, message); !ok {
-		return fmt.Sprintf(`{"ok":false,"error":"recipient NPC %q not found"}`, toNPC)
-	}
-
-	a.cfg.Logger.Info("npc_send_message delivered", "from", speaker, "to", toNPC, "message", message)
-	return fmt.Sprintf(`{"ok":true,"delivered_to":"%s"}`, toNPC)
-}
-
 // buildMessages constructs system + history for the LLM request. When extra
 // is non-empty it is appended to the system message as a separate paragraph —
 // used to inject per-turn dynamic context (e.g. current friendship tier)
@@ -972,14 +964,6 @@ func (a *Agent) trimHistory() {
 	if len(a.history) > a.cfg.MaxHistory*2 {
 		a.history = a.history[len(a.history)-a.cfg.MaxHistory*2:]
 	}
-}
-
-// truncateStr caps a string at max bytes for log readability.
-func truncateStr(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
 }
 
 // extractChatText extracts player text from a chat_received notification.

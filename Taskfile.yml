@@ -75,6 +75,16 @@ tasks:
       - task: agent:clean
       - task: mod:clean
 
+  # ── Hermes profile render sanity (opt-in) ───────────────────────
+
+  profiles:verify:
+    desc: Sanity-check the rendered hermes/profiles/ tree (no placeholder leaks, no XiaMi leaks in non-xiami profiles, shared skills byte-identical). NOT part of ci-fast — run manually after editing _master/ or regenerating profiles.
+    cmds:
+      - cmd: bash scripts/test_profile_render.sh
+        platforms: [linux, darwin]
+      - cmd: bash scripts/test_profile_render.sh
+        platforms: [windows]
+
   # ── Git hooks (opt-in dev convenience) ──────────────────────────
 
   hooks:enable:

@@ -35,7 +35,6 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -104,10 +103,28 @@ func (a *Agent) respondDual(ctx context.Context, userText string) (string, error
 	// picking tools.
 	friendshipCtx := a.getFriendshipContext(ctx)
 	gameStateCtx := a.getGameStateContext(ctx)
+	memoryCtx := a.memoryContextAddendum()
 
-	// All tool invocations are delegated to the decision LLM's judgment.
-	// No keyword-based pre-processing — the LLM decides what actions to take.
-	effectiveUserText := userText
+	// Open / reuse the persistent conversation up front so every stage's
+	// mirrored messages share the same id.
+	convID, err := a.memoryStartTurn()
+	if err != nil {
+		a.cfg.Logger.Warn("memory start turn failed", "err", err)
+	}
+
+	// Apply behavior-intent FIRST (summon/follow/lead/stop); if handled it
+	// short-circuits move-intent so "带我去X" isn't double-dispatched.
+	effectiveUserText, handledByBehavior := a.applyBehaviorIntent(ctx, userText)
+	if !handledByBehavior {
+		// Apply move-intent short-circuit. This gives us a guaranteed
+		// movement execution for named destinations even if the decision layer
+		// misses the signal. The resulting user text carries the "[系统：…]"
+		// hint that both layers will see.
+		effectiveUserText = a.applyMoveIntent(ctx, userText)
+	}
+
+	// Mirror the (annotated) user turn before any LLM call.
+	a.memoryAppend(convID, "user", effectiveUserText, nil)
 
 	// ── Stage 1: decision ────────────────────────────────────────
 	results, decisionErr := a.runDecisionStage(ctx, decision, effectiveUserText, friendshipCtx, gameStateCtx)
@@ -138,7 +155,13 @@ func (a *Agent) respondDual(ctx context.Context, userText string) (string, error
 	a.cfg.Logger.Info("decision", "tool_calls", len(results))
 
 	// ── Stage 2: persona ─────────────────────────────────────────
-	return a.runPersonaStage(ctx, persona, effectiveUserText, friendshipCtx, gameStateCtx, results)
+	reply, err := a.runPersonaStage(ctx, persona, effectiveUserText, friendshipCtx, gameStateCtx, memoryCtx, results)
+	if err != nil {
+		return reply, err
+	}
+	a.memoryAppend(convID, "assistant", reply, nil)
+	a.memoryNoteTurn(convID)
+	return reply, nil
 }
 
 // runDecisionStage feeds the user message + available tool specs to the
@@ -152,7 +175,7 @@ func (a *Agent) runDecisionStage(
 	userText, friendshipCtx, gameStateCtx string,
 ) ([]actionResult, error) {
 	a.mu.Lock()
-	tools := a.tools
+	tools := a.toolSpecsLocked()
 	model := a.cfg.DecisionModel
 	speaker := a.cfg.Speaker
 	history := a.snapshotHistory()
@@ -184,18 +207,6 @@ func (a *Agent) runDecisionStage(
 			return results, nil
 		}
 
-		// Log the structured tool_calls from the decision LLM for debugging.
-		for i, tc := range resp.ToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			a.cfg.Logger.Info("decision tool_call",
-				"round", round,
-				"index", i,
-				"id", tc.ID,
-				"name", tc.Name,
-				"arguments", string(argsJSON),
-			)
-		}
-
 		// Append the assistant's tool-call message so subsequent rounds can
 		// reason about the prior calls; OpenAI-style dialogs require this.
 		msgs = append(msgs, llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls})
@@ -214,14 +225,6 @@ func (a *Agent) runDecisionStage(
 				Name:       tc.Name,
 				ToolCallID: tc.ID,
 			})
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			a.cfg.Logger.Info("decision tool result",
-				"name", tc.Name,
-				"call_id", tc.ID,
-				"arguments", string(argsJSON),
-				"success", err == nil,
-				"result", truncateStr(out, 500),
-			)
 		}
 	}
 	a.cfg.Logger.Debug("decision stage exhausted rounds", "rounds", maxDecisionRounds, "calls", len(results))
@@ -252,7 +255,7 @@ func buildDecisionSystemPrompt(speaker, friendshipCtx, gameStateCtx string) stri
 func (a *Agent) runPersonaStage(
 	ctx context.Context,
 	personaLLM llm.Provider,
-	userText, friendshipCtx, gameStateCtx string,
+	userText, friendshipCtx, gameStateCtx, memoryCtx string,
 	results []actionResult,
 ) (string, error) {
 	a.mu.Lock()
@@ -262,8 +265,8 @@ func (a *Agent) runPersonaStage(
 	// decision stage fires no tools.
 	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: userText})
 	a.trimHistory()
-	// Build the extra system addendum: friendship + game state + action log.
-	extra := joinContextBlocks(friendshipCtx, gameStateCtx, formatActionResults(results))
+	// Build the extra system addendum: friendship + game state + memory + action log.
+	extra := joinContextBlocks(friendshipCtx, gameStateCtx, memoryCtx, formatActionResults(results))
 	msgs := a.buildMessages(extra)
 	a.mu.Unlock()
 

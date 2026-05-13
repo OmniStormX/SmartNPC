@@ -24,8 +24,15 @@ type MailSendOutput struct {
 func registerMail(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "mail_send",
-		Description: "Display a HUD bubble in the running Stardew Valley game. " +
-			"Requires the StardewMCPBridge SMAPI mod with a save loaded.",
+		Description: "Show a system HUD bubble in the top-right of the screen. This is a " +
+			"game-system notification channel, not NPC dialogue — use it for meta " +
+			"messages like quest reminders, status pings, or debug hints. For NPC speech, " +
+			"use `chat_say` instead.\n\n" +
+			"When to call: when you need to surface something to the player outside of " +
+			"in-character conversation (e.g. \"New mail from Abigail\", debug echoes).\n\n" +
+			"Constraints: plain UTF-8 text, one line, short. No markdown.\n\n" +
+			"Side-effect: WRITE — visible to the player. Requires the SMAPI mod with a " +
+			"save loaded; otherwise returns `mod_not_ready`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in MailSendInput) (*mcp.CallToolResult, MailSendOutput, error) {
 		if in.Text == "" {
 			return nil, MailSendOutput{}, fmt.Errorf("text is required")

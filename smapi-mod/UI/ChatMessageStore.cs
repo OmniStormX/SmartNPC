@@ -12,13 +12,13 @@ namespace SmartNPC.Bridge
     }
 
     /// <summary>
-    /// Per-NPC chat history storage. Lives in memory for the session.
-    /// Tracks unread state per NPC for UI notification indicators.
+    /// Per-NPC chat history storage. Lives in memory for the session and is
+    /// snapshotted to per-save data via <see cref="Snapshot"/> /
+    /// <see cref="Restore"/>.
     /// </summary>
     internal sealed class ChatMessageStore
     {
         private readonly Dictionary<string, List<ChatMessage>> _history = new();
-        private readonly HashSet<string> _unread = new();
         private readonly int _maxPerNpc;
 
         public ChatMessageStore(int maxPerNpc = 100)
@@ -42,9 +42,6 @@ namespace SmartNPC.Bridge
             });
             if (list.Count > _maxPerNpc)
                 list.RemoveAt(0);
-
-            if (!isPlayer)
-                _unread.Add(npcName);
         }
 
         public List<ChatMessage> GetHistory(string npcName)
@@ -54,17 +51,34 @@ namespace SmartNPC.Bridge
             return new List<ChatMessage>();
         }
 
-        public bool HasUnread(string npcName) => _unread.Contains(npcName);
-
-        public void MarkRead(string npcName) => _unread.Remove(npcName);
-
-        public bool HasAnyUnread() => _unread.Count > 0;
-
         public void Clear(string npcName)
         {
             if (_history.ContainsKey(npcName))
                 _history[npcName].Clear();
-            _unread.Remove(npcName);
+        }
+
+        /// <summary>Build a serialisable snapshot of the last N messages per NPC.</summary>
+        public Dictionary<string, List<ChatMessage>> Snapshot()
+        {
+            var snap = new Dictionary<string, List<ChatMessage>>();
+            foreach (var kv in _history)
+            {
+                int start = Math.Max(0, kv.Value.Count - _maxPerNpc);
+                snap[kv.Key] = kv.Value.GetRange(start, kv.Value.Count - start);
+            }
+            return snap;
+        }
+
+        /// <summary>Restore from a snapshot. Replaces in-memory state.</summary>
+        public void Restore(Dictionary<string, List<ChatMessage>>? snapshot)
+        {
+            _history.Clear();
+            if (snapshot is null) return;
+            foreach (var kv in snapshot)
+            {
+                if (kv.Value is null) continue;
+                _history[kv.Key] = new List<ChatMessage>(kv.Value);
+            }
         }
     }
 }

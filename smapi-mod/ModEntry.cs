@@ -6,13 +6,17 @@
 //   - Mail/MailHandler.cs        — `mail_send`
 //   - Chat/ChatHandler.cs        — `chat_say`
 //   - Chat/ChatInputCapture.cs   — Ctrl+T hotkey + Harmony patch for player chat
-//   - UI/NpcChatBar.cs           — bottom input bar (near-NPC quick chat)
-//   - UI/ChatPanel.cs            — QQ-style full chat panel
-//   - UI/ChatSideButton.cs       — HUD floating button
+//   - UI/ChatPanel.cs            — QQ-style unified chat panel
+//   - UI/ContactList.cs          — left pane (NPC list)
+//   - UI/ConversationView.cs     — right pane (transcript + input)
+//   - UI/NotificationToast.cs    — floating toast for incoming messages
+//   - Data/UnreadTracker.cs      — per-NPC unread counter
 //
 // See docs/protocol.md for the wire protocol.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
@@ -22,6 +26,10 @@ namespace SmartNPC.Bridge
 {
     public sealed class ModEntry : Mod
     {
+        // Per-save persistence keys.
+        private const string SaveKey_ChatHistory = "smartnpc.chat_history";
+        private const string SaveKey_Unread      = "smartnpc.unread";
+
         private ModConfig _config = null!;
 
         private WebSocketServer? _ws;
@@ -31,12 +39,16 @@ namespace SmartNPC.Bridge
         private ChatInputCapture? _chatInput;
         private XiaMiData?       _xiami;
         private GameQueryHandler? _query;
+        private PlayerQueryHandler? _playerQuery;
         private PerceptionSystem? _perception;
         private MovementHandler?  _movement;
         private FollowSystem?     _follow;
         private BehaviorHandler?  _behavior;
-        private ChatMessageStore _messageStore = new();
-        private ChatSideButton?  _sideButton;
+
+        private readonly ChatMessageStore _messageStore = new();
+        private readonly UnreadTracker    _unread       = new();
+        private NotificationToast?        _toast;
+        private GroupChatManager?         _groupMgr;
 
         public override void Entry(IModHelper helper)
         {
@@ -45,13 +57,16 @@ namespace SmartNPC.Bridge
             _xiami = new XiaMiData(helper, this.Monitor);
             _xiami.Register(helper.Events);
 
-            helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
-            helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
-            helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
-            helper.Events.Input.ButtonsChanged += this.OnButtonsChanged;
-            helper.Events.Player.Warped += this.OnPlayerWarped;
-            helper.Events.Display.RenderedHud += this.OnRenderedHud;
-            helper.Events.Display.WindowResized += this.OnWindowResized;
+            _toast = new NotificationToast(this.OpenChatPanelForNpc);
+
+            helper.Events.GameLoop.GameLaunched   += this.OnGameLaunched;
+            helper.Events.GameLoop.UpdateTicked   += this.OnUpdateTicked;
+            helper.Events.GameLoop.SaveLoaded     += this.OnSaveLoaded;
+            helper.Events.GameLoop.Saving         += this.OnSaving;
+            helper.Events.Display.RenderedHud     += this.OnRenderedHud;
+            helper.Events.Input.ButtonsChanged    += this.OnButtonsChanged;
+            helper.Events.Input.ButtonPressed     += this.OnButtonPressed;
+            helper.Events.Player.Warped           += this.OnPlayerWarped;
         }
 
         private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
@@ -66,6 +81,7 @@ namespace SmartNPC.Bridge
                 _mail   = new MailHandler(this.Monitor);
                 _chat   = new ChatHandler(this.Monitor);
                 _query  = new GameQueryHandler(this.Monitor);
+                _playerQuery = new PlayerQueryHandler(this.Monitor);
                 _perception = new PerceptionSystem(this.Monitor);
                 _movement = new MovementHandler(this.Monitor);
                 _follow   = new FollowSystem(this.Monitor);
@@ -76,6 +92,7 @@ namespace SmartNPC.Bridge
                 _router.Register("game_get_time",        _query.HandleGetTime);
                 _router.Register("game_get_weather",     _query.HandleGetWeather);
                 _router.Register("friendship_get",       _query.HandleGetFriendship);
+                _router.Register("player_get_status",    _playerQuery.HandleGetStatus);
                 _router.Register("npc_get_nearby",       _perception.HandleGetNearby);
                 _router.Register("npc_get_environment",  _perception.HandleGetEnvironment);
                 _router.Register("npc_move_to",          _movement.HandleMoveTo);
@@ -91,22 +108,25 @@ namespace SmartNPC.Bridge
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
                 _ws.Start();
 
-                // Wire up patches — opens NpcChatBar on NPC click.
+                // Wire up patches and UI.
                 NpcDialoguePatch.SetBridge(_ws);
-                NpcDialoguePatch.SetUI(_messageStore, this.OpenNpcChatBar);
+                NpcDialoguePatch.SetUI(_messageStore, this.OpenChatPanelForNpc);
 
-                // Configure ChatHandler to route replies to the message store.
+                // Configure ChatHandler to route replies to the message store /
+                // unread tracker / toast.
                 _chat.SetMessageStore(_messageStore);
-
-                // HUD side button for opening ChatPanel.
-                _sideButton = new ChatSideButton(() => this.OpenChatPanel());
+                _chat.SetUnreadTracker(_unread);
+                _chat.SetMessageNotifier(this.OnIncomingChatMessage);
 
                 _chatInput = new ChatInputCapture(this, this.ForwardPlayerMessage);
+
+                // Group chat manager.
+                _groupMgr = new GroupChatManager(_messageStore, _ws);
 
                 // Register SMAPI console debug commands.
                 DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor);
 
-                this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat bar + panel + side button)", LogLevel.Info);
+                this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat + mail + UI)", LogLevel.Info);
             }
             catch (Exception ex)
             {
@@ -124,33 +144,13 @@ namespace SmartNPC.Bridge
             _follow?.PumpOnGameTick();
             NpcDialoguePatch.PumpInteractions();
 
-            // After DialogueBox dismissed, reopen NpcChatBar.
-            if (_chat != null)
-            {
-                string? reopenNpc = _chat.ConsumePendingReopen();
-                if (reopenNpc != null)
-                    this.OpenNpcChatBar(reopenNpc);
-            }
-
-            // Update side button unread indicator.
-            _sideButton?.SetUnread(_messageStore.HasAnyUnread());
-        }
-
-        /// <summary>Draw floating chat side button on HUD.</summary>
-        private void OnRenderedHud(object? sender, RenderedHudEventArgs e)
-        {
-            if (!Context.IsWorldReady) return;
-            if (Game1.activeClickableMenu != null) return;
-            _sideButton?.Draw(e.SpriteBatch);
-        }
-
-        private void OnWindowResized(object? sender, WindowResizedEventArgs e)
-        {
-            _sideButton?.UpdatePosition();
+            // Tick toast lifetimes (~16 ms per tick at 60fps).
+            _toast?.Update(1f / 60f);
         }
 
         /// <summary>
-        /// Register vanilla NPCs as Agent-managed once the save is loaded.
+        /// Register vanilla NPCs as Agent-managed and restore chat history /
+        /// unread state from the save file once the save is loaded.
         /// </summary>
         private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
         {
@@ -158,30 +158,74 @@ namespace SmartNPC.Bridge
             foreach (string npc in managedVanilla)
                 AgentNpcRegistry.Register(npc);
 
+            try
+            {
+                var hist = this.Helper.Data.ReadSaveData<Dictionary<string, List<ChatMessage>>>(SaveKey_ChatHistory);
+                _messageStore.Restore(hist);
+                var un = this.Helper.Data.ReadSaveData<Dictionary<string, int>>(SaveKey_Unread);
+                _unread.Restore(un);
+                this.Monitor.Log(
+                    $"Restored chat history ({hist?.Count ?? 0} NPCs) + unread ({_unread.TotalUnread})",
+                    LogLevel.Debug);
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"failed to restore chat data: {ex.Message}", LogLevel.Warn);
+            }
+
             this.Monitor.Log(
                 $"Agent-managed NPCs registered: {string.Join(", ", managedVanilla)}",
                 LogLevel.Info);
         }
 
-        /// <summary>F2 → ChatPanel; F3 → debug panel; side button click.</summary>
+        /// <summary>Persist chat history + unread counters into the save file.</summary>
+        private void OnSaving(object? sender, SavingEventArgs e)
+        {
+            try
+            {
+                this.Helper.Data.WriteSaveData(SaveKey_ChatHistory, _messageStore.Snapshot());
+                this.Helper.Data.WriteSaveData(SaveKey_Unread,      _unread.Snapshot());
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"failed to persist chat data: {ex.Message}", LogLevel.Warn);
+            }
+        }
+
+        private void OnRenderedHud(object? sender, RenderedHudEventArgs e)
+        {
+            // Toasts are HUD-level; draw above world but below menus.
+            if (Game1.activeClickableMenu is ChatPanel) return;
+            _toast?.Draw(e.SpriteBatch);
+        }
+
+        /// <summary>Hotkey handler: F2 (panel + focus list), Tab (toggle), F3 (debug).</summary>
         private void OnButtonsChanged(object? sender, ButtonsChangedEventArgs e)
         {
             if (!Context.IsWorldReady) return;
 
             foreach (SButton btn in e.Pressed)
             {
-                // Side button click (check before menu guard so it works from HUD)
-                if (btn == SButton.MouseLeft && Game1.activeClickableMenu == null)
+                // Tab: toggle panel; only respond when no other modal menu is up.
+                if (btn == SButton.Tab)
                 {
-                    if (_sideButton?.HandleClick(btn, this.Helper.Input.GetCursorPosition()) == true)
+                    if (Game1.activeClickableMenu is ChatPanel)
+                    {
+                        Game1.exitActiveMenu();
                         return;
+                    }
+                    if (Game1.activeClickableMenu == null)
+                    {
+                        OpenChatPanel(null);
+                        return;
+                    }
                 }
 
                 if (Game1.activeClickableMenu != null) continue;
 
                 if (btn == SButton.F2)
                 {
-                    this.OpenChatPanel();
+                    OpenChatPanel(null);
                     return;
                 }
                 if (btn == SButton.F3 && _follow != null)
@@ -192,59 +236,137 @@ namespace SmartNPC.Bridge
             }
         }
 
+        /// <summary>Click-through for floating toast notifications.</summary>
+        private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
+        {
+            if (e.Button != SButton.MouseLeft) return;
+            if (Game1.activeClickableMenu != null) return;
+            if (_toast == null) return;
+
+            int mx = (int)e.Cursor.ScreenPixels.X;
+            int my = (int)e.Cursor.ScreenPixels.Y;
+            _toast.TryClick(mx, my);
+        }
+
         private void OnPlayerWarped(object? sender, WarpedEventArgs e)
         {
             if (!e.IsLocalPlayer) return;
             _follow?.OnPlayerWarped(e.NewLocation);
         }
 
-        /// <summary>Open bottom chat bar for near-NPC quick interaction.</summary>
-        private void OpenNpcChatBar(string npcName)
+        // ── UI helpers ──────────────────────────────────────────────────────
+
+        /// <summary>Open the chat panel; optionally select a specific NPC.</summary>
+        private void OpenChatPanel(string? npcName)
         {
-            // If ChatPanel is already open, switch NPC there instead.
-            if (Game1.activeClickableMenu is ChatPanel panel)
-            {
-                panel.SelectNpc(npcName);
-                return;
-            }
-
-            NPC? npc = Game1.getCharacterFromName(npcName);
-            string displayName = npc?.displayName ?? npcName;
-
-            var bar = new NpcChatBar(npcName, displayName, _messageStore, this.OnChatSend);
-            Game1.activeClickableMenu = bar;
+            ChatPanel.Open(_messageStore, _unread, this.OnChatSend, npcName, _groupMgr);
+            _toast?.Clear();
         }
 
-        /// <summary>Open QQ-style full chat panel.</summary>
-        private void OpenChatPanel(string? initialNpc = null)
+        /// <summary>Open the chat panel for a specific NPC (used by Harmony
+        /// patch and toast click handler).</summary>
+        private void OpenChatPanelForNpc(string npcName)
         {
-            // If NpcChatBar is showing, transfer its NPC to the panel.
-            if (Game1.activeClickableMenu is NpcChatBar)
-            {
-                string? current = NpcChatBar.ActiveBarNpc;
-                Game1.exitActiveMenu();
-                Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, current ?? initialNpc);
-                return;
-            }
-
-            if (Game1.activeClickableMenu != null) return;
-
-            Game1.activeClickableMenu = new ChatPanel(_messageStore, this.OnChatSend, initialNpc);
+            OpenChatPanel(npcName);
         }
 
-        /// <summary>Called when player sends a message from any chat UI.</summary>
+        /// <summary>Called when player sends a message from the chat window.</summary>
         private void OnChatSend(string npcName, string text)
         {
             if (_ws is null) return;
-            _ = _ws.BroadcastEvent("chat_message", new { npc = npcName, text, source = "player" });
+            _ = _ws.BroadcastEvent("chat_message",
+                new { npc = npcName, target = npcName, text, source = "player" });
             this.Monitor.Log($"[ChatUI] player → {npcName}: {text}", LogLevel.Debug);
+        }
+
+        /// <summary>Wired into <see cref="ChatHandler"/>: fires on the game thread
+        /// for every NPC reply that arrives. Drives toasts + panel refresh.
+        /// <para>
+        /// channel == "group": the reply belongs to the group chat surface —
+        /// store it there, do NOT push toast / refresh per-NPC panel.
+        /// channel == "" / "private": normal 1-on-1 reply. Do NOT leak it into
+        /// the group panel even if a group is active.
+        /// </para>
+        /// </summary>
+        private void OnIncomingChatMessage(string npcName, string displayName, string text, string channel)
+        {
+            bool isGroup = string.Equals(channel, "group", System.StringComparison.OrdinalIgnoreCase);
+
+            if (isGroup)
+            {
+                _groupMgr?.OnNpcReply(npcName, text);
+                // If the panel is open on the group conversation, refresh it
+                // so the new bubble appears; otherwise stay silent (no toast
+                // for group chatter).
+                if (Game1.activeClickableMenu is ChatPanel gp)
+                    gp.RefreshContacts();
+                return;
+            }
+
+            if (Game1.activeClickableMenu is ChatPanel panel)
+            {
+                panel.RefreshContacts();
+                return;
+            }
+            _toast?.Push(npcName, displayName, text);
         }
 
         /// <summary>Called from the Harmony postfix on ChatBox.receiveChatMessage.</summary>
         private System.Threading.Tasks.Task ForwardPlayerMessage(string text)
         {
             if (_ws is null) return System.Threading.Tasks.Task.CompletedTask;
-            return _ws.BroadcastEvent("chat_received", new { text, source = "player" });
+
+            // Intercept /group command: "/group Abigail Sebastian" creates a group chat.
+            if (text.StartsWith("/group ", System.StringComparison.OrdinalIgnoreCase))
+            {
+                var names = text.Substring(7).Trim().Split(new[] { ' ', ',' }, System.StringSplitOptions.RemoveEmptyEntries);
+                if (names.Length >= 1 && _groupMgr != null)
+                {
+                    Monitor.Log($"[Group] Creating group with: {string.Join(", ", names)}", StardewModdingAPI.LogLevel.Info);
+                    _groupMgr.CreateGroup(names);
+                    // Open the chat panel to the group view.
+                    ChatPanel.Open(_messageStore, _unread, this.OnChatSend, GroupChatManager.GroupKey, _groupMgr);
+                    return System.Threading.Tasks.Task.CompletedTask;
+                }
+            }
+
+            // Intercept /endgroup command to exit group chat mode.
+            if (text.Equals("/endgroup", System.StringComparison.OrdinalIgnoreCase))
+            {
+                Monitor.Log("[Group] Ending group chat", StardewModdingAPI.LogLevel.Info);
+                _groupMgr?.EndGroup();
+                return System.Threading.Tasks.Task.CompletedTask;
+            }
+
+            // The player typed into the in-game chat box without explicitly
+            // addressing an NPC. Emit a single chat_received event with the
+            // list of Agent-managed NPCs in earshot; smartnpc-mcp owns the
+            // policy of whether to synthesize a chat_message for the nearest
+            // one. Keeping all routing logic on the Go side per CLAUDE.md
+            // ("C# 只放 SMAPI 胶水，业务逻辑在 Go").
+            var audible = AudibleNPCResolver.ResolveAroundPlayer()
+                .Select(e => new
+                {
+                    name = e.Name,
+                    map = e.Map,
+                    distance = e.Distance,
+                    x = e.TileX,
+                    y = e.TileY,
+                })
+                .ToArray();
+
+            if (audible.Length > 0)
+            {
+                Monitor.Log($"[AudibleRouting] {audible.Length} NPC(s) in earshot; nearest={audible[0].name} d={audible[0].distance:F1}t",
+                    StardewModdingAPI.LogLevel.Debug);
+            }
+
+            return _ws.BroadcastEvent("chat_received", new
+            {
+                text,
+                source = "player",
+                audible_npcs = audible,
+            });
         }
 
         protected override void Dispose(bool disposing)
