@@ -102,11 +102,13 @@ sequenceDiagram
 ## 🖼️ 视觉资产示例
 
 <p align="center">
-  <img src="smapi-mod/assets/xiami/XiaMi_spritesheet.png" alt="XiaMi sprite sheet" height="360" />
-  &nbsp;&nbsp;&nbsp;
-  <img src="smapi-mod/assets/xiami/test_crops/_contact_sheet.png" alt="XiaMi animation contact sheet" width="520" />
+  <img src="smapi-mod/assets/xiami/xiami-readme-showcase.png" alt="XiaMi animation showcase" width="860" />
   <br />
-  <em>左：XiaMi spritesheet；右：动作裁切检查图。SmartNPC 同时关注“脑子”和“身体”——对话、记忆、动作、表情都要进游戏。</em>
+  <em>XiaMi animation showcase: walk cycles, farm actions, gifts, emotes, and the runtime flow. SmartNPC cares about both mind and body: dialogue, memory, actions, and expressions all belong in-game.</em>
+</p>
+
+<p align="center">
+  <sub>Full raw crop contact sheet: <code>smapi-mod/assets/xiami/test_crops/_contact_sheet.png</code>.</sub>
 </p>
 
 ---
