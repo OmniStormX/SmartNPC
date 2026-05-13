@@ -62,6 +62,7 @@ A Hermes profile sees every tool listed below (minus any names in its
 | [`npc_face_direction`](#npc_face_direction) | turn to up/down/left/right |
 | [`npc_summon`](#npc_summon) | warp to map edge + walk to player |
 | [`npc_emote`](#npc_emote) | show sparkle / `!` / heart bubble above head (~1 s) |
+| [`npc_give_item`](#npc_give_item) | hand a SDV item from the NPC's signature gift list to the player |
 | [`npc_follow_start`](#npc_follow_start) | ~2 tiles behind, follows across maps |
 | [`npc_follow_stop`](#npc_follow_stop) | cancel follow |
 | [`npc_lead_to`](#npc_lead_to) | lead player to a tile, coordinating with player position |
@@ -175,6 +176,15 @@ heart / etc) for ~1 second. Pure visual flourish — pairs naturally
 with `npc_summon` when an NPC drops in proactively to telegraph "I
 just arrived". Defaults to `sparkle` which maps to the exclamation
 bubble. Does not move the NPC and does not send chat.
+
+### `npc_give_item`
+
+Hand the player a SDV item, in-character as if the NPC pulled it
+out of their pocket. The item ID is a SDV qualified id (e.g.
+`(O)167` Joja Cola, `(O)66` Amethyst). Each NPC has a fixed
+"signature gift items" list in their SOUL.md — the LLM only passes
+ids from that list. See `smartnpc-gift-policy` SKILL for the
+intent-detection + refusal flow. No gold is charged today.
 
 ### `npc_follow_start` / `npc_follow_stop`
 

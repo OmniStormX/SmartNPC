@@ -65,6 +65,7 @@ const (
 	ActionNpcGetPosition    = "npc_get_position"
 	ActionNpcSummon         = "npc_summon"
 	ActionNpcEmote          = "npc_emote"
+	ActionNpcGiveItem       = "npc_give_item"
 	ActionNpcFollowStart    = "npc_follow_start"
 	ActionNpcFollowStop     = "npc_follow_stop"
 	ActionNpcLeadTo         = "npc_lead_to"

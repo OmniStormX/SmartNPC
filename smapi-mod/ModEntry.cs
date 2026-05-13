@@ -100,6 +100,7 @@ namespace SmartNPC.Bridge
                 _router.Register("npc_get_position",     _movement.HandleGetPosition);
                 _router.Register("npc_summon",           _behavior.HandleSummon);
                 _router.Register("npc_emote",            _behavior.HandleEmote);
+                _router.Register("npc_give_item",        _behavior.HandleGiveItem);
                 _router.Register("npc_follow_start",     _behavior.HandleFollowStart);
                 _router.Register("npc_follow_stop",      _behavior.HandleFollowStop);
                 _router.Register("npc_lead_to",          _behavior.HandleLeadTo);

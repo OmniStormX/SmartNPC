@@ -42,6 +42,29 @@ type NpcEmoteOutput struct {
 	Kind string `json:"kind,omitempty" jsonschema:"echo of the emote kind that was actually used (server may substitute on unknown kinds)"`
 }
 
+// ── npc_give_item ──────────────────────────────────────────────
+
+// NpcGiveItemInput asks the mod to drop a Stardew item into the player's
+// inventory, in-character as if the NPC handed it over. Used for the
+// "signature gift" interaction (e.g. XiaMi handing the player a Cola,
+// Abigail offering an amethyst). The set of items each NPC is willing to
+// give is established in that NPC's SOUL.md; this tool does not gate.
+type NpcGiveItemInput struct {
+	NPC    string `json:"npc"               jsonschema:"NPC internal name, e.g. \"XiaMi\""`
+	ItemID string `json:"item_id"           jsonschema:"SDV qualified item id, e.g. \"(O)167\" for Joja Cola, \"(O)66\" for Amethyst. See the NPC's SOUL.md \"Signature gift items\" list for valid choices."`
+	Count  int    `json:"count,omitempty"   jsonschema:"how many to give (default 1, max 5)"`
+}
+
+// NpcGiveItemOutput is the ack with whatever the mod actually placed in
+// the inventory.
+type NpcGiveItemOutput struct {
+	OK      bool   `json:"ok"                 jsonschema:"true if the item landed in the player's inventory"`
+	NPC     string `json:"npc"                jsonschema:"echo of the NPC name"`
+	ItemID  string `json:"item_id,omitempty"  jsonschema:"echo of the resolved qualified item id"`
+	Count   int    `json:"count,omitempty"    jsonschema:"how many actually added (may be less than requested if inventory partially filled)"`
+	Message string `json:"message,omitempty"  jsonschema:"optional human-readable status, e.g. \"inventory_full\""`
+}
+
 // ── npc_follow_start ───────────────────────────────────────────
 
 // NpcFollowStartInput begins a follow behavior.
@@ -156,6 +179,54 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			return nil, NpcEmoteOutput{}, fmt.Errorf("npc_emote: %w", err)
 		}
 		var out NpcEmoteOutput
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &out)
+		}
+		return nil, out, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_give_item",
+		Description: "Place a Stardew item directly into the player's inventory, " +
+			"in-character as if the NPC handed it over.\n\n" +
+			"When to call: ONLY when the player has clearly asked to receive a " +
+			"specific item from the NPC — \"给我一杯可乐\" / \"分我一颗紫水晶\" / " +
+			"\"我能买一块面包吗\" / \"请给我点药\". Both \"索取\" (free) and \"购买\" " +
+			"(payment-context) phrasings count; this tool does NOT charge gold today.\n\n" +
+			"Constraints:\n" +
+			"- The item MUST be on the NPC's \"Signature gift items\" list in their " +
+			"SOUL.md. If the player asks for something not on that list, refuse in " +
+			"character (\"我这没有那个，下次帮你留意\") and do NOT call this tool.\n" +
+			"- Quote the SDV qualified item id (e.g. \"(O)167\" Joja Cola, \"(O)66\" " +
+			"Amethyst) verbatim from your SOUL.md — do NOT invent ids.\n" +
+			"- One call per request. If the player wants more, they ask again next turn.\n" +
+			"- Default count is 1; max is 5. Don't be generous past that — the gift " +
+			"should feel personal.\n" +
+			"- Always pair with a short `chat_say` line acknowledging the handover " +
+			"(\"给，慢慢喝。\" / \"喏。\" / \"小心，别让它碎了。\") so the player has " +
+			"narrative confirmation, not just an inventory pop.\n\n" +
+			"Side-effect: WRITE (adds to inventory, possibly fails if full). " +
+			"Errors: `unknown_npc`, `unknown_item` (qualified id not recognized by " +
+			"SDV's ItemRegistry), `inventory_full` (no slot available), " +
+			"`mod_not_ready`.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGiveItemInput) (*mcp.CallToolResult, NpcGiveItemOutput, error) {
+		if in.NPC == "" {
+			return nil, NpcGiveItemOutput{}, fmt.Errorf("npc is required")
+		}
+		if in.ItemID == "" {
+			return nil, NpcGiveItemOutput{}, fmt.Errorf("item_id is required")
+		}
+		if in.Count <= 0 {
+			in.Count = 1
+		}
+		if in.Count > 5 {
+			in.Count = 5
+		}
+		raw, err := br.Call(ctx, bridge.ActionNpcGiveItem, in)
+		if err != nil {
+			return nil, NpcGiveItemOutput{}, fmt.Errorf("npc_give_item: %w", err)
+		}
+		var out NpcGiveItemOutput
 		if len(raw) > 0 {
 			_ = json.Unmarshal(raw, &out)
 		}

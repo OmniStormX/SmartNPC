@@ -426,6 +426,39 @@ Uses SDV's `Character.doEmote(int)` under the hood.
 - `invalid_params` — missing `npc`
 - `unknown_npc` — NPC not on current save
 
+### `npc_give_item`  (client → server)
+
+Place a SDV item into the player's inventory, in-character as if the
+NPC handed it over. Uses SDV's `ItemRegistry.Create(qualifiedItemId, count)`
+to resolve the item. Each NPC's set of valid items is established in
+their SOUL.md "Signature gift items" section.
+
+**params**
+
+| field     | type   | required | notes                                                                       |
+|-----------|--------|----------|-----------------------------------------------------------------------------|
+| `npc`     | string | yes      | NPC internal name                                                           |
+| `item_id` | string | yes      | SDV qualified item id, e.g. `(O)167` (Joja Cola) or `(O)66` (Amethyst)      |
+| `count`   | int    | no       | how many to give; defaults to 1, server-side clamped to max 5               |
+
+**response.data**
+
+| field     | type   | notes                                                                |
+|-----------|--------|----------------------------------------------------------------------|
+| `ok`      | bool   | `true` once placed in inventory                                      |
+| `npc`     | string | echo                                                                 |
+| `item_id` | string | echo of the resolved qualified item id                               |
+| `count`   | int    | how many were actually added                                         |
+| `message` | string | optional human-readable status, e.g. `"gave 1× (O)167"`              |
+
+**errors**
+
+- `mod_not_ready` — no save loaded
+- `invalid_params` — missing `npc` or `item_id`
+- `unknown_npc` — NPC not on current save
+- `unknown_item` — SDV's `ItemRegistry.Create` could not resolve the qualified id
+- `inventory_full` — player inventory had no slot; SDV dropped the item at the player's feet as a pickup
+
 ### `npc_follow_start`  (client → server)
 
 Begin a follow behavior — the NPC stays ~2 tiles behind the player, crossing

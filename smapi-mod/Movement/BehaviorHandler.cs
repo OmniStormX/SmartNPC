@@ -199,6 +199,84 @@ namespace SmartNPC.Bridge
             return tcs.Task;
         }
 
+        // ── npc_give_item ──────────────────────────────────────────
+
+        public Task<Response> HandleGiveItem(string id, JsonElement @params)
+        {
+            if (!Context.IsWorldReady)
+                return Task.FromResult(Response.Failure(id, "mod_not_ready", "no save loaded"));
+
+            NpcGiveItemParams? p;
+            try { p = JsonSerializer.Deserialize<NpcGiveItemParams>(@params, JsonOpts.Web); }
+            catch (Exception ex) { return Task.FromResult(Response.Failure(id, "invalid_params", ex.Message)); }
+
+            if (p is null || string.IsNullOrWhiteSpace(p.Npc))
+                return Task.FromResult(Response.Failure(id, "invalid_params", "npc is required"));
+            if (string.IsNullOrWhiteSpace(p.ItemId))
+                return Task.FromResult(Response.Failure(id, "invalid_params", "item_id is required"));
+
+            int count = p.Count <= 0 ? 1 : Math.Min(p.Count, 5);
+
+            var tcs = new TaskCompletionSource<Response>();
+            _pending.Enqueue(() =>
+            {
+                try
+                {
+                    NPC? npc = Game1.getCharacterFromName(p.Npc!);
+                    if (npc is null)
+                    {
+                        tcs.TrySetResult(Response.Failure(id, "npc_not_found", $"no NPC named '{p.Npc}'"));
+                        return;
+                    }
+
+                    // SDV 1.6+: ItemRegistry.Create resolves qualified ids like "(O)167"
+                    // or unqualified numeric/string ids. Throws if the id is unknown.
+                    Item? item;
+                    try
+                    {
+                        item = StardewValley.ItemRegistry.Create(p.ItemId!, count);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.TrySetResult(Response.Failure(id, "unknown_item", $"SDV could not resolve item '{p.ItemId}': {ex.Message}"));
+                        return;
+                    }
+
+                    if (item is null)
+                    {
+                        tcs.TrySetResult(Response.Failure(id, "unknown_item", $"SDV returned null for '{p.ItemId}'"));
+                        return;
+                    }
+
+                    // addItemToInventoryBool returns true on success. On false the
+                    // inventory was full and SDV silently spawned the item next to
+                    // the player as a pickup-on-walk-over — for our gift-policy
+                    // semantics we treat that as a soft failure so the NPC can
+                    // acknowledge it in character.
+                    bool placed = Game1.player.addItemToInventoryBool(item);
+                    if (!placed)
+                    {
+                        tcs.TrySetResult(Response.Failure(id, "inventory_full", "no slot for the item; it was dropped at the player's feet"));
+                        return;
+                    }
+
+                    tcs.TrySetResult(Response.Success(id, new GiveItemResult
+                    {
+                        Ok = true,
+                        Npc = p.Npc,
+                        ItemId = p.ItemId,
+                        Count = count,
+                        Message = $"gave {count}× {p.ItemId}",
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetResult(Response.Failure(id, "handler_error", ex.Message));
+                }
+            });
+            return tcs.Task;
+        }
+
         // ── npc_emote ──────────────────────────────────────────────
 
         // SDV's Character.doEmote(int) takes a numeric emote id. These IDs are
@@ -324,6 +402,24 @@ namespace SmartNPC.Bridge
         {
             [JsonPropertyName("npc")]  public string? Npc  { get; set; }
             [JsonPropertyName("kind")] public string? Kind { get; set; }
+        }
+
+        private sealed class NpcGiveItemParams
+        {
+            [JsonPropertyName("npc")]     public string? Npc    { get; set; }
+            [JsonPropertyName("item_id")] public string? ItemId { get; set; }
+            [JsonPropertyName("count")]   public int     Count  { get; set; }
+        }
+
+        private sealed class GiveItemResult
+        {
+            [JsonPropertyName("ok")]      public bool    Ok      { get; set; }
+            [JsonPropertyName("npc")]     public string? Npc     { get; set; }
+            [JsonPropertyName("item_id")] public string? ItemId  { get; set; }
+            [JsonPropertyName("count")]   public int     Count   { get; set; }
+            [JsonPropertyName("message")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+            public string? Message { get; set; }
         }
 
         private sealed class BehaviorResult
