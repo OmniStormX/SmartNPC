@@ -108,7 +108,7 @@ namespace SmartNPC.Bridge
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
                 _ws.Start();
 
-                // Wire up patches and UI.
+                // Wire up patches — opens NpcChatBar on NPC click.
                 NpcDialoguePatch.SetBridge(_ws);
                 NpcDialoguePatch.SetUI(_messageStore, this.OpenChatPanelForNpc);
 
@@ -118,6 +118,9 @@ namespace SmartNPC.Bridge
                 _chat.SetUnreadTracker(_unread);
                 _chat.SetMessageNotifier(this.OnIncomingChatMessage);
 
+                // HUD side button for opening ChatPanel.
+                _sideButton = new ChatSideButton(() => this.OpenChatPanel());
+
                 _chatInput = new ChatInputCapture(this, this.ForwardPlayerMessage);
 
                 // Group chat manager.
@@ -126,7 +129,7 @@ namespace SmartNPC.Bridge
                 // Register SMAPI console debug commands.
                 DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor);
 
-                this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat + mail + UI)", LogLevel.Info);
+                this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat bar + panel + side button)", LogLevel.Info);
             }
             catch (Exception ex)
             {
@@ -270,7 +273,7 @@ namespace SmartNPC.Bridge
             OpenChatPanel(npcName);
         }
 
-        /// <summary>Called when player sends a message from the chat window.</summary>
+        /// <summary>Called when player sends a message from any chat UI.</summary>
         private void OnChatSend(string npcName, string text)
         {
             if (_ws is null) return;

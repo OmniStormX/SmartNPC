@@ -187,7 +187,38 @@ func (c *WSClient) dial(ctx context.Context) error {
 	c.conn = conn
 	c.mu.Unlock()
 	c.log.Info("ws connected", "url", c.opts.URL)
+
+	// Start a keepalive ping loop to prevent idle disconnects from the
+	// C# HttpListener WebSocket server which may timeout idle connections.
+	go c.pingLoop(ctx, conn)
 	return nil
+}
+
+// pingLoop sends a Ping frame every 30 seconds to keep the connection alive.
+// Exits when ctx is cancelled or the connection is replaced.
+func (c *WSClient) pingLoop(ctx context.Context, conn *websocket.Conn) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			current := c.conn
+			c.mu.Unlock()
+			// Stop if connection has been replaced or closed.
+			if current != conn {
+				return
+			}
+			pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (c *WSClient) readLoopForever(ctx context.Context) {
@@ -226,7 +257,7 @@ func (c *WSClient) readLoopOnce(ctx context.Context) {
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
-			c.log.Debug("ws read ended", "err", err)
+			c.log.Warn("ws read ended", "err", err, "detail", fmt.Sprintf("%+v", err))
 			return
 		}
 		c.dispatch(ctx, data)
