@@ -18,8 +18,11 @@ namespace SmartNPC.Bridge
         private const string CmdFriendship = "smartnpc_friendship";
         private const string CmdDebug      = "smartnpc_debug";
         private const string CmdTeleport   = "smartnpc_teleport";
+        private const string CmdProactive  = "smartnpc_proactive";
 
-        public static void Register(ICommandHelper commands, IMonitor log)
+        private static readonly Random s_rng = new();
+
+        public static void Register(ICommandHelper commands, IMonitor log, WebSocketServer ws)
         {
             commands.Add(
                 name: CmdFriendship,
@@ -43,7 +46,19 @@ namespace SmartNPC.Bridge
                     $"Usage: {CmdTeleport} <NpcName>",
                 callback: (_, args) => HandleTeleport(args, log));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}", LogLevel.Trace);
+            commands.Add(
+                name: CmdProactive,
+                documentation:
+                    "Force an immediate proactive-visit trigger, bypassing the " +
+                    "15-minute cron and the 60-minute cool-down. The targeted NPC " +
+                    "runs the smartnpc-proactive-visit SKILL right now (still " +
+                    "honoring player_get_status + game_get_time checks).\n" +
+                    $"Usage:\n" +
+                    $"  {CmdProactive}            Pick a random Agent-managed NPC.\n" +
+                    $"  {CmdProactive} <NpcName>  Target a specific NPC (PascalCase).",
+                callback: (_, args) => HandleProactive(args, log, ws));
+
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -235,5 +250,47 @@ namespace SmartNPC.Bridge
         {
             0 => "up", 1 => "right", 2 => "down", 3 => "left", _ => "?",
         };
+
+        // ── smartnpc_proactive ─────────────────────────────────────────
+
+        private static void HandleProactive(string[] args, IMonitor log, WebSocketServer ws)
+        {
+            var all = AgentNpcRegistry.GetAll().ToList();
+            if (all.Count == 0)
+            {
+                log.Log("no Agent-managed NPCs registered; nothing to trigger.", LogLevel.Warn);
+                return;
+            }
+
+            string pick;
+            if (args.Length >= 1 && !string.IsNullOrWhiteSpace(args[0]))
+            {
+                pick = args[0];
+                // Case-insensitive match, return the canonical PascalCase form.
+                string? match = all.FirstOrDefault(n => string.Equals(n, pick, StringComparison.OrdinalIgnoreCase));
+                if (match is null)
+                {
+                    log.Log(
+                        $"NPC '{pick}' is not Agent-managed. Known: {string.Join(", ", all)}",
+                        LogLevel.Warn);
+                    return;
+                }
+                pick = match;
+            }
+            else
+            {
+                pick = all[s_rng.Next(all.Count)];
+            }
+
+            // Fire a ws event; hermesrelay picks it up via the `npc` field and
+            // POSTs to that profile's Hermes Gateway. Fire-and-forget — the
+            // real signal to the operator is the NPC showing up in-game.
+            _ = ws.BroadcastEvent("debug_proactive_trigger", new { npc = pick });
+            log.Log(
+                $"[smartnpc_proactive] forced proactive-visit for {pick} — " +
+                $"watch the mcp + hermes logs for the resulting npc_summon / " +
+                $"npc_emote / chat_say calls.",
+                LogLevel.Info);
+        }
     }
 }

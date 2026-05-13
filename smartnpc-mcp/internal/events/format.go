@@ -106,6 +106,22 @@ func FormatForHermes(name string, data json.RawMessage) string {
 		if err := json.Unmarshal(data, &p); err == nil {
 			return fmt.Sprintf("NPC %s broadcast a %s event.", p.From, p.Kind)
 		}
+	case bridge.EventDebugProactiveTrigger:
+		var p DebugProactiveTrigger
+		if err := json.Unmarshal(data, &p); err == nil && p.NPC != "" {
+			return fmt.Sprintf(
+				"[debug proactive-visit force=true target=%s] The operator "+
+					"forced an immediate proactive-visit trigger for testing. "+
+					"Follow smartnpc-proactive-visit but SKIP steps 1 and 2 "+
+					"(cool-down and dice — this run is intentional, not "+
+					"scheduled). Do steps 3-5 normally: check "+
+					"player_get_status, check game_get_time politeness "+
+					"window, then npc_summon+npc_emote(sparkle)+chat_say. "+
+					"Do NOT write a 'proactive-visit: last=' memory line "+
+					"for this run — operator testing should not poison the "+
+					"60-minute cool-down.",
+				p.NPC)
+		}
 	}
 
 	return fmt.Sprintf("Game event %q occurred.", name)

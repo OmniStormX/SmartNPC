@@ -125,7 +125,7 @@ namespace SmartNPC.Bridge
                 _groupMgr = new GroupChatManager(_messageStore, _ws);
 
                 // Register SMAPI console debug commands.
-                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor);
+                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws);
 
                 this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat + mail + UI)", LogLevel.Info);
             }

@@ -40,6 +40,15 @@ const (
 	// See internal/tools/npc_message.go.
 	EventNpcMessage          = "npc_message"
 	EventNpcBroadcast        = "npc_broadcast"
+
+	// Debug — fired by the SMAPI mod's `sn_proactive` console command.
+	// Carries `{npc: "<PascalCase>"}`. Format layer renders it as a
+	// system-prompt nudge that makes the target NPC run the
+	// smartnpc-proactive-visit SKILL immediately, skipping the dice
+	// roll and the 60-minute cool-down. Intended for operators
+	// testing proactive behavior without waiting for the scheduled
+	// */15 minute cron.
+	EventDebugProactiveTrigger = "debug_proactive_trigger"
 )
 
 // ActionName constants — the canonical set of client-issued requests.

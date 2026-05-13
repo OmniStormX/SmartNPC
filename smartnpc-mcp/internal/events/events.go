@@ -115,6 +115,16 @@ type NpcBroadcast struct {
 	Timestamp int64           `json:"timestamp"` // unix millis when broadcast
 }
 
+// DebugProactiveTrigger — operator-initiated forced trigger of the
+// smartnpc-proactive-visit SKILL for a named NPC. Emitted by the mod's
+// `sn_proactive` SMAPI console command. The `npc` field drives
+// hermesrelay routing; the format layer renders a system nudge that
+// tells the target profile to skip the dice roll + cool-down and go
+// straight to the availability/politeness checks.
+type DebugProactiveTrigger struct {
+	NPC string `json:"npc"` // PascalCase internal name, e.g. "Abigail"
+}
+
 // EventDescriptor is the uniform envelope all consumers see (identical to
 // the payload tools.MakeEventForwarder writes into MCP logging notifications).
 // Re-declared here so consumers don't need to import internal/tools.
