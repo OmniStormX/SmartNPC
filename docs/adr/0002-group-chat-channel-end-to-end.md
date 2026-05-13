@@ -52,26 +52,32 @@ The rendered group-context line (pinned in
 [`events/format.go::formatChatReceived`](../../smartnpc-mcp/internal/events/format.go)):
 
 ```
-[group_chat group_id="<id>"] Player says in the group: <text> (reply via chat_say with channel="group" and group_id="<id>")
+[group_chat group_id="<id>"] Player says in the group: <text> (any chat_say reply must include channel="group" and group_id="<id>"; tool calls and silence remain valid)
 ```
 
 The prefix is a structured tag (`[group_chat group_id=...]`) followed by
-the player line, and a parenthetical action hint that names the exact
-`chat_say` arguments the profile must mirror back. The hint is
-intentionally verbose — ADR-0002's risk section flagged that a profile
-could silently regress to private replies if the prompt did not make
-`channel="group"` visually obvious. The legacy private rendering
+the player line and a conditional parenthetical: the hint binds **only
+the arguments of `chat_say` if the profile decides to speak**, not the
+decision to speak. Earlier wording (`(reply via chat_say with ...)`)
+was observed to short-circuit the profile's normal tool-evaluation
+flow — the LLM read it as "next step is `chat_say`" and skipped
+`game_*` / `npc_send_message` / movement tools that it would have
+called in private chat. The reworded hint preserves the
+`channel="group"` visual prominence that the original risk section
+required, while explicitly carving out tool calls and silence as still
+valid responses. The legacy private rendering
 (`Someone in the chat says: <text>`) is retained for
 `source=player` / empty / missing-group-id cases as a defensive
 fallback.
 
-A small, generic SKILL (`group-chat-policy/SKILL.md`) added to all 6
-profiles teaches: *"if the inbound event mentions group chat
-`<group_id>`, your `chat_say` MUST set `channel="group"` and
-`group_id=<that id>`; otherwise omit `channel` (defaults to private)."*
-This skill carries no NPC-specific literals and benefits from F1's
-placeholder mechanism without requiring any per-profile customization
-(see ADR-0003).
+A small, generic SKILL (`group-chat-reply/SKILL.md`) added to all 6
+profiles teaches the same contract in long form: group context only
+constrains `chat_say` arguments — `game-tool-policy`'s
+query-before-claiming, `inter-npc-message`'s peer-DM routing, and
+movement tools all still apply identically to private chat. This skill
+carries no NPC-specific literals beyond `{{NPC_NAME}}` in metadata
+and benefits from F1's placeholder mechanism without requiring any
+per-profile customization (see ADR-0003).
 
 ## Alternatives considered
 

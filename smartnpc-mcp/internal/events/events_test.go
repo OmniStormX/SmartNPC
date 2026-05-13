@@ -126,6 +126,15 @@ func TestFormatForHermes_ChatReceivedGroupSource(t *testing.T) {
 			t.Errorf("FormatForHermes(chat_received, group) = %q; want contains %q", got, w)
 		}
 	}
+	// Wording must NOT mandate chat_say — tool evaluation (game_*,
+	// npc_send_message, etc.) and silence remain valid responses to a
+	// group message. If the contract gets reworded into "reply via
+	// chat_say" again, this assertion catches it.
+	for _, banned := range []string{"reply via chat_say", "you must reply"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("wording must not mandate chat_say; got %q (banned: %q)", got, banned)
+		}
+	}
 }
 
 func TestFormatForHermes_ChatReceivedGroupEmptyID(t *testing.T) {

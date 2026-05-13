@@ -56,7 +56,8 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			if p.Source == "player_group" && p.GroupID != "" {
 				return fmt.Sprintf(
 					"[group_chat group_id=%q] Player says in the group: %s "+
-						"(reply via chat_say with channel=\"group\" and group_id=%q)",
+						"(any chat_say reply must include channel=\"group\" and "+
+						"group_id=%q; tool calls and silence remain valid)",
 					p.GroupID, p.Text, p.GroupID)
 			}
 			return fmt.Sprintf("Someone in the chat says: %s", p.Text)
