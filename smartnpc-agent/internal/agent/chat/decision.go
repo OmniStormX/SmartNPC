@@ -35,6 +35,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -112,16 +113,9 @@ func (a *Agent) respondDual(ctx context.Context, userText string) (string, error
 		a.cfg.Logger.Warn("memory start turn failed", "err", err)
 	}
 
-	// Apply behavior-intent FIRST (summon/follow/lead/stop); if handled it
-	// short-circuits move-intent so "带我去X" isn't double-dispatched.
-	effectiveUserText, handledByBehavior := a.applyBehaviorIntent(ctx, userText)
-	if !handledByBehavior {
-		// Apply move-intent short-circuit. This gives us a guaranteed
-		// movement execution for named destinations even if the decision layer
-		// misses the signal. The resulting user text carries the "[系统：…]"
-		// hint that both layers will see.
-		effectiveUserText = a.applyMoveIntent(ctx, userText)
-	}
+	// All tool invocations are delegated to the decision LLM's judgment.
+	// No keyword-based pre-processing — the LLM decides what actions to take.
+	effectiveUserText := userText
 
 	// Mirror the (annotated) user turn before any LLM call.
 	a.memoryAppend(convID, "user", effectiveUserText, nil)
@@ -207,6 +201,18 @@ func (a *Agent) runDecisionStage(
 			return results, nil
 		}
 
+		// Log the structured tool_calls from the decision LLM for debugging.
+		for i, tc := range resp.ToolCalls {
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			a.cfg.Logger.Info("decision tool_call",
+				"round", round,
+				"index", i,
+				"id", tc.ID,
+				"name", tc.Name,
+				"arguments", string(argsJSON),
+			)
+		}
+
 		// Append the assistant's tool-call message so subsequent rounds can
 		// reason about the prior calls; OpenAI-style dialogs require this.
 		msgs = append(msgs, llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls})
@@ -225,6 +231,14 @@ func (a *Agent) runDecisionStage(
 				Name:       tc.Name,
 				ToolCallID: tc.ID,
 			})
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			a.cfg.Logger.Info("decision tool result",
+				"name", tc.Name,
+				"call_id", tc.ID,
+				"arguments", string(argsJSON),
+				"success", err == nil,
+				"result", truncateStr(out, 500),
+			)
 		}
 	}
 	a.cfg.Logger.Debug("decision stage exhausted rounds", "rounds", maxDecisionRounds, "calls", len(results))
