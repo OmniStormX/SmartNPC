@@ -37,13 +37,13 @@ Trigger phrases (Chinese / English): "帮我问 / 去问问 / ask X about Y",
 - Repeating the same `npc_send_message` more than once per player turn
   for the same recipient + intent.
 
-After sending, your **own** reply can paraphrase ("I'll let Abigail
+After sending, your **own** reply can paraphrase ("I'll let {{PEER_A_NAME}}
 know") — but keep it short and non-committal until you actually hear
 back.
 
 ## When YOU are the receiver
 
-The relay only wakes you with a one-line summary like *"NPC Abigail says
+The relay only wakes you with a one-line summary like *"NPC {{PEER_A_NAME}} says
 to you (privately): ..."* — it does **not** include the message `kind`,
 `id`, or other structured fields. You must pull those yourself.
 
@@ -71,13 +71,13 @@ to you (privately): ..."* — it does **not** include the message `kind`,
    |---|---|---|
    | `query` | Compose the answer in character, then `npc_send_message(to=<from>, kind="reply", text=<your answer>)`. **Do NOT `chat_say` to the player** — they don't yet know this peer asked you anything; speaking unprompted is jarring. The asker will paraphrase your reply on their next turn. | Same: just `npc_send_message(kind="reply", ...)`. No `chat_say` either way. |
    | `behavioral` | Read `text`, decide which game tool fits (`npc_summon`, `npc_move_to`, `npc_lead_to`, `npc_face_direction`, `mail_send`, ...), call it. Then ONE short `chat_say` in character ("好，这就来"). Then `npc_send_message(to=<from>, kind="reply", text="<short confirmation>")`. | Run the tool if it makes sense without the player watching (e.g. `npc_move_to`). **Skip `chat_say`.** Still send the `reply` so the asker can update the player. Save the moment to memory ("玩家通过 <from> 让我去 X，玩家不在场，我自己过去了"). |
-   | `reply` | A peer is answering your earlier `query` or confirming your `behavioral` request. Fold the contents into your **next** reply to the player (e.g. "Abigail says they're on the way"). Do NOT counter-reply, do NOT `chat_say` right now if the player isn't here. | Save to memory only ("Abigail 回复：图书馆下午读书会"). Surface it next time the player shows up. |
+   | `reply` | A peer is answering your earlier `query` or confirming your `behavioral` request. Fold the contents into your **next** reply to the player (e.g. "{{PEER_A_NAME}} says they're on the way"). Do NOT counter-reply, do NOT `chat_say` right now if the player isn't here. | Save to memory only ("{{PEER_A_NAME}} 回复：图书馆下午读书会"). Surface it next time the player shows up. |
 
 4. **Persist what matters.** If the player isn't audible, or if the
    message will still matter on a later turn (delegation, promise,
    schedule shift), commit a short note via the `memory` toolset before
    you ack — see `smartnpc-memory-policy` for what to write. Example:
-   "Spring 5 下午：Haley 替玩家来问我今晚去不去墓地。"
+   "Spring 5 下午：{{PEER_B_NAME}} 替玩家来问我今晚去不去墓地。"
 
 5. **Ack every item you handled.** Call
    `npc_inbox_ack(npc=<your own name>, ids=[<id1>, <id2>, ...])` so the
@@ -96,53 +96,53 @@ that loops both profiles indefinitely.
 
 ### Example A — query, peer doesn't speak to player
 
-> Player → Penny: "阿比盖尔今天打算去哪里？"
+> Player → {{NPC_NAME}}: "{{PEER_A_DISPLAY}}今天打算去哪里？"
 
-Penny calls:
+{{NPC_NAME}} calls:
 ```
-npc_send_message(to="Abigail", kind="query",
+npc_send_message(to="{{PEER_A_NAME}}", kind="query",
                  text="玩家想知道你今天打算去哪里",
                  reply_expected=true)
 ```
-Penny's own `chat_say`: "等等，我帮你问问阿比盖尔。"
+{{NPC_NAME}}'s own `chat_say`: "等等，我帮你问问{{PEER_A_DISPLAY}}。"
 
-Abigail wakes from `event_npc_message`, calls `npc_inbox_get`, sees
-`kind="query"`. Abigail checks audibility — player is in Penny's map, not
-Abigail's — **not audible to Abigail**. Abigail only sends:
+{{PEER_A_NAME}} wakes from `event_npc_message`, calls `npc_inbox_get`, sees
+`kind="query"`. {{PEER_A_NAME}} checks audibility — player is in {{NPC_NAME}}'s map, not
+{{PEER_A_NAME}}'s — **not audible to {{PEER_A_NAME}}**. {{PEER_A_NAME}} only sends:
 ```
-npc_send_message(to="Penny", kind="reply",
+npc_send_message(to="{{NPC_NAME}}", kind="reply",
                  text="图书馆下午读书会")
 ```
-then `npc_inbox_ack(ids=[<id>])`. Abigail does **not** `chat_say`.
+then `npc_inbox_ack(ids=[<id>])`. {{PEER_A_NAME}} does **not** `chat_say`.
 
-Penny's next turn: "阿比盖尔说下午要去图书馆。"
+{{NPC_NAME}}'s next turn: "{{PEER_A_DISPLAY}}说下午要去图书馆。"
 
 ### Example B — behavioral, audible
 
-> Player → Penny: "让黑利到我这儿来"
+> Player → {{NPC_NAME}}: "让{{PEER_B_DISPLAY}}到我这儿来"
 
-Penny calls:
+{{NPC_NAME}} calls:
 ```
-npc_send_message(to="Haley", kind="behavioral",
+npc_send_message(to="{{PEER_B_NAME}}", kind="behavioral",
                  text="玩家想请你过去找TA",
                  reply_expected=true)
 ```
-Penny's own `chat_say`: "好啊，我去喊黑利。"
+{{NPC_NAME}}'s own `chat_say`: "好啊，我去喊{{PEER_B_DISPLAY}}。"
 
-Haley wakes, `npc_inbox_get` returns `kind="behavioral"`. Haley
+{{PEER_B_NAME}} wakes, `npc_inbox_get` returns `kind="behavioral"`. {{PEER_B_NAME}}
 checks audibility — same map, not busy. Calls
-`npc_summon(npc="Haley")`, then `chat_say`: "嘿，我这就过来。", then
+`npc_summon(npc="{{PEER_B_NAME}}")`, then `chat_say`: "嘿，我这就过来。", then
 ```
-npc_send_message(to="Penny", kind="reply", text="OK on my way")
+npc_send_message(to="{{NPC_NAME}}", kind="reply", text="OK on my way")
 ```
 + `npc_inbox_ack(ids=[<id>])`.
 
 ### Example C — behavioral, player walked off
 
-Same setup, but Haley's map check shows player is now in town.
-Haley still calls `npc_summon` (action makes sense even unobserved),
+Same setup, but {{PEER_B_NAME}}'s map check shows player is now in town.
+{{PEER_B_NAME}} still calls `npc_summon` (action makes sense even unobserved),
 **skips** `chat_say`, sends the `reply`, writes a memory note
-"Spring 5: 玩家通过 Penny 让我去找TA，但我到的时候人已经走了，下次
+"Spring 5: 玩家通过 {{NPC_NAME}} 让我去找TA，但我到的时候人已经走了，下次
 见面提一句。", and acks. No empty room shouting.
 
 ## Failure modes

@@ -8,6 +8,33 @@ ships a versioned source at `hermes/profiles/<name>/` plus
 This doc walks the **anatomy** of a profile, the **install loop**,
 and the **template** for adding a new NPC.
 
+## Profile rendering (render-time substitution)
+
+Shared SKILL content lives in
+[`hermes/profiles/_master/`](../hermes/profiles/_master/) and is
+rendered into each per-NPC profile dir by
+[`scripts/render_profiles.sh`](../scripts/render_profiles.sh). All 6
+profiles — xiami included — are rendered the same way.
+
+**To edit shared SKILL / overlay / cron content**: edit the
+`_master/` template only. Run
+`bash scripts/render_profiles.sh` (inside WSL or any bash shell with
+GNU sed) to propagate changes to all 6 profiles. **Do not edit
+rendered per-NPC files directly** (`skills/`, `config-overlay.yaml`,
+`cron-recipes.md`) — they are generated artifacts and your changes
+will be overwritten on the next render.
+
+**To edit profile-specific content** — namely `SOUL.md`, which stays
+per-NPC and hand-written — edit the per-profile file. `SOUL.md` does
+not live in `_master/` and is never touched by the render script.
+
+The eight render-time placeholders (`{{NPC_NAME}}`, `{{NPC_DISPLAY}}`,
+`{{NPC_DIR}}`, `{{NPC_PORT}}`, `{{PEER_A_NAME}}`, `{{PEER_A_DISPLAY}}`,
+`{{PEER_B_NAME}}`, `{{PEER_B_DISPLAY}}`) and their per-NPC values are
+documented in
+[`docs/architecture.md` § Profile cloning mechanism](./architecture.md#profile-cloning-mechanism)
+and [ADR-0003](./adr/0003-npc-name-placeholder-cloning.md).
+
 ## Anatomy
 
 ```

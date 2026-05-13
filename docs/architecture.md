@@ -125,6 +125,8 @@ isolated; the `instructions` field re-asserts persona on every turn.
                                  - decides chat_say
                                        │
                                        │ chat_say(speaker, text)
+                                       │ (group chat: also channel="group" + group_id;
+                                       │  see ADR-0002)
                                        ▼
                                smartnpc-mcp ws action → smapi-mod →
                                        chat bubble in-game
@@ -137,6 +139,47 @@ isolated; the `instructions` field re-asserts persona on every turn.
 | `smapi-mod` AudibleNPCResolver | Player-typed legacy chat with no addressee → nearest Agent-managed NPC within 8 tiles |
 | `smartnpc-mcp` hermesrelay `--hermes-npc` | Events (mod-sourced **and** synthetic) whose `npc` / `to` / `target` matches this profile's NPC name; broadcast events (no NPC field) pass through |
 | Hermes conversation | Per-NPC dialog memory isolation via the `conversation:` field |
+
+## Profile cloning mechanism
+
+The 6 NPC profiles under `hermes/profiles/` share most SKILL content
+but each must self-narrate in its own NPC's voice and write to its
+own memory namespace. Shared artifacts live in
+[`hermes/profiles/_master/`](../hermes/profiles/_master/) (the master
+template) and are rendered into each per-NPC profile dir by
+[`scripts/render_profiles.sh`](../scripts/render_profiles.sh) via GNU
+`sed` substitution of Mustache-style `{{NAME}}` tokens.
+
+**Master scope**: `_master/` holds shared `config-overlay.yaml`,
+`cron-recipes.md`, and `skills/smartnpc/{game-tool-policy,inter-npc-message,memory-policy,proactive-greeting}/SKILL.md`.
+It deliberately does **not** hold `SOUL.md` — each NPC keeps its own
+hand-written persona file, never templated.
+
+Eight placeholders, all substituted at render time from a hardcoded
+TABLE in `scripts/render_profiles.sh`:
+
+| Placeholder | Example (abigail) | Use site |
+|---|---|---|
+| `{{NPC_NAME}}` | `Abigail` | PascalCase internal name; valid `speaker:` arg |
+| `{{NPC_DISPLAY}}` | `阿比盖尔` | CN display name for prose |
+| `{{NPC_DIR}}` | `abigail` | profile dir; `memories/<dir>/`, `conversation:` |
+| `{{NPC_PORT}}` | `8643` | Hermes Gateway `API_SERVER_PORT` |
+| `{{PEER_A_NAME}}` | `Penny` | first example peer in delegate flows |
+| `{{PEER_A_DISPLAY}}` | `潘妮` | first peer CN display |
+| `{{PEER_B_NAME}}` | `Sebastian` | second example peer |
+| `{{PEER_B_DISPLAY}}` | `塞巴斯蒂安` | second peer CN display |
+
+`scripts/render_profiles.sh` is idempotent: re-running produces the
+same tree. xiami is rendered the same way the other 5 are (no
+master-is-also-runnable asymmetry); the canonical sanity check is
+`git diff hermes/profiles/xiami/` returns empty after a render.
+
+`hermes/install.sh` is unchanged — it still owns the WSL-side copy
+step; rendering happens earlier (and separately) in the author
+workflow.
+
+See [ADR-0003](./adr/0003-npc-name-placeholder-cloning.md) for the
+rejected alternatives (runtime resolution, manual edit, xiami-as-master).
 
 ## Process layout (production)
 

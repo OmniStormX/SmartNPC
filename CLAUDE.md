@@ -118,7 +118,8 @@ bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
 - `smartnpc-agent/internal/agent/` — NPC agent loop 核心（含 dual-LLM、多 NPC router）⚠️ **已冻结**
 - `smartnpc-agent/internal/llm/` — LLM provider 抽象 + OpenAI 实现 ⚠️ **已冻结**
 - `smartnpc-agent/personas/` — NPC 人格模板（多 NPC，如 `xiami_soul.md` 等）
-- `hermes/profiles/xiami/` — Hermes NPC profile（`SOUL.md` + `config-overlay.yaml` + `skills/`）
+- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。
+- `hermes/profiles/<npc>/` — 单个 NPC profile。`SOUL.md` 手写保留，其余由 `_master/` 渲染生成。6 个 NPC：`xiami` / `abigail` / `haley` / `harvey` / `penny` / `sebastian`。
 - `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
 - `smapi-mod/NPC/` — 多 NPC 路由（`AudibleNPCResolver.cs` + `TurnQueue.cs`）
 - `smapi-mod/{Query,Perception,Movement,Mail,Chat,UI}/` — 按 domain 拆分的游戏侧 handler

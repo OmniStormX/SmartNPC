@@ -1,4 +1,4 @@
-# SmartNPC Cron Templates (XiaMi)
+# SmartNPC Cron Templates (Penny)
 
 Hermes ships a built-in scheduler (`hermes cron`) that fires
 self-contained prompts into a fresh agent session at a given time or
@@ -12,28 +12,28 @@ tools — including `npc_send_message` and the player-availability
 check — exactly like a player-initiated turn.
 
 > Cron jobs live in Hermes's `state.db`, not on disk as files. The
-> snippets below are **commands you run once** in WSL with the xiami
+> snippets below are **commands you run once** in WSL with the penny
 > profile active. Re-run after a `state.db` reset.
 
 ## Required `--workdir`
 
 Hermes cron sessions don't auto-load the profile's working directory.
-Pass `--workdir /home/synchen/.hermes/profiles/xiami` so the session
-sees XiaMi's SOUL.md and skills.
+Pass `--workdir /home/synchen/.hermes/profiles/penny` so the session
+sees Penny's SOUL.md and skills.
 
 ## Recipe 1 — Proactive "3-day no contact" check-in
 
-Fires daily at 09:07 local. Asks XiaMi to check whether the player
-hasn't talked to XiaMi in a while, and if so, send a quiet hello
+Fires daily at 09:07 local. Asks Penny to check whether the player
+hasn't talked to Penny in a while, and if so, send a quiet hello
 message through `chat_say` only if the player isn't busy.
 
 ```bash
-hermes -p xiami cron create '7 9 * * *' \
-  --name xiami-checkin-3day \
-  --workdir ~/.hermes/profiles/xiami \
+hermes -p penny cron create '7 9 * * *' \
+  --name penny-checkin-3day \
+  --workdir ~/.hermes/profiles/penny \
   --skill smartnpc-game-tool-policy \
   --skill smartnpc-memory-policy \
-  '你是 XiaMi。检查你长期记忆，最近一次和玩家说话是什么时候。
+  '你是 Penny。检查你长期记忆，最近一次和玩家说话是什么时候。
 如果超过 3 个游戏日没互动：
   1. 调 player_get_status —— busy=true 则什么都不做并退出。
   2. 调 game_get_time —— 只有早上 7-11 点才打招呼，其他时间安静。
@@ -49,13 +49,13 @@ Skipping `chat_say` — this is internal state only. Useful for memory-
 policy SKILL.md "what to commit" guidance.
 
 ```bash
-hermes -p xiami cron create '0 6 * * *' \
-  --name xiami-day-mood \
-  --workdir ~/.hermes/profiles/xiami \
+hermes -p penny cron create '0 6 * * *' \
+  --name penny-day-mood \
+  --workdir ~/.hermes/profiles/penny \
   --skill smartnpc-memory-policy \
-  '你是 XiaMi。一天的开始。
+  '你是 Penny。一天的开始。
 调 game_get_time + game_get_weather，结合最近的玩家互动记忆，
-用一句 XiaMi 的语气在 memory 里记一条今日感想。不要 chat_say。'
+用一句 Penny 的语气在 memory 里记一条今日感想。不要 chat_say。'
 ```
 
 ## Recipe 3 — Bedtime sweep (commit unsaved facts)
@@ -64,11 +64,11 @@ Every in-game evening, look back over the day's conversation history
 and commit anything memory-worthy.
 
 ```bash
-hermes -p xiami cron create '0 22 * * *' \
-  --name xiami-bedtime-sweep \
-  --workdir ~/.hermes/profiles/xiami \
+hermes -p penny cron create '0 22 * * *' \
+  --name penny-bedtime-sweep \
+  --workdir ~/.hermes/profiles/penny \
   --skill smartnpc-memory-policy \
-  '你是 XiaMi。一天结束了。
+  '你是 Penny。一天结束了。
 回看今天和玩家的对话，按 memory-policy 抽出 0-3 条值得记的事实，
 写进 memory。不要 chat_say。'
 ```
@@ -76,9 +76,9 @@ hermes -p xiami cron create '0 22 * * *' \
 ## Listing / removing jobs
 
 ```bash
-hermes -p xiami cron list
-hermes -p xiami cron status
-hermes -p xiami cron remove xiami-checkin-3day
+hermes -p penny cron list
+hermes -p penny cron status
+hermes -p penny cron remove penny-checkin-3day
 ```
 
 ## How proactive `chat_say` reaches the game

@@ -1,6 +1,6 @@
-# Config overlay for hermes/profiles/harvey/config.yaml
+# Config overlay for hermes/profiles/{{NPC_DIR}}/config.yaml
 #
-# Two blocks that must be merged into ~/.hermes/profiles/harvey/config.yaml:
+# Two blocks that must be merged into ~/.hermes/profiles/{{NPC_DIR}}/config.yaml:
 #
 #   1. mcp_servers  — so Hermes connects to smartnpc-mcp's MCP server
 #                     and discovers game tools (chat_say, game_get_time, ...).
@@ -14,7 +14,7 @@
 # Prerequisites:
 #   - smartnpc-mcp running in --http :3000 mode (task mcp:run)
 #   - Hermes Gateway started against this profile:
-#       hermes -p harvey gateway run --accept-hooks
+#       hermes -p {{NPC_DIR}} gateway run --accept-hooks
 
 mcp_servers:
   smartnpc_game:
@@ -25,7 +25,7 @@ mcp_servers:
     connect_timeout: 10
     tools:
       # chat_say stays available — it's the visible-to-player dialogue
-      # channel and the only sanctioned way for Hermes to speak as Harvey.
+      # channel and the only sanctioned way for Hermes to speak as {{NPC_NAME}}.
       # Add tool names here to hide them from this NPC.
       exclude: []
       resources: false
@@ -36,10 +36,10 @@ mcp_servers:
 # /v1/responses (OpenAI Responses API shape) on API_SERVER_PORT.
 #
 # IMPORTANT: each profile that wants its own gateway needs a unique port.
-# If you run harvey and another profile gateway simultaneously, bump the
+# If you run {{NPC_DIR}} and another profile gateway simultaneously, bump the
 # port here.
 API_SERVER_ENABLED: true
 API_SERVER_KEY: smartnpc-test-key
 API_SERVER_HOST: 0.0.0.0
-API_SERVER_PORT: 8645
-API_SERVER_MODEL_NAME: harvey
+API_SERVER_PORT: {{NPC_PORT}}
+API_SERVER_MODEL_NAME: {{NPC_DIR}}

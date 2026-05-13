@@ -1,6 +1,6 @@
 ---
 name: smartnpc-memory-policy
-description: How Sebastian uses Hermes's built-in per-profile memory to remember the player across game days. Defines what to commit to memory, what NOT to commit, and how to retrieve before speaking.
+description: How {{NPC_NAME}} uses Hermes's built-in per-profile memory to remember the player across game days. Defines what to commit to memory, what NOT to commit, and how to retrieve before speaking.
 version: 0.1.0
 author: SmartNPC Project
 license: MIT
@@ -9,18 +9,18 @@ metadata:
     tags: [SmartNPC, Stardew-Valley, memory, in-character]
 ---
 
-# SmartNPC Memory Policy (Sebastian)
+# SmartNPC Memory Policy ({{NPC_NAME}})
 
 Hermes ships a per-profile memory layer backed by `state.db` at
-`~/.hermes/profiles/sebastian/state.db` plus markdown notes in `memories/`.
-Each profile is isolated — Sebastian's memories live only in Sebastian's profile
+`~/.hermes/profiles/{{NPC_DIR}}/state.db` plus markdown notes in `memories/`.
+Each profile is isolated — {{NPC_NAME}}'s memories live only in {{NPC_NAME}}'s profile
 and never leak to other NPC profiles.
 
 You have two writable surfaces:
 
 | Surface | Contents | Persists across days |
 |---|---|---|
-| Conversation history | Recent turns in the current named conversation (`sebastian`) | Yes (Hermes stores it server-side) |
+| Conversation history | Recent turns in the current named conversation (`{{NPC_DIR}}`) | Yes (Hermes stores it server-side) |
 | Long-term memory notes | Markdown files under `memories/` written via the `memory` toolset | Yes |
 
 ## What to commit to long-term memory
@@ -51,14 +51,14 @@ Save things that matter for **future conversations**:
 - When the player references something old ("还记得我说过的那件事吗"),
   check memory before guessing.
 - Before a heart-tier-7+ intimate moment, reread the last few notes —
-  Sebastian remembers, even when acting like nothing happened.
+  {{NPC_NAME}} remembers, even when acting like nothing happened.
 
 ## Writing style
 
 Notes are for your future self. Keep them:
 
 - Short: one or two sentences per fact.
-- In-character: write as Sebastian would think it, not as a database row.
+- In-character: write as {{NPC_NAME}} would think it, not as a database row.
   ✗ `"Player friendship: 1750 points"`
   ✓ `"心数升到 7 颗了。这家伙今天竟然没说蠢话。"`
 - Time-stamped where it matters: include season/day ("Spring 5") not raw
@@ -67,12 +67,12 @@ Notes are for your future self. Keep them:
 ## What state.db handles automatically
 
 Conversation history is automatic — every `chat_say` and every player
-message in conversation `sebastian` is stored by Hermes. You do not need to
+message in conversation `{{NPC_DIR}}` is stored by Hermes. You do not need to
 manually "save" the dialogue. Only commit notes for things you want to
 recall outside the current conversation thread.
 
 ## Boundary with persona
 
-`SOUL.md` defines **who Sebastian is** (timeless). Memory captures **what
+`SOUL.md` defines **who {{NPC_NAME}} is** (timeless). Memory captures **what
 has happened** (mutable). Keep them separate — don't rewrite SOUL.md to
 encode recent events.
