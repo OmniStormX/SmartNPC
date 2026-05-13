@@ -40,9 +40,14 @@ type ChatMessage struct {
 // ChatReceived — legacy generic chat channel. Emitted by the old single
 // chat window and group chat. Not recommended for new consumers; prefer
 // ChatMessage for targeted player→NPC conversation.
+//
+// Source enum:
+//   - "player"        — player typed in the (non-group) public chat window
+//   - "player_group"  — player typed in a group-chat session; GroupID is set
 type ChatReceived struct {
-	Text   string `json:"text"`
-	Source string `json:"source"`
+	Text    string `json:"text"`
+	Source  string `json:"source"`
+	GroupID string `json:"group_id,omitempty"` // present iff source == "player_group"
 }
 
 // NpcInteract — player clicked an Agent-managed NPC sprite. Emitted by

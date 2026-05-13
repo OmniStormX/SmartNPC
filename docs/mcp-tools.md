@@ -81,8 +81,16 @@ profile to emit visible dialogue. Plain UTF-8 text, no markdown, no
 emoji-as-image, 1-3 short sentences. Attribute via `speaker` (NPC
 display name).
 
-Inputs: `speaker`, `text`, optional `color`. Errors: `mod_not_ready`,
-`invalid_params`.
+Inputs: `speaker`, `text`, optional `color`, optional `channel`,
+optional `group_id`. Errors: `mod_not_ready`, `invalid_params`.
+
+**Group chat**: when replying to a `chat_received` event with
+`source="player_group"`, you MUST set `channel="group"` and
+`group_id=<the inbound group_id>`. Omitting either field causes the
+mod to dispatch the reply to the private toast/panel instead of the
+group panel — replies leak across channels. For private 1:1 chat,
+omit `channel` (defaults to private). See
+[ADR-0002](./adr/0002-group-chat-channel-end-to-end.md).
 
 ### `mail_send`
 

@@ -47,8 +47,12 @@ func registerChat(s *mcp.Server, br *bridge.WSClient) {
 			"  name and will silently misroute your reply to a non-existent panel. When in doubt, " +
 			"  use the same name the inbound event's `npc` field used.\n" +
 			"- `color` is optional cosmetic (yellow default). Use sparingly for emphasis.\n" +
-			"- `channel` defaults to private (1-on-1). Set `channel=\"group\"` with `group_id` " +
-			"  ONLY when replying inside an active group chat; otherwise leave empty.\n\n" +
+			"- `channel` defaults to private (1-on-1). When the inbound event was a " +
+			"  `chat_received` with `source=\"player_group\"` (the rendered prompt prefix " +
+			"  starts with `[group_chat group_id=...]`), you MUST set `channel=\"group\"` " +
+			"  AND `group_id=<the inbound group_id>` — otherwise the reply leaks into the " +
+			"  private toast/panel instead of the group panel. For private 1:1 chat, omit " +
+			"  `channel`.\n\n" +
 			"Side-effect: WRITE — visible to the player. Requires the StardewMCPBridge mod " +
 			"with a save loaded; otherwise returns `mod_not_ready`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ChatSayInput) (*mcp.CallToolResult, ChatSayOutput, error) {

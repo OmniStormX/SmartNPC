@@ -105,6 +105,70 @@ func TestFormatForHermes_CoversKnownEvents(t *testing.T) {
 	}
 }
 
+func TestFormatForHermes_ChatReceivedGroupSource(t *testing.T) {
+	payload := ChatReceived{
+		Text:    "hi",
+		Source:  "player_group",
+		GroupID: "abigail-haley-001",
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := FormatForHermes(bridge.EventChatReceived, raw)
+	wantSubs := []string{
+		`group_id="abigail-haley-001"`,
+		`channel="group"`,
+		"hi",
+	}
+	for _, w := range wantSubs {
+		if !strings.Contains(got, w) {
+			t.Errorf("FormatForHermes(chat_received, group) = %q; want contains %q", got, w)
+		}
+	}
+}
+
+func TestFormatForHermes_ChatReceivedGroupEmptyID(t *testing.T) {
+	// Defensive fallback: source=player_group but missing group_id should
+	// degrade gracefully to the legacy generic wording instead of emitting
+	// a malformed group_id="" hint.
+	payload := ChatReceived{
+		Text:    "hi",
+		Source:  "player_group",
+		GroupID: "",
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := FormatForHermes(bridge.EventChatReceived, raw)
+	if !strings.Contains(got, "Someone in the chat says: hi") {
+		t.Errorf("expected legacy fallback wording; got %q", got)
+	}
+	if strings.Contains(got, "group_id") || strings.Contains(got, "channel=\"group\"") {
+		t.Errorf("expected no group_id/channel hint when group_id is empty; got %q", got)
+	}
+}
+
+func TestFormatForHermes_ChatReceivedPrivateLegacy(t *testing.T) {
+	// Regression guard: source=player (or empty) must keep the original
+	// "Someone in the chat says: ..." rendering without leaking group hints.
+	for _, src := range []string{"player", ""} {
+		payload := ChatReceived{Text: "hi", Source: src}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		got := FormatForHermes(bridge.EventChatReceived, raw)
+		if got != "Someone in the chat says: hi" {
+			t.Errorf("source=%q: got %q; want exact %q", src, got, "Someone in the chat says: hi")
+		}
+		if strings.Contains(got, "group") || strings.Contains(got, "group_id") {
+			t.Errorf("source=%q: legacy rendering must not mention group; got %q", src, got)
+		}
+	}
+}
+
 func TestFormatForHermes_UnknownEvent(t *testing.T) {
 	got := FormatForHermes("something_new", json.RawMessage(`{}`))
 	if !strings.Contains(got, "something_new") {

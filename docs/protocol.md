@@ -85,6 +85,8 @@ loaded; fails with `mod_not_ready` otherwise.
 | `speaker` | string | yes      | display name, e.g. `"SmartNPC"`            |
 | `text`    | string | yes      | message body                               |
 | `color`   | string | no       | one of: `white`, `yellow`, `green`, `red`, `cyan`, `blue`, `purple`, `gray`. Default `yellow`. |
+| `channel` | string | no       | `"group"` routes the reply into the group chat panel; omit / `""` for private (default). When set to `"group"`, `group_id` is required. |
+| `group_id`| string | conditional | Group chat session id; required when `channel="group"`, ignored otherwise. Must match an active `group_id` from a `group_create` event or an inbound `chat_received` event with `source=player_group`. See [ADR-0002](./adr/0002-group-chat-channel-end-to-end.md). |
 
 **response.data**
 
@@ -575,7 +577,8 @@ ambient chatter. Also emitted by the legacy group chat UI (with an empty
 | field          | type             | notes                                                              |
 |----------------|------------------|--------------------------------------------------------------------|
 | `text`         | string           | the raw text the player typed                                      |
-| `source`       | string           | `"player"` for now; reserved for future                            |
+| `source`       | string           | one of `"player"` (legacy private chat box, default when empty) or `"player_group"` (player typed into a group chat session). Determines downstream rendering: `smartnpc-mcp` injects an explicit group-context prefix into the Hermes prompt when `source="player_group"`. See [ADR-0002](./adr/0002-group-chat-channel-end-to-end.md). |
+| `group_id`     | string           | group chat session id when `source="player_group"`; empty / omitted otherwise. |
 | `audible_npcs` | array (optional) | Agent-managed NPCs within `AudibleNPCResolver.DefaultRadius` tiles of the player, sorted by distance (closest first). Omitted / empty when none are in earshot or when the source is not the chat box. |
 
 Each entry of `audible_npcs`:

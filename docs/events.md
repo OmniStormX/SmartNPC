@@ -84,7 +84,8 @@ Emitted by [`smapi-mod/ModEntry.cs`](../smapi-mod/ModEntry.cs) and
 | field          | type             | notes                                                                 |
 |----------------|------------------|-----------------------------------------------------------------------|
 | `text`         | string           | the raw text                                                          |
-| `source`       | string           | `"player"`                                                            |
+| `source`       | string           | `"player"` (legacy private chat box) or `"player_group"` (group chat session) |
+| `group_id`     | string           | group chat session id when `source="player_group"`; empty otherwise   |
 | `audible_npcs` | array (optional) | Agent-managed NPCs in earshot, sorted by distance ascending; omitted or empty when none are in range |
 
 Each entry of `audible_npcs`:
@@ -96,6 +97,21 @@ Each entry of `audible_npcs`:
 | `distance` | number | Euclidean tile distance from the player |
 | `x`        | int    | NPC tile X                             |
 | `y`        | int    | NPC tile Y                             |
+
+**Group-source rendering**: when `source="player_group"` and `group_id`
+is non-empty, [`events.FormatForHermes`](../smartnpc-mcp/internal/events/format.go)
+prefixes the inbound `instructions` string with a structured
+group-context tag so the receiving profile knows to mirror
+`channel="group"` + `group_id=<id>` back through `chat_say`:
+
+```
+[group_chat group_id="<id>"] Player says in the group: <text> (reply via chat_say with channel="group" and group_id="<id>")
+```
+
+For `source="player"` / empty / missing `group_id`, the legacy private
+rendering `Someone in the chat says: <text>` is retained. See
+[ADR-0002](./adr/0002-group-chat-channel-end-to-end.md) for the
+end-to-end group-chat channel contract.
 
 ### `npc_interact`
 

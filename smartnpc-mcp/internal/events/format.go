@@ -53,6 +53,12 @@ func FormatForHermes(name string, data json.RawMessage) string {
 	case bridge.EventChatReceived:
 		var p ChatReceived
 		if err := json.Unmarshal(data, &p); err == nil && p.Text != "" {
+			if p.Source == "player_group" && p.GroupID != "" {
+				return fmt.Sprintf(
+					"[group_chat group_id=%q] Player says in the group: %s "+
+						"(reply via chat_say with channel=\"group\" and group_id=%q)",
+					p.GroupID, p.Text, p.GroupID)
+			}
 			return fmt.Sprintf("Someone in the chat says: %s", p.Text)
 		}
 	case bridge.EventNpcInteract:
