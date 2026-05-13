@@ -21,7 +21,7 @@ mcp_servers:
     # WSL→Windows host IP; install.sh fills this in automatically.
     # On mirrored-mode WSL you can use http://127.0.0.1:3000/mcp instead.
     url: http://__HOST_IP__:3000/mcp
-    timeout: 30
+    timeout: 60
     connect_timeout: 10
     tools:
       # chat_say stays available — it's the visible-to-player dialogue
