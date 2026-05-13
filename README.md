@@ -427,6 +427,12 @@ git push origin v0.2.0
 
 ---
 
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
 <p align="center">
   <strong>SmartNPC 的目标：</strong><br />
   不是“让 NPC 偶尔回一句话”，而是让他们在星露谷里拥有可持续的身份、记忆、关系和行动力。
