@@ -3,6 +3,17 @@ setlocal
 title SmartNPC Launcher (Hermes-first)
 cd /d D:\SmartNPC
 
+rem ---- Load .env (KEY=VALUE per line, # comments) ----
+rem Taskfile auto-loads .env via dotenv:; run.bat doesn't. Mirror that here so
+rem flags like SMARTNPC_RELAY_DEBUG_PAYLOAD propagate into the mcp child.
+if exist .env (
+    for /f "tokens=1,* delims==" %%A in ('findstr /b /v /c:"#" .env') do (
+        if not "%%A"=="" set "%%A=%%B"
+    )
+    echo [env] loaded .env
+    if defined SMARTNPC_RELAY_DEBUG_PAYLOAD echo [env] SMARTNPC_RELAY_DEBUG_PAYLOAD=%SMARTNPC_RELAY_DEBUG_PAYLOAD% (relay 会打 outbound/inbound 完整 body)
+)
+
 rem Per-run log file: D:\SmartNPC\logs\mcp_YYYYMMDD_HHMMSS.log.
 rem Use PowerShell for the timestamp — wmic is removed on recent Win11 builds
 rem and silently produces a garbage filename when called via for /f.
