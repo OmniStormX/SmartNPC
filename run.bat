@@ -20,6 +20,9 @@ rem and silently produces a garbage filename when called via for /f.
 if not exist D:\SmartNPC\logs mkdir D:\SmartNPC\logs
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set MCP_TS=%%I
 set MCP_LOG=D:\SmartNPC\logs\mcp_%MCP_TS%.log
+rem Per-run payload trace (full request/response body, JSON lines). Routed
+rem there only when SMARTNPC_RELAY_DEBUG_PAYLOAD=1 is set in .env.
+set SMARTNPC_RELAY_PAYLOAD_LOG=D:\SmartNPC\logs\payload_%MCP_TS%.log
 
 echo ============================================
 echo   SmartNPC - Hermes-first One-Click Launcher
@@ -118,7 +121,8 @@ echo   Active NPCs: %ACTIVE_PROFILES%
 echo   To enable haley/harvey/penny/sebastian, edit ACTIVE_PROFILES above.
 echo   Group chat: M6 (not orchestrated yet — UI works but no NPC replies).
 echo.
-echo   mcp log: %MCP_LOG%
+echo   mcp log:     %MCP_LOG%
+echo   payload log: %SMARTNPC_RELAY_PAYLOAD_LOG% (only filled if SMARTNPC_RELAY_DEBUG_PAYLOAD=1)
 echo   live: 直接看那个 'smartnpc-mcp' PowerShell 窗口
 echo   filter past: powershell -NoProfile -Command "Select-String -Path '%MCP_LOG%' -Pattern 'hermesrelay'"
 echo ===========================

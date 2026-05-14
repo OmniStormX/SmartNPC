@@ -2,8 +2,10 @@ package hermesrelay
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,9 +31,17 @@ type profileEntry struct {
 // vars at load time; a missing env var produces an empty APIKey (which the
 // underlying Relay treats as "no Authorization header").
 //
-// Env var SMARTNPC_RELAY_DEBUG_PAYLOAD=1 turns on per-turn dump of the
-// outbound request body + inbound response body via slog.Debug. Off by
-// default — the payload contains the full persona and can be 10-50KB.
+// Env vars consumed at load time:
+//
+//	SMARTNPC_RELAY_DEBUG_PAYLOAD=1            — emit outbound + inbound full
+//	                                            body Debug records per turn.
+//	SMARTNPC_RELAY_PAYLOAD_LOG=<path>         — when set, the Debug records
+//	                                            above go to this file (JSON
+//	                                            lines) instead of the main
+//	                                            slog stream. Implicitly turns
+//	                                            DEBUG_PAYLOAD on. Off by
+//	                                            default — payloads can be
+//	                                            10-50KB each.
 func LoadConfigFile(path string) ([]Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -44,7 +54,11 @@ func LoadConfigFile(path string) ([]Config, error) {
 	if len(file.Profiles) == 0 {
 		return nil, fmt.Errorf("hermesrelay: %q has empty profiles list", path)
 	}
-	debugPayload := DebugPayloadEnabled()
+	payloadLogger, payloadEnabled, err := payloadLoggerFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	debugPayload := DebugPayloadEnabled() || payloadEnabled
 	out := make([]Config, 0, len(file.Profiles))
 	for i, p := range file.Profiles {
 		if p.GatewayURL == "" {
@@ -57,12 +71,13 @@ func LoadConfigFile(path string) ([]Config, error) {
 			return nil, fmt.Errorf("hermesrelay: profile %d (%s): model required", i, p.Name)
 		}
 		cfg := Config{
-			URL:          p.GatewayURL,
-			Conversation: p.Conversation,
-			Model:        p.Model,
-			NPCName:      p.NPCFilter,
-			PersonaFile:  p.PersonaFile,
-			DebugPayload: debugPayload,
+			URL:           p.GatewayURL,
+			Conversation:  p.Conversation,
+			Model:         p.Model,
+			NPCName:       p.NPCFilter,
+			PersonaFile:   p.PersonaFile,
+			DebugPayload:  debugPayload,
+			PayloadLogger: payloadLogger,
 		}
 		if p.APIKeyEnv != "" {
 			cfg.APIKey = os.Getenv(p.APIKeyEnv)
@@ -84,4 +99,37 @@ func DebugPayloadEnabled() bool {
 		return true
 	}
 	return false
+}
+
+var (
+	payloadLoggerOnce sync.Once
+	payloadLoggerVal  *slog.Logger
+	payloadLoggerErr  error
+)
+
+// PayloadLoggerFromEnv returns a *slog.Logger bound to the path in
+// SMARTNPC_RELAY_PAYLOAD_LOG, or (nil, false, nil) when the var is unset.
+// Implicitly enables DebugPayload on the caller side. Cached: opening the
+// file once across all Relays guarantees a single fd / one shared mutex.
+//
+// Exported so the legacy --hermes-url flag path in main.go can use the same
+// resolution as LoadConfigFile.
+func PayloadLoggerFromEnv() (*slog.Logger, bool, error) {
+	return payloadLoggerFromEnv()
+}
+
+func payloadLoggerFromEnv() (*slog.Logger, bool, error) {
+	payloadLoggerOnce.Do(func() {
+		path := strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_PAYLOAD_LOG"))
+		if path == "" {
+			return
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			payloadLoggerErr = fmt.Errorf("hermesrelay: open SMARTNPC_RELAY_PAYLOAD_LOG=%q: %w", path, err)
+			return
+		}
+		payloadLoggerVal = slog.New(slog.NewJSONHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	})
+	return payloadLoggerVal, payloadLoggerVal != nil, payloadLoggerErr
 }

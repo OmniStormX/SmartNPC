@@ -43,11 +43,17 @@ type Config struct {
 	// Timeout for the POST. Defaults to 30s if zero.
 	Timeout time.Duration
 
-	// DebugPayload, when true, makes post() log the full outbound JSON body
-	// and full response body in addition to the usage summary. Use only for
-	// short debug sessions — the payload contains the entire persona +
-	// instructions and can be tens of KB per turn.
+	// DebugPayload, when true, makes post() emit two Debug records per turn —
+	// the full outbound JSON body and the full response body. Routed to
+	// PayloadLogger when that field is non-nil so the main slog stream stays
+	// clean of multi-KB persona dumps.
 	DebugPayload bool
+
+	// PayloadLogger, when non-nil, receives the outbound/inbound Debug
+	// records that DebugPayload turns on. Typically a slog handler writing
+	// to a dedicated file. When nil but DebugPayload is true, the records
+	// fall back to the Relay's main logger.
+	PayloadLogger *slog.Logger
 }
 
 // Relay forwards events to a Hermes Gateway. Safe for concurrent use.
@@ -79,6 +85,11 @@ func New(cfg Config, logger *slog.Logger) (*Relay, error) {
 		cfg:    cfg,
 		http:   &http.Client{Timeout: cfg.Timeout},
 		logger: logger,
+	}
+	// When DebugPayload is on but no dedicated PayloadLogger was supplied,
+	// fall back to the main logger so the records aren't silently dropped.
+	if r.cfg.DebugPayload && r.cfg.PayloadLogger == nil {
+		r.cfg.PayloadLogger = logger
 	}
 	if cfg.PersonaFile != "" {
 		b, err := os.ReadFile(cfg.PersonaFile)
@@ -162,7 +173,7 @@ func (r *Relay) post(input, eventName string) {
 	}
 
 	if r.cfg.DebugPayload {
-		r.logger.Debug("hermesrelay outbound payload",
+		r.cfg.PayloadLogger.Debug("hermesrelay outbound payload",
 			"event", eventName,
 			"conversation", r.cfg.Conversation,
 			"model", r.cfg.Model,
@@ -229,7 +240,7 @@ func (r *Relay) post(input, eventName string) {
 	)
 
 	if r.cfg.DebugPayload {
-		r.logger.Debug("hermesrelay inbound response",
+		r.cfg.PayloadLogger.Debug("hermesrelay inbound response",
 			"event", eventName,
 			"conversation", r.cfg.Conversation,
 			"status", resp.StatusCode,

@@ -130,14 +130,20 @@ func main() {
 		logger.Info("hermes relay enabled (multi-profile)",
 			"config", *hermesConfig, "profiles", len(group.Relays()))
 	case *hermesURL != "":
+		payloadLogger, payloadEnabled, err := hermesrelay.PayloadLoggerFromEnv()
+		if err != nil {
+			logger.Error("hermesrelay payload log open failed", "err", err)
+			os.Exit(1)
+		}
 		single, err := hermesrelay.New(hermesrelay.Config{
-			URL:          *hermesURL,
-			APIKey:       *hermesAPIKey,
-			Conversation: *hermesConversation,
-			Model:        *hermesModel,
-			NPCName:      *hermesNPC,
-			PersonaFile:  *hermesPersonaFile,
-			DebugPayload: hermesrelay.DebugPayloadEnabled(),
+			URL:           *hermesURL,
+			APIKey:        *hermesAPIKey,
+			Conversation:  *hermesConversation,
+			Model:         *hermesModel,
+			NPCName:       *hermesNPC,
+			PersonaFile:   *hermesPersonaFile,
+			DebugPayload:  hermesrelay.DebugPayloadEnabled() || payloadEnabled,
+			PayloadLogger: payloadLogger,
 		}, logger)
 		if err != nil {
 			logger.Error("hermesrelay init failed", "err", err)
@@ -334,8 +340,8 @@ func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, ec
 // has no audible NPCs or the JSON is malformed.
 func synthChatMessageFromAudible(data json.RawMessage) (json.RawMessage, bool) {
 	var p struct {
-		Text   string `json:"text"`
-		Source string `json:"source"`
+		Text    string `json:"text"`
+		Source  string `json:"source"`
 		Audible []struct {
 			Name string `json:"name"`
 		} `json:"audible_npcs"`
