@@ -108,6 +108,11 @@ func (r *Relay) HandleEvent(_ context.Context, name string, data json.RawMessage
 	if !r.ShouldRoute(name, data) {
 		return
 	}
+	// T0 anchor for the turn: this is the moment the ws event landed inside
+	// mcp. Compare with the upcoming "hermesrelay forwarded event" elapsed_ms
+	// to see how much time mcp itself spends before/after the Hermes call.
+	r.logger.Info("hermesrelay event received",
+		"event", name, "conversation", r.cfg.Conversation)
 	input := events.FormatForHermes(name, data)
 	go r.post(input, name)
 }

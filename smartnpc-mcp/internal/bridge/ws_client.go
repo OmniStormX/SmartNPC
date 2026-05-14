@@ -120,6 +120,10 @@ func (c *WSClient) SetEventHandler(h EventHandler) {
 //
 // On a non-OK response, Call returns an error wrapping the server-supplied
 // code and message.
+//
+// Logs every call's wall-clock duration at INFO so an operator can attribute
+// Hermes round-trip latency to specific tool calls when reading mcp.log
+// alongside hermesrelay's elapsed_ms summary.
 func (c *WSClient) Call(ctx context.Context, action string, params any) (json.RawMessage, error) {
 	id := uuid.NewString()
 	ch := make(chan *Response, 1)
@@ -152,23 +156,35 @@ func (c *WSClient) Call(ctx context.Context, action string, params any) (json.Ra
 	callCtx, cancel := context.WithTimeout(ctx, c.opts.CallTimeout)
 	defer cancel()
 
+	started := time.Now()
 	if err := conn.Write(callCtx, websocket.MessageText, body); err != nil {
+		c.log.Warn("ws action failed (write)",
+			"action", action, "elapsed_ms", time.Since(started).Milliseconds(), "err", err)
 		return nil, fmt.Errorf("ws write: %w", err)
 	}
 
 	select {
 	case <-callCtx.Done():
+		c.log.Warn("ws action timed out",
+			"action", action, "elapsed_ms", time.Since(started).Milliseconds(), "err", callCtx.Err())
 		return nil, callCtx.Err()
 	case resp := <-ch:
+		elapsed := time.Since(started).Milliseconds()
 		if resp == nil {
+			c.log.Warn("ws action lost connection",
+				"action", action, "elapsed_ms", elapsed)
 			return nil, errors.New("ws connection lost during call")
 		}
 		if !resp.OK {
+			c.log.Warn("ws action returned not-ok",
+				"action", action, "elapsed_ms", elapsed)
 			if resp.Error != nil {
 				return nil, fmt.Errorf("mod error %s: %s", resp.Error.Code, resp.Error.Message)
 			}
 			return nil, errors.New("mod returned ok=false without error")
 		}
+		c.log.Info("ws action",
+			"action", action, "elapsed_ms", elapsed, "bytes_in", len(resp.Data))
 		return resp.Data, nil
 	}
 }
