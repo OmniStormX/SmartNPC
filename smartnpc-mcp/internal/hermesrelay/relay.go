@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/smartnpc/smartnpc-mcp/internal/events"
@@ -54,6 +56,27 @@ type Config struct {
 	// to a dedicated file. When nil but DebugPayload is true, the records
 	// fall back to the Relay's main logger.
 	PayloadLogger *slog.Logger
+
+	// MaxHistoryTurns is the cap on the per-relay short-window history
+	// (player + npc combined) the relay maintains and prepends to every
+	// outbound input. Set to 0 to disable; defaults to 6 in LoadConfigFile.
+	// The window is the alternative to Hermes' server-side conversation
+	// store: with Store=false and a small window, Hermes sees a stable
+	// short-context prompt instead of an ever-growing history that blows
+	// past the 64k context window and starves prompt caching.
+	MaxHistoryTurns int
+
+	// Store controls whether Hermes persists each turn into its
+	// conversation log. Default false (mcp-managed window above replaces
+	// it). Flip to true only when you need Hermes' long-term memory and
+	// can tolerate the input_tokens explosion that comes with it.
+	Store bool
+}
+
+// historyTurn is one (player|npc, text) pair in a Relay's short window.
+type historyTurn struct {
+	role string // "player" or "npc"
+	text string
 }
 
 // Relay forwards events to a Hermes Gateway. Safe for concurrent use.
@@ -62,6 +85,9 @@ type Relay struct {
 	persona string
 	http    *http.Client
 	logger  *slog.Logger
+
+	histMu  sync.Mutex
+	history []historyTurn // capped at cfg.MaxHistoryTurns
 }
 
 // New constructs a Relay. PersonaFile, if given, is loaded once and cached.
@@ -99,6 +125,91 @@ func New(cfg Config, logger *slog.Logger) (*Relay, error) {
 		r.persona = string(b)
 	}
 	return r, nil
+}
+
+// historyText returns the rendered short-window prefix the relay prepends to
+// the next outbound input, or "" when the window is empty / disabled.
+func (r *Relay) historyText() string {
+	if r.cfg.MaxHistoryTurns == 0 {
+		return ""
+	}
+	r.histMu.Lock()
+	defer r.histMu.Unlock()
+	if len(r.history) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Recent conversation (most recent at the bottom)\n")
+	for _, t := range r.history {
+		b.WriteString("[")
+		b.WriteString(t.role)
+		b.WriteString("] ")
+		b.WriteString(t.text)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n## Current event\n")
+	return b.String()
+}
+
+// appendHistory adds one turn to the window and trims to MaxHistoryTurns.
+// Concurrency-safe; no-op when the window is disabled or text is empty.
+func (r *Relay) appendHistory(role, text string) {
+	if r.cfg.MaxHistoryTurns == 0 || text == "" {
+		return
+	}
+	r.histMu.Lock()
+	defer r.histMu.Unlock()
+	r.history = append(r.history, historyTurn{role: role, text: text})
+	if len(r.history) > r.cfg.MaxHistoryTurns {
+		r.history = r.history[len(r.history)-r.cfg.MaxHistoryTurns:]
+	}
+}
+
+// extractAssistantReply pulls the most recent assistant message text out of
+// a /v1/responses body. Returns "" when the response has no text message
+// (tool-only turn) or the body is malformed.
+func extractAssistantReply(body []byte) string {
+	var m struct {
+		Output []struct {
+			Type    string `json:"type"`
+			Role    string `json:"role,omitempty"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content,omitempty"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	// Walk back-to-front: the last assistant message is the final reply
+	// after any tool calls.
+	for i := len(m.Output) - 1; i >= 0; i-- {
+		item := m.Output[i]
+		if item.Type != "message" || item.Role != "assistant" {
+			continue
+		}
+		for _, c := range item.Content {
+			if c.Type == "output_text" && c.Text != "" {
+				return c.Text
+			}
+		}
+	}
+	return ""
+}
+
+// looksLikeUpstreamError returns true for response texts that indicate the
+// LLM upstream surfaced its own error string instead of a real reply
+// (rate-limit retries, "(empty)" marker, etc.). We don't want these in the
+// history window — they'd poison the next turn.
+func looksLikeUpstreamError(text string) bool {
+	if text == "" || text == "(empty)" {
+		return true
+	}
+	t := strings.ToLower(text)
+	return strings.HasPrefix(t, "api call failed") ||
+		strings.Contains(t, "http 429") ||
+		strings.Contains(t, "http 5")
 }
 
 // HandleEvent implements bridge.EventHandler. The POST runs on its own
@@ -165,12 +276,16 @@ type usageResponse struct {
 }
 
 func (r *Relay) post(input, eventName string) {
+	// Prepend the per-relay short-window history so Hermes sees a stable
+	// short-context prompt (instead of relying on Store=true which makes
+	// input_tokens grow unbounded across turns and starves prompt caching).
+	composedInput := r.historyText() + input
 	body, err := json.Marshal(request{
 		Model:        r.cfg.Model,
-		Input:        input,
+		Input:        composedInput,
 		Conversation: r.cfg.Conversation,
 		Instructions: r.persona,
-		Store:        true,
+		Store:        r.cfg.Store,
 	})
 	if err != nil {
 		r.logger.Warn("hermesrelay marshal failed", "event", eventName, "err", err)
@@ -182,7 +297,7 @@ func (r *Relay) post(input, eventName string) {
 			"event", eventName,
 			"conversation", r.cfg.Conversation,
 			"model", r.cfg.Model,
-			"input", input,
+			"input", composedInput,
 			"instructions_len", len(r.persona),
 			"body_bytes", len(body),
 			"body", string(body),
@@ -253,6 +368,16 @@ func (r *Relay) post(input, eventName string) {
 			"body_bytes", len(respBody),
 			"body", string(respBody),
 		)
+	}
+
+	// Update short-window history. The player turn we just sent is recorded
+	// regardless of reply outcome (so the player's next message has continuity
+	// even if the LLM tool-only-replied). The NPC reply is recorded only when
+	// it looks like a real assistant message — upstream errors like rate-limit
+	// strings would poison the next prompt.
+	r.appendHistory("player", input)
+	if reply := extractAssistantReply(respBody); reply != "" && !looksLikeUpstreamError(reply) {
+		r.appendHistory("npc", reply)
 	}
 }
 

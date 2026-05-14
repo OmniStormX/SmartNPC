@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,9 +41,15 @@ type profileEntry struct {
 //	                                            above go to this file (JSON
 //	                                            lines) instead of the main
 //	                                            slog stream. Implicitly turns
-//	                                            DEBUG_PAYLOAD on. Off by
-//	                                            default — payloads can be
-//	                                            10-50KB each.
+//	                                            DEBUG_PAYLOAD on.
+//	SMARTNPC_RELAY_HISTORY_TURNS=<int>        — short-window cap (player+npc
+//	                                            combined). Default 6, set 0
+//	                                            to disable mcp-managed
+//	                                            history.
+//	SMARTNPC_RELAY_STORE=1|true               — flip Hermes server-side store
+//	                                            back on. Default off; the
+//	                                            mcp window replaces it.
+//	SMARTNPC_RELAY_TIMEOUT_MS=<int>           — POST timeout. Default 120000.
 func LoadConfigFile(path string) ([]Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -59,6 +67,9 @@ func LoadConfigFile(path string) ([]Config, error) {
 		return nil, err
 	}
 	debugPayload := DebugPayloadEnabled() || payloadEnabled
+	maxHistory := HistoryTurnsFromEnv()
+	store := StoreFromEnv()
+	timeout := TimeoutFromEnv()
 	out := make([]Config, 0, len(file.Profiles))
 	for i, p := range file.Profiles {
 		if p.GatewayURL == "" {
@@ -71,13 +82,16 @@ func LoadConfigFile(path string) ([]Config, error) {
 			return nil, fmt.Errorf("hermesrelay: profile %d (%s): model required", i, p.Name)
 		}
 		cfg := Config{
-			URL:           p.GatewayURL,
-			Conversation:  p.Conversation,
-			Model:         p.Model,
-			NPCName:       p.NPCFilter,
-			PersonaFile:   p.PersonaFile,
-			DebugPayload:  debugPayload,
-			PayloadLogger: payloadLogger,
+			URL:             p.GatewayURL,
+			Conversation:    p.Conversation,
+			Model:           p.Model,
+			NPCName:         p.NPCFilter,
+			PersonaFile:     p.PersonaFile,
+			DebugPayload:    debugPayload,
+			PayloadLogger:   payloadLogger,
+			MaxHistoryTurns: maxHistory,
+			Store:           store,
+			Timeout:         timeout,
 		}
 		if p.APIKeyEnv != "" {
 			cfg.APIKey = os.Getenv(p.APIKeyEnv)
@@ -85,6 +99,47 @@ func LoadConfigFile(path string) ([]Config, error) {
 		out = append(out, cfg)
 	}
 	return out, nil
+}
+
+// HistoryTurnsFromEnv resolves SMARTNPC_RELAY_HISTORY_TURNS, defaulting to 6.
+// Negative or non-numeric values clamp to 0 (disabled).
+func HistoryTurnsFromEnv() int {
+	v := strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_HISTORY_TURNS"))
+	if v == "" {
+		return 6
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// StoreFromEnv resolves SMARTNPC_RELAY_STORE, defaulting to false (mcp window
+// owns history; Hermes-side store is off).
+func StoreFromEnv() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_STORE")))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// TimeoutFromEnv resolves SMARTNPC_RELAY_TIMEOUT_MS, defaulting to 120s.
+// Values <1000ms or non-numeric clamp to the default — the LLM round trip
+// dominates this number and should never be sub-second.
+func TimeoutFromEnv() time.Duration {
+	const defaultTimeout = 120 * time.Second
+	v := strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_TIMEOUT_MS"))
+	if v == "" {
+		return defaultTimeout
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1000 {
+		return defaultTimeout
+	}
+	return time.Duration(n) * time.Millisecond
 }
 
 // DebugPayloadEnabled reports whether the env var that turns on full

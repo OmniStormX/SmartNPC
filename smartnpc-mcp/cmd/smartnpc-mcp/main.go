@@ -136,14 +136,17 @@ func main() {
 			os.Exit(1)
 		}
 		single, err := hermesrelay.New(hermesrelay.Config{
-			URL:           *hermesURL,
-			APIKey:        *hermesAPIKey,
-			Conversation:  *hermesConversation,
-			Model:         *hermesModel,
-			NPCName:       *hermesNPC,
-			PersonaFile:   *hermesPersonaFile,
-			DebugPayload:  hermesrelay.DebugPayloadEnabled() || payloadEnabled,
-			PayloadLogger: payloadLogger,
+			URL:             *hermesURL,
+			APIKey:          *hermesAPIKey,
+			Conversation:    *hermesConversation,
+			Model:           *hermesModel,
+			NPCName:         *hermesNPC,
+			PersonaFile:     *hermesPersonaFile,
+			DebugPayload:    hermesrelay.DebugPayloadEnabled() || payloadEnabled,
+			PayloadLogger:   payloadLogger,
+			MaxHistoryTurns: hermesrelay.HistoryTurnsFromEnv(),
+			Store:           hermesrelay.StoreFromEnv(),
+			Timeout:         hermesrelay.TimeoutFromEnv(),
 		}, logger)
 		if err != nil {
 			logger.Error("hermesrelay init failed", "err", err)
