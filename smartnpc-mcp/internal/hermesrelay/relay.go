@@ -42,7 +42,8 @@ type Config struct {
 	// are sent as the request's `instructions` field on every turn.
 	PersonaFile string
 
-	// Timeout for the POST. Defaults to 30s if zero.
+	// Timeout for the POST. Defaults to 120s if zero — long enough to cover
+	// a cold-cache GPT-class response with full persona attached.
 	Timeout time.Duration
 
 	// DebugPayload, when true, makes post() emit two Debug records per turn —
@@ -102,7 +103,7 @@ func New(cfg Config, logger *slog.Logger) (*Relay, error) {
 		return nil, fmt.Errorf("hermesrelay: Model is required when URL is set")
 	}
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 30 * time.Second
+		cfg.Timeout = 120 * time.Second
 	}
 	if logger == nil {
 		logger = slog.Default()

@@ -101,12 +101,15 @@ func LoadConfigFile(path string) ([]Config, error) {
 	return out, nil
 }
 
-// HistoryTurnsFromEnv resolves SMARTNPC_RELAY_HISTORY_TURNS, defaulting to 6.
-// Negative or non-numeric values clamp to 0 (disabled).
+// HistoryTurnsFromEnv resolves SMARTNPC_RELAY_HISTORY_TURNS, defaulting to 0
+// (disabled). The mcp-managed short window duplicates Hermes' built-in
+// conversation memory, so it's off by default — turn it on only as an escape
+// hatch when Hermes compression is misbehaving. Negative or non-numeric
+// values clamp to 0.
 func HistoryTurnsFromEnv() int {
 	v := strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_HISTORY_TURNS"))
 	if v == "" {
-		return 6
+		return 0
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
@@ -115,15 +118,17 @@ func HistoryTurnsFromEnv() int {
 	return n
 }
 
-// StoreFromEnv resolves SMARTNPC_RELAY_STORE, defaulting to false (mcp window
-// owns history; Hermes-side store is off).
+// StoreFromEnv resolves SMARTNPC_RELAY_STORE, defaulting to true so Hermes
+// owns the conversation history (with its compression layer). Flip to false
+// only when the SMARTNPC_RELAY_HISTORY_TURNS escape hatch is also on, to
+// avoid double-storing.
 func StoreFromEnv() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_STORE")))
 	switch v {
-	case "1", "true", "yes", "on":
-		return true
+	case "0", "false", "no", "off":
+		return false
 	}
-	return false
+	return true
 }
 
 // TimeoutFromEnv resolves SMARTNPC_RELAY_TIMEOUT_MS, defaulting to 120s.

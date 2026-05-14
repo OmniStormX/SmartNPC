@@ -68,6 +68,7 @@ func TestRelay_PostsExpectedBody(t *testing.T) {
 		Conversation: "xiami",
 		Model:        "xiami",
 		Timeout:      2 * time.Second,
+		Store:        true,
 	}, slog.Default())
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -97,11 +98,8 @@ func TestRelay_PostsExpectedBody(t *testing.T) {
 	if cap.body.Conversation != "xiami" {
 		t.Errorf("Conversation = %q want xiami", cap.body.Conversation)
 	}
-	// Default config now uses mcp-managed history with Store=false. The
-	// legacy "Hermes-side store always on" assertion is replaced by an
-	// explicit Store=false check.
-	if cap.body.Store {
-		t.Errorf("Store = true; want false (mcp window now owns history)")
+	if !cap.body.Store {
+		t.Errorf("Store = false; want true (explicitly set in Config)")
 	}
 	if !strings.Contains(cap.body.Input, "你好") {
 		t.Errorf("Input missing player text: %q", cap.body.Input)

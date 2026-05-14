@@ -19,10 +19,10 @@
 # WHAT IT SETS (per profile)
 #   model.context_length = 64000
 #   compression.enabled = true
-#   compression.threshold = 0.50
-#   compression.target_ratio = 0.20
-#   compression.protect_last_n = 20
-#   compression.hygiene_hard_message_limit = 150
+#   compression.threshold = 0.15
+#   compression.target_ratio = 0.10
+#   compression.protect_last_n = 8
+#   compression.hygiene_hard_message_limit = 60
 #
 # Usage:
 #   bash scripts/apply_hermes_tuning.sh                    # all 6 profiles
@@ -93,10 +93,10 @@ if not isinstance(comp, dict):
     comp = {}
 comp.update({
     "enabled": True,
-    "threshold": 0.50,
-    "target_ratio": 0.20,
-    "protect_last_n": 20,
-    "hygiene_hard_message_limit": 150,
+    "threshold": 0.15,
+    "target_ratio": 0.10,
+    "protect_last_n": 8,
+    "hygiene_hard_message_limit": 60,
 })
 data["compression"] = comp
 
