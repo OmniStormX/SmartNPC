@@ -71,9 +71,11 @@ rem Default 'smartnpc-test-key' matches the shipped overlays.
 if not defined SMARTNPC_HERMES_KEY set SMARTNPC_HERMES_KEY=smartnpc-test-key
 rem mcp logs to stderr (slog JSON). PowerShell -NoExit keeps the spawned window
 rem open after exit; Tee-Object writes to BOTH the window and the log file.
-rem `2>&1` merges stderr into stdout so PowerShell's pipeline can tee it.
+rem `2>&1` merges stderr into stdout. Then `ForEach-Object { $_.ToString() }`
+rem flattens Windows PowerShell 5.1's ErrorRecord wrapping (which otherwise
+rem decorates every stderr line with NativeCommandError + position info).
 start "smartnpc-mcp" powershell -NoProfile -NoExit -Command ^
-    "& 'D:\SmartNPC\smartnpc-mcp\bin\smartnpc-mcp.exe' --http ':3000' --ws-url 'ws://127.0.0.1:18745/ws' --hermes-config 'D:\SmartNPC\hermes\runtime-config.yaml' --hermes-api-key '%SMARTNPC_HERMES_KEY%' --log-level debug 2>&1 | Tee-Object -FilePath '%MCP_LOG%'"
+    "& 'D:\SmartNPC\smartnpc-mcp\bin\smartnpc-mcp.exe' --http ':3000' --ws-url 'ws://127.0.0.1:18745/ws' --hermes-config 'D:\SmartNPC\hermes\runtime-config.yaml' --hermes-api-key '%SMARTNPC_HERMES_KEY%' --log-level debug 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath '%MCP_LOG%'"
 echo      Waiting for mcp HTTP endpoint to become reachable...
 :wait_mcp
 timeout /t 2 /nobreak >nul
