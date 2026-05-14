@@ -87,32 +87,36 @@ goto wait_mcp
 echo [OK] mcp HTTP up at :3000/mcp.
 echo.
 
-rem ---- Step 5: Start Hermes Gateways for the active profiles ----
-rem Default active set: xiami + abigail. To add others (haley/harvey/penny/sebastian),
-rem append to ACTIVE_PROFILES below. Each additional gateway adds ~300-500MB RAM
-rem and 30-60s startup; balance accordingly.
-echo [5/6] Starting Hermes Gateways (xiami + abigail)...
-set ACTIVE_PROFILES=xiami,abigail
+rem ---- Step 5: Start Hermes Gateways for all 6 NPC profiles ----
+rem Each gateway adds ~300-500MB RAM and 30-60s cold start. With 6 gateways
+rem expect ~2-3GB RAM and ~3-6 min total before all 6 are healthy. To trim,
+rem edit ACTIVE_PROFILES below.
+echo [5/6] Starting Hermes Gateways (xiami + abigail + haley + harvey + penny + sebastian)...
+set ACTIVE_PROFILES=xiami,abigail,haley,harvey,penny,sebastian
 start "Hermes Gateways" wsl -d Ubuntu-22.04 bash -ic "bash /mnt/d/SmartNPC/scripts/start_hermes_profiles.sh %ACTIVE_PROFILES%"
-echo      Waiting for both gateways to become healthy (up to 90s each)...
+echo      Waiting for all 6 gateways to become healthy (each up to ~90s)...
 
-:wait_xiami
-timeout /t 5 /nobreak >nul
-curl -sS http://192.168.59.118:8642/health >nul 2>&1
-if errorlevel 1 (
-echo      ... waiting for xiami
-goto wait_xiami
-)
-:wait_abigail
-curl -sS http://192.168.59.118:8643/health >nul 2>&1
-if errorlevel 1 (
-timeout /t 5 /nobreak >nul
-echo      ... waiting for abigail
-goto wait_abigail
-)
-echo [OK] Both gateways healthy.
+for %%S in (xiami=8642 abigail=8643 haley=8644 harvey=8645 penny=8646 sebastian=8647) do call :wait_gateway %%S
+echo [OK] All 6 gateways healthy.
 echo.
+goto step6
 
+:wait_gateway
+for /f "tokens=1,2 delims==" %%A in ("%~1") do (
+    set _gw_name=%%A
+    set _gw_port=%%B
+)
+:wait_gateway_retry
+curl -sS http://192.168.59.118:%_gw_port%/health >nul 2>&1
+if errorlevel 1 (
+    timeout /t 5 /nobreak >nul
+    echo      ... waiting for %_gw_name% on :%_gw_port%
+    goto wait_gateway_retry
+)
+echo      [OK] %_gw_name% on :%_gw_port%
+goto :eof
+
+:step6
 rem ---- Step 6: Launch the game ----
 echo [6/6] Launching Stardew Valley via SMAPI...
 start "" "D:\Stardew Valley\StardewModdingAPI.exe"
@@ -120,7 +124,6 @@ echo [OK] Game launching. Load a save file.
 echo.
 echo ===========================
 echo   Active NPCs: %ACTIVE_PROFILES%
-echo   To enable haley/harvey/penny/sebastian, edit ACTIVE_PROFILES above.
 echo   Group chat: M6 (not orchestrated yet — UI works but no NPC replies).
 echo.
 echo   mcp log:     %MCP_LOG%
