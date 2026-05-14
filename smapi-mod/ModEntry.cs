@@ -124,6 +124,7 @@ namespace SmartNPC.Bridge
 
                 // Group chat manager.
                 _groupMgr = new GroupChatManager(_messageStore, _ws);
+                _chat.SetGroupManager(_groupMgr);
 
                 // Register SMAPI console debug commands.
                 DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws);

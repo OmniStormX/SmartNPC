@@ -9,6 +9,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -25,6 +26,7 @@ namespace SmartNPC.Bridge
         private readonly ConcurrentQueue<ChatSayParams> _pending = new();
         private ChatMessageStore? _store;
         private UnreadTracker? _unread;
+        private GroupChatManager? _groupMgr;
         // (npcName, displayName, text, channel) → push toast / refresh panel.
         // channel is "group" for group-chat replies, "" / "private" otherwise.
         private Action<string, string, string, string>? _onMessage;
@@ -39,6 +41,16 @@ namespace SmartNPC.Bridge
         public void SetUnreadTracker(UnreadTracker unread)
         {
             _unread = unread;
+        }
+
+        /// <summary>Wire the group-chat manager so PumpOnGameTick can apply
+        /// the "active group, speaker is a participant → assume group" fallback
+        /// when a chat_say arrives without channel="group". Compensates for
+        /// the LLM occasionally forgetting the channel field on group turns.
+        /// </summary>
+        public void SetGroupManager(GroupChatManager mgr)
+        {
+            _groupMgr = mgr;
         }
 
         /// <summary>Wire a callback fired on the game thread for every NPC
@@ -76,6 +88,26 @@ namespace SmartNPC.Bridge
                 string channel = (p.Channel ?? "").ToLowerInvariant();
                 bool isGroup = channel == "group";
 
+                // Fallback: if there's an active group chat AND the speaker
+                // is a participant AND the LLM did not explicitly opt out
+                // ("private"), promote this turn to group. Compensates for
+                // models that drop the channel/group_id arguments on group
+                // turns (we have skill + tool prompts telling them to set it,
+                // but Llama-class models still forget). Reading "private"
+                // explicitly still goes private — the NPC can override.
+                if (!isGroup
+                    && channel != "private"
+                    && _groupMgr != null
+                    && _groupMgr.IsActive
+                    && _groupMgr.Participants.Contains(p.Speaker!))
+                {
+                    isGroup = true;
+                    if (string.IsNullOrEmpty(p.GroupId))
+                        p.GroupId = _groupMgr.ActiveGroupId;
+                    _log.Log($"chat_say: missing channel='group' but group active and {p.Speaker} is a participant — promoting to group reply",
+                        LogLevel.Debug);
+                }
+
                 NPC? npc = Game1.getCharacterFromName(p.Speaker!);
                 string displayName = npc?.displayName ?? p.Speaker!;
 
@@ -97,7 +129,7 @@ namespace SmartNPC.Bridge
                 // Fan out to the panel/toast layer. The notifier decides
                 // whether this message lands in a per-NPC surface or a group
                 // surface based on the channel.
-                _onMessage?.Invoke(p.Speaker!, displayName, p.Text!, channel);
+                _onMessage?.Invoke(p.Speaker!, displayName, p.Text!, isGroup ? "group" : channel);
 
                 _log.Log($"chat_say → {(isGroup ? "group" : "private")}: <{p.Speaker}> {p.Text}", LogLevel.Trace);
             }

@@ -55,9 +55,15 @@ func FormatForHermes(name string, data json.RawMessage) string {
 		if err := json.Unmarshal(data, &p); err == nil && p.Text != "" {
 			if p.Source == "player_group" && p.GroupID != "" {
 				return fmt.Sprintf(
-					"[group_chat group_id=%q] Player says in the group: %s "+
-						"(any chat_say reply must include channel=\"group\" and "+
-						"group_id=%q; tool calls and silence remain valid)",
+					"[group_chat group_id=%q] Player says in the group: %s\n\n"+
+						"⚠️ This is a GROUP-CHAT turn. If you decide to call chat_say, "+
+						"you MUST pass channel=\"group\" AND group_id=%q. Forgetting "+
+						"either argument routes the line to a private 1:1 panel that "+
+						"no other group participant can see — the player will perceive "+
+						"silence from your side.\n"+
+						"Tool calls (game_*, npc_send_message, ...) and remaining silent "+
+						"are still valid responses; this constraint applies ONLY when "+
+						"chat_say fires.",
 					p.GroupID, p.Text, p.GroupID)
 			}
 			return fmt.Sprintf("Someone in the chat says: %s", p.Text)
