@@ -25,7 +25,6 @@ provider:
 ## 子项目任务命名空间
 根 Taskfile 通过 `includes:` 引用子项目，调用时用 `task <ns>:<task>` 形式：
 - `task mcp:build` → `smartnpc-mcp` 构建
-- `task agent:test` → `smartnpc-agent` 测试
 - `task mod:build` → C# Mod 构建
 
 ## 新增子项目时

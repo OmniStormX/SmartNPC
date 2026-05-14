@@ -31,7 +31,6 @@ SmartNPC 当前主线是 **Hermes-first**：
 - `smapi-mod/`：贴近游戏线程，负责 UI、NPC sprite、输入捕获、动作执行、WebSocket Server。
 - `smartnpc-mcp/`：能力边界，负责 MCP 工具、协议转换、事件分发、硬校验、Hermes relay。
 - `hermes/profiles/<npc>/`：决策边界，负责人格、记忆、技能、工具规划、主动行为。
-- `smartnpc-agent/`：旧 Go Agent 编排器，已冻结，仅保留为历史对照 / dev harness。
 
 ### 架构层流程图
 
@@ -120,8 +119,7 @@ sequenceDiagram
 | `smapi-mod/` | C# SMAPI Mod。负责游戏内 UI、NPC 注册、WebSocket Server、查询/动作处理器。 |
 | `smartnpc-mcp/` | Go MCP Server。负责工具 schema、WebSocket 客户端、HTTP MCP、事件转发到 Hermes。 |
 | `hermes/` | Hermes profile 源文件：每个 NPC 的 `SOUL.md`、skills、配置 overlay、安装脚本。 |
-| `smartnpc-agent/` | 旧版 Go Agent 编排器；当前主线已冻结，保留测试与迁移参考。 |
-| `docs/` | 架构、协议、事件、MCP 工具、ADR、迁移说明、人工 E2E 验证清单。 |
+| `docs/` | 架构、协议、事件、MCP 工具、ADR、人工 E2E 验证清单。 |
 | `scripts/` | Hermes profile 渲染、启动、调参、重置等辅助脚本。 |
 | `Taskfile.yml` | 根任务入口：构建、测试、安装、清理、profile 校验。 |
 | `run.bat` | Windows 本机一键启动脚本示例（包含构建、安装、启动 mcp、启动 Hermes、启动游戏）。 |
@@ -398,7 +396,6 @@ task agent:test
 | [`docs/mcp-tools.md`](docs/mcp-tools.md) | MCP 工具目录、参数、错误码、副作用说明。 |
 | [`docs/events.md`](docs/events.md) | 游戏事件与 synthetic events 的 payload 规范。 |
 | [`docs/hermes-event-trigger.md`](docs/hermes-event-trigger.md) | 为什么选择 MCP POST Hermes Gateway 的事件触发方案。 |
-| [`docs/migration-smartnpc-agent.md`](docs/migration-smartnpc-agent.md) | 从旧 Go Agent 迁移到 Hermes-first 的映射关系。 |
 | [`docs/manual-e2e-verification.md`](docs/manual-e2e-verification.md) | 人工端到端验证清单。 |
 | [`REFACTOR.md`](REFACTOR.md) | 架构重构背景与设计取舍。 |
 
@@ -411,7 +408,7 @@ task agent:test
 - ✅ Hermes-first 事件注入链路：`smartnpc-mcp -> Hermes /v1/responses`
 - ✅ 多 profile 配置与 fan-out：XiaMi、Abigail、Haley、Harvey、Penny、Sebastian
 - ✅ 工具能力覆盖聊天、查询、移动、感知、跟随、带路、送礼、NPC 间消息
-- 🧊 `smartnpc-agent/` 已冻结为历史/测试模块
+- ✅ 旧 `smartnpc-agent/` Go 编排器已移除（历史代码见 git history）
 - 🔜 后续重点：Hermes 侧群聊编排、更多主动行为、profile 打磨与发布流程
 
 ---

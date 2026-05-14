@@ -28,7 +28,7 @@ All MCP notifications wrap the event in this envelope:
 }
 ```
 
-Consumers (Hermes profile, `smartnpc-agent` dev harness, custom MCP clients)
+Consumers (Hermes profile, Claude Desktop, custom MCP clients)
 subscribe via `LoggingMessageHandler` and filter on `kind == "stardew/event"`.
 
 **Forward-compat rule:** unrecognized fields MUST be ignored silently. New

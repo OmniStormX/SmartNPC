@@ -17,15 +17,12 @@ includes:
   mcp:
     taskfile: ./smartnpc-mcp/Taskfile.yml
     dir: ./smartnpc-mcp
-  agent:
-    taskfile: ./smartnpc-agent/Taskfile.yml
-    dir: ./smartnpc-agent
   mod:
     taskfile: ./smapi-mod/Taskfile.yml
     dir: ./smapi-mod
 
 vars:
-  GO_MODULES: ./smartnpc-mcp/... ./smartnpc-agent/...
+  GO_MODULES: ./smartnpc-mcp/...
 
 tasks:
   default:
@@ -39,14 +36,12 @@ tasks:
     desc: Build all subprojects
     cmds:
       - task: mcp:build
-      - task: agent:build
       - task: mod:build
 
   test:
     desc: Run all tests
     cmds:
       - task: mcp:test
-      - task: agent:test
       - task: mod:test
 
   lint:
@@ -72,7 +67,6 @@ tasks:
     desc: Remove all build artifacts
     cmds:
       - task: mcp:clean
-      - task: agent:clean
       - task: mod:clean
 
   # ── Hermes profile render sanity (opt-in) ───────────────────────
@@ -121,5 +115,4 @@ tasks:
     desc: Run go mod tidy in every Go module
     cmds:
       - cmd: cd smartnpc-mcp && go mod tidy
-      - cmd: cd smartnpc-agent && go mod tidy
       - cmd: go work sync

@@ -26,7 +26,7 @@ func TestPingEndToEnd(t *testing.T) {
 	}
 
 	client := mcp.NewClient(&mcp.Implementation{
-		Name: "smartnpc-agent-test", Version: "test",
+		Name: "smartnpc-mcp-test", Version: "test",
 	}, nil)
 	cs, err := client.Connect(ctx, t2, nil)
 	if err != nil {

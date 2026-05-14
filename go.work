@@ -1,6 +1,3 @@
 go 1.25.0
 
-use (
-	./smartnpc-agent
-	./smartnpc-mcp
-)
+use ./smartnpc-mcp

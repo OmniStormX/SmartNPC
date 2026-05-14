@@ -84,7 +84,6 @@ jobs:
           cache: true
           cache-dependency-path: |
             smartnpc-mcp/go.sum
-            smartnpc-agent/go.sum
 
       - name: go work sync
         run: go work sync
@@ -102,19 +101,6 @@ jobs:
             -ldflags="-s -w -X main.version=${VERSION}" \
             -o "../dist/smartnpc-mcp-${{ matrix.os }}${{ matrix.ext }}" \
             ./cmd/smartnpc-mcp
-
-      - name: build smartnpc-agent
-        working-directory: smartnpc-agent
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '0'
-        run: |
-          go build \
-            -trimpath \
-            -ldflags="-s -w -X main.version=${VERSION}" \
-            -o "../dist/smartnpc-agent-${{ matrix.os }}${{ matrix.ext }}" \
-            ./cmd/smartnpc-agent
 
       - uses: actions/upload-artifact@v4
         with:

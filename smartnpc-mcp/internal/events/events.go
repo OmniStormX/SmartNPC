@@ -1,5 +1,5 @@
 // Package events defines typed payloads for the events that smartnpc-mcp
-// surfaces to MCP clients (Hermes profiles, legacy smartnpc-agent, Claude
+// surfaces to MCP clients (Hermes profiles, Claude
 // Desktop, ...).
 //
 // Two sources:

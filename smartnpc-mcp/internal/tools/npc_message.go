@@ -16,9 +16,8 @@ import (
 	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
 )
 
-// Inter-NPC messaging. These tools let one NPC's Hermes profile (or the
-// legacy smartnpc-agent dev harness) send messages to other NPCs through
-// smartnpc-mcp. The recipient is reached three ways, all driven from
+// Inter-NPC messaging. These tools let one NPC's Hermes profile send messages
+// to other NPCs through smartnpc-mcp. The recipient is reached three ways, all driven from
 // the same emit site:
 //
 //  1. Hermes profile wake (primary): the synthetic event is fed

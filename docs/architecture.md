@@ -1,7 +1,7 @@
 # SmartNPC Architecture (Hermes-first)
 
 > **Status**: M5 production architecture (2026-05).  
-> Predecessor: `smartnpc-agent` Go orchestrator — now frozen, see [`migration-smartnpc-agent.md`](./migration-smartnpc-agent.md).
+> Predecessor: a Go-side `smartnpc-agent` orchestrator was deleted in this milestone; see git history for the legacy implementation.
 
 ## Overview
 
@@ -30,7 +30,7 @@
 │   cmd/smartnpc-mcp     — stdio OR streamable HTTP transport     │
 │                                                                 │
 │   Transports:                                                   │
-│     stdio  (default; legacy smartnpc-agent harness)             │
+│     stdio  (Claude Desktop / local dev)                         │
 │     HTTP :3000 /mcp (Hermes-first; preferred)                   │
 └──────┬─────────────────────────────────────────────────┬────────┘
        │ outbound HTTP POST                              │ MCP tool calls
@@ -220,7 +220,7 @@ of running multiple mcp instances.
 ## Why we picked this shape (one paragraph)
 
 The previous architecture had two parallel "agent centers":
-`smartnpc-agent` doing Go-side persona/memory/tool-loop AND Hermes
+a Go-side orchestrator (`smartnpc-agent`, since deleted) doing persona/memory/tool-loop AND Hermes
 doing the same on the LLM side. The result was duplicate abstraction
 and unclear ownership. The Hermes-first shape draws three sharp
 boundaries — **smapi-mod** owns the game thread, **smartnpc-mcp** owns
@@ -239,5 +239,4 @@ rules go into smapi-mod.
 | `events.md` | Event payload reference (mod-side + synthetic) |
 | `protocol.md` | ws envelope spec, action / event schemas |
 | `hermes-event-trigger.md` | The Plan A/B/C research that locked Plan B |
-| `migration-smartnpc-agent.md` | Mapping from frozen Go agent → Hermes |
 | `roadmap.md` | Milestone status + acceptance criteria |

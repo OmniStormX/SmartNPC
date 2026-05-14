@@ -126,7 +126,7 @@ M5 实机验证通过后启动。
 | # | 任务 | 备注 |
 |---|------|------|
 | 6.1 | Group chat orchestration（Hermes 侧） | 当前 mod 端 group UI 仍在；Hermes profile 需要补 group-chat skill / cron |
-| 6.2 | smartnpc-agent 归档 | `smartnpc-agent/` → `archive/smartnpc-agent/`；从 `go.work` 与 root `Taskfile.yml` 移除 |
+| 6.2 | smartnpc-agent 删除 | ✅ 已完成（2026-05-14）：`smartnpc-agent/` 整体从 `go.work` / `Taskfile.yml` / CI 中移除；历史代码见 git log |
 | 6.3 | 移除 mcp 兼容旧链路的 legacy flags | 删除 `--hermes-url` / `--hermes-npc` / `--hermes-conversation` / `--hermes-model`；统一用 `--hermes-config` |
 
 ---

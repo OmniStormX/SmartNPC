@@ -12,8 +12,8 @@ mirror the registration-time strings the LLM sees.
 
 Tools are exposed via two transports:
 
-- **stdio** — the legacy `smartnpc-agent` dev harness spawns mcp as a
-  child process and listens on stdin/stdout.
+- **stdio** — local MCP clients (Claude Desktop, dev harnesses) spawn
+  mcp as a child process and listen on stdin/stdout.
 - **streamable HTTP** — `smartnpc-mcp --http :3000` serves at `/mcp`.
   This is the Hermes-first path; Hermes profiles connect via
   `mcp_servers.smartnpc_game.url`.

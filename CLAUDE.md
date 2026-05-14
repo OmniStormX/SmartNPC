@@ -14,23 +14,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SmartNPC — 星露谷物语 AI NPC 系统，基于 MCP 构建：
 
-**正式链路（Hermes-first，M5 起）：**
+**正式链路（Hermes-first）：**
 ```
 SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ──MCP HTTP── 6× Hermes Agent Profile
                                           │                              (xiami, abigail, haley, harvey, penny, sebastian)
                                           └── hermesrelay ──POST /v1/responses──> route by runtime-config.yaml
 ```
 
-**调试链路（旧，smartnpc-agent 已冻结）：**
-```
-SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go) ──stdio MCP── smartnpc-agent (Go)
-```
-
 | 模块 | 职责 |
 |------|------|
 | `smapi-mod/` | SMAPI Mod，ws server 暴露游戏 API |
-| `smartnpc-mcp/` | Go MCP Server，ws↔MCP 桥接（stdio / HTTP） |
-| `smartnpc-agent/` | Go NPC 编排器，spawn mcp 子进程，LLM 驱动对话 |
+| `smartnpc-mcp/` | Go MCP Server，ws↔MCP 桥接（stdio / HTTP），向 Hermes 转发游戏事件 |
+| `hermes/profiles/` | 6 个 NPC profile（SOUL + skills + cron） |
+
+> 旧的 `smartnpc-agent/` Go 编排器已于 M5 (Hermes-first) 完全移除。历史代码见 git tag 之前的 commit。
 
 ## Windows 环境
 
@@ -46,7 +43,6 @@ SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go) ──stdio MCP─
 C:\Users\synchen\go\bin\task.exe ci          # lint + test + build（完整 CI）
 C:\Users\synchen\go\bin\task.exe ci-fast     # lint + test
 C:\Users\synchen\go\bin\task.exe mcp:build   # 构建 mcp
-C:\Users\synchen\go\bin\task.exe agent:build # 构建 agent
 C:\Users\synchen\go\bin\task.exe mod:install # 编译+部署 mod 到游戏目录
 C:\Users\synchen\go\bin\task.exe tidy        # go mod tidy 全模块
 C:\Users\synchen\go\bin\task.exe --list      # 列出所有可用 task
@@ -55,16 +51,7 @@ C:\Users\synchen\go\bin\task.exe --list      # 列出所有可用 task
 **运行单个测试：**
 ```cmd
 cd D:\SmartNPC\smartnpc-mcp && go test -run TestPing ./internal/tools/...
-cd D:\SmartNPC\smartnpc-agent && go test -run TestAgent_RunLoop ./internal/agent/...
 ```
-
-**启动 agent 对话模式：**
-```cmd
-cd D:\SmartNPC\smartnpc-agent
-bin\smartnpc-agent.exe --mcp-bin ..\smartnpc-mcp\bin\smartnpc-mcp.exe ^
-  --mcp-args "--ws-url ws://127.0.0.1:18745/ws" --log-level debug run --api-key smartnpc-test-key
-```
-注意：agent 会 spawn mcp 子进程连 ws，不要同时跑独立的 `task mcp:run`，mod 只接受一个 ws 客户端。
 
 **启动 LLM 后端（WSL 终端）：**
 ```bash
@@ -76,7 +63,7 @@ hermes gateway run --accept-hooks
 
 **启动游戏：** 必须通过 `D:\Stardew Valley\StardewModdingAPI.exe`（不能直接用 `Stardew Valley.exe`）
 
-**一键启动（推荐）：** 仓库根 `run.bat` 自动 build mod + 起 hermes + 拉起多 NPC agent。日常调试优先走它，避免漏步骤。
+**一键启动（推荐）：** 仓库根 `run.bat` 自动 build mod + 起 hermes + 启动 mcp HTTP。日常调试优先走它，避免漏步骤。
 
 **启动 MCP HTTP 模式（Hermes-first 链路）：**
 ```cmd
@@ -99,25 +86,18 @@ bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
 
 **Go Workspace** — 根 `go.work` 联动：
 - `github.com/smartnpc/smartnpc-mcp`
-- `github.com/smartnpc/smartnpc-agent`
 
 **边界原则：**
 - C# 只放 SMAPI 胶水（事件、Harmony patch、ws 编解码）；业务逻辑在 Go
 - `smartnpc-mcp` 不持久化状态，只做协议桥
-- `smartnpc-agent` 通过 stdio spawn mcp；不引入 HTTP 直连
-- LLM Provider 固定 OpenAI 兼容优先（当前用 Hermes gateway，地址以 `.env` `OPENAI_BASE_URL` 为准；所有环境变量见 `.env.example`）
-- **Dual-LLM 架构**（旧链路）：dialogue model（对话）与 router model（工具/路由）分离，详见 `smartnpc-agent/internal/agent/`
-- **Hermes-first 架构**（M5 起）：smartnpc-mcp 直连 Hermes Agent，NPC 人格/记忆/技能/决策全部由 Hermes profile 承载
-- **多 NPC 编排**：单 agent 进程承载多个 NPC persona，通过 router 决定哪个 NPC 响应；persona 在 `personas/*.md`
+- LLM Provider 固定 OpenAI 兼容（Hermes Gateway 暴露 `/v1/responses`）；地址以 `.env` `OPENAI_BASE_URL` 为准
+- **Hermes-first 架构**：smartnpc-mcp 直连 Hermes Agent，NPC 人格/记忆/技能/决策全部由 Hermes profile 承载
 
 **关键目录：**
 - `smartnpc-mcp/internal/tools/` — MCP 工具实现，按 domain 一文件（chat / game_query / mail / npc_behavior / npc_movement / npc_perception / npc_message / player_query / meta）
 - `smartnpc-mcp/internal/bridge/` — ws 客户端 + mock
 - `smartnpc-mcp/internal/events/` — 游戏事件 typed structs（`ChatMessage` / `NpcInteract` 等）+ format 工具
 - `smartnpc-mcp/internal/hermesrelay/` — 游戏事件 → Hermes Gateway HTTP POST 转发层
-- `smartnpc-agent/internal/agent/` — NPC agent loop 核心（含 dual-LLM、多 NPC router）⚠️ **已冻结**
-- `smartnpc-agent/internal/llm/` — LLM provider 抽象 + OpenAI 实现 ⚠️ **已冻结**
-- `smartnpc-agent/personas/` — NPC 人格模板（多 NPC，如 `xiami_soul.md` 等）
 - `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。
 - `hermes/profiles/<npc>/` — 单个 NPC profile。`SOUL.md` 手写保留，其余由 `_master/` 渲染生成。6 个 NPC：`xiami` / `abigail` / `haley` / `harvey` / `penny` / `sebastian`。
 - `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
@@ -178,7 +158,7 @@ XiaMi_spritesheet.png (64×416, 4列×13行, 每帧 16×32, RGBA 透明)
 
 **格式：** `<type>(<scope>): <subject>`
 - type: `feat`/`fix`/`refactor`/`test`/`docs`/`chore`/`ci`/`build`
-- scope: `mcp`/`agent`/`mod`/`docs`/`ci`/`tools`/`bridge`
+- scope: `mcp`/`mod`/`hermes`/`docs`/`ci`/`tools`/`bridge`
 - subject: 祈使句、小写、≤60 字
 
 **流程：**
@@ -210,13 +190,12 @@ git tag v0.x.0 && git push origin v0.x.0
 
 | Milestone | 状态 |
 |-----------|------|
-| M1 Go workspace + MCP ping + agent CLI | ✅ |
+| M1 Go workspace + MCP ping | ✅ |
 | M1.5 Taskfile + GitHub Actions CI/Release | ✅ |
 | M2 SMAPI Mod + WebSocket 桥接 | ✅ |
 | M3 NPC 行为工具集（query/perception/movement/mail/chat/behavior） | ✅ |
-| M4 OpenAI provider + 单 NPC agent loop + dual-LLM + 多 NPC router | ✅ |
-| M5 (旧) SQLite 记忆 + 委派 + proactive + group chat + QQ-style UI（commit `b56d439`）| ⛔ **冻结**，重定向 |
-| M5 (Hermes-first) smartnpc-mcp 强化 + Hermes profile per NPC，smartnpc-agent 退出主链路 | ✅ 代码 + 6 NPC 配置就绪 — 待实机端到端验证（默认起 xiami + abigail） |
+| M4 OpenAI provider + 旧 Go agent loop（已删除） | ✅ → 移除 |
+| M5 (Hermes-first) smartnpc-mcp 强化 + Hermes profile per NPC | ✅ 代码 + 6 NPC 配置就绪 — 待实机端到端验证（默认起 xiami + abigail） |
 
 每个 milestone 完成后等用户验证再进入下一个。
 
@@ -233,21 +212,9 @@ git tag v0.x.0 && git push origin v0.x.0
 | 5.8 | hermesrelay outbound HTTP → Hermes Gateway | `internal/hermesrelay/` |
 | 5.9 / 5.10 / 5.11 | proactive-greeting + memory-policy + cron recipes | `hermes/profiles/xiami/skills/...` + `cron-recipes.md` |
 | 5.12 | SMAPI mod 多 NPC 路由（AudibleNPCResolver + TurnQueue） | `smapi-mod/NPC/AudibleNPCResolver.cs` + `TurnQueue.cs` |
-| 5.13 | smartnpc-agent 降级 dev harness | `smartnpc-agent/README.md` |
-| 5.14 | 文档拆分（architecture / hermes-profiles / mcp-tools / migration） | `docs/` |
+| 5.13 | 删除旧 `smartnpc-agent/` Go 编排器 | 已完成 |
+| 5.14 | 文档拆分（architecture / hermes-profiles / mcp-tools） | `docs/` |
 
 **待验证（5.6 / 5.7）**：实机跑通"玩家聊天 → Hermes → chat_say"和"问时间 → Hermes 自动调 game_get_time"。代码全部就绪，pipeline 集成测试已有；需要游戏 + Hermes gateway + mcp HTTP 模式同时跑一次完整 happy path。
 
 > 详见 [ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md) — synthetic events 为何复用 hermesrelay outbound 路径。
-
-## smartnpc-agent 冻结声明（2026-05-11 起）
-
-详见 [REFACTOR.md](REFACTOR.md) + [docs/roadmap.md](docs/roadmap.md) M5(Hermes-first) 章节。
-
-- `smartnpc-agent/` **不再接受新功能**：不加 memory / scheduler / multi-NPC pool / event router
-- `internal/agent/`、`internal/llm/`、`personas/` 仅作为回归对照保留
-- M5 旧实现（commit `b56d439`）作为"旧路线对照"封存，不再扩展
-- 仅允许：bug fix、依赖升级、为对照测试服务的最小改动
-- 新功能一律走 **smartnpc-mcp 强化 + Hermes profile** 路径
-
-如果接到"往 smartnpc-agent 加 X"的请求，先把请求映射到 Hermes profile / skill / MCP tool，再回报用户确认；不要直接动 Go agent 代码。

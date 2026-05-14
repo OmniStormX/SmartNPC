@@ -10,9 +10,8 @@ provider:
 
 ## 模块边界
 - C# SMAPI Mod 只放 SMAPI 直调的胶水代码（事件订阅、Harmony patch、API 调用、ws 消息编解码），业务逻辑全部在 Go 侧
-- `smartnpc-mcp` 不持久化任何业务状态，只做协议桥（WebSocket ↔ MCP）
-- `smartnpc-agent` 通过 stdio spawn `smartnpc-mcp`；不要引入 HTTP 直连方案（除非用户明确要求）
-- LLM Provider 固定 OpenAI 优先；Anthropic / 其他 provider 后续再加
+- `smartnpc-mcp` 不持久化任何业务状态，只做协议桥（WebSocket ↔ MCP）+ hermesrelay outbound
+- LLM 决策由 Hermes profile 承载（每 NPC 一个 gateway）；mcp 不直连 LLM
 
 ## Go 代码规范
 - 目标 Go 1.22+，可用 `log/slog`、`for range int`、泛型

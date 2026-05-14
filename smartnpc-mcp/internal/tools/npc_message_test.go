@@ -476,7 +476,7 @@ func TestNpcSendMessage_NilHermesDoesNotPanic(t *testing.T) {
 // TestNpcSendMessage_StillEmitsMCPNotification proves the original push
 // channel (MCP logging notification) is preserved even when a hermes handler
 // is also wired up. Hermes fan-out is "additive": existing subscribers
-// (smartnpc-agent dev harness, Claude Desktop) keep getting events.
+// (Claude Desktop, other MCP clients) keep getting events.
 func TestNpcSendMessage_StillEmitsMCPNotification(t *testing.T) {
 	type logged struct {
 		level mcp.LoggingLevel

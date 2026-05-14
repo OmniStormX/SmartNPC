@@ -93,7 +93,6 @@ start "smartnpc-mcp" cmd /k "cd /d d:\SmartNPC\smartnpc-mcp && set SMARTNPC_RUN=
 
 - `%LocalAppData%\go-build\` — Go 编译缓存
 - `D:\SmartNPC\smartnpc-mcp\bin\` — 项目 build 产物
-- `D:\SmartNPC\smartnpc-agent\bin\` — Agent 产物
 - `D:\Stardew Valley\smapi-internal\` — SMAPI runtime
 
 附理由：本机用于 Stardew Valley mod 开发，需要运行自编译 Go 工具链产物。

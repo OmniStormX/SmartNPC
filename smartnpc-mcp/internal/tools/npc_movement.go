@@ -87,10 +87,7 @@ type NpcGetNamedLocationsOutput struct {
 	Locations []NamedLocationEntry `json:"locations"`
 }
 
-// defaultNamedLocations is the same Farm landmark set used by the agent's
-// move-intent parser (keep these in sync with smartnpc-agent/internal/agent/
-// chat/locations.go::DefaultLocations so the LLM's view of the world matches
-// what the auto-executor can actually reach).
+// defaultNamedLocations is the Farm landmark set the move-intent parser uses.
 var defaultNamedLocations = []NamedLocationEntry{
 	{Name: "农场左边", Aliases: []string{"农场左边", "农场西边", "左边", "left", "west"}, Map: "Farm", X: 10, Y: 15},
 	{Name: "房子前面", Aliases: []string{"房子前面", "房子", "家门口", "门口", "house", "door", "farmhouse"}, Map: "Farm", X: 64, Y: 16},

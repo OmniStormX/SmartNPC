@@ -18,9 +18,9 @@ echo [OK] Build complete.
 echo.
 
 rem ---- Step 2: Kill old processes ----
-echo [2/6] Killing existing game / mcp / agent processes (if any)...
+echo [2/6] Killing existing game / mcp processes (if any)...
 powershell -NoProfile -Command "Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue | Stop-Process -Force"
-powershell -NoProfile -Command "Get-Process -Name 'smartnpc-mcp','smartnpc-agent' -ErrorAction SilentlyContinue | Stop-Process -Force"
+powershell -NoProfile -Command "Get-Process -Name 'smartnpc-mcp' -ErrorAction SilentlyContinue | Stop-Process -Force"
 timeout /t 1 /nobreak >nul
 echo [OK] Old processes cleared.
 echo.

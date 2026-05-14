@@ -40,14 +40,13 @@ jobs:
           filters: |
             go:
               - 'smartnpc-mcp/**'
-              - 'smartnpc-agent/**'
               - 'go.work'
               - 'go.work.sum'
               - 'Taskfile.yml'
             ci:
               - '.github/workflows/**'
 
-  # ── Go: lint + test + build, both modules in one job via go.work ────────
+  # ── Go: lint + test + build via go.work ─────────────────────────────────
   go:
     name: go (lint + test + build)
     needs: changes
@@ -62,7 +61,6 @@ jobs:
           cache: true
           cache-dependency-path: |
             smartnpc-mcp/go.sum
-            smartnpc-agent/go.sum
 
       - name: go work sync
         run: go work sync
@@ -71,24 +69,12 @@ jobs:
         working-directory: smartnpc-mcp
         run: go vet ./...
 
-      - name: go vet (agent)
-        working-directory: smartnpc-agent
-        run: go vet ./...
-
       - name: go test (mcp)
         working-directory: smartnpc-mcp
         run: go test -race -count=1 ./...
 
-      - name: go test (agent)
-        working-directory: smartnpc-agent
-        run: go test -race -count=1 ./...
-
       - name: go build (mcp)
         working-directory: smartnpc-mcp
-        run: go build -v ./...
-
-      - name: go build (agent)
-        working-directory: smartnpc-agent
         run: go build -v ./...
 
   # ── Aggregate gate so branch protection has a single required check ─────

@@ -20,10 +20,6 @@ dist/
 .env.local
 *.local
 
-# Runtime data
-smartnpc-agent/data/*
-!smartnpc-agent/data/.gitkeep
-
 # C# build outputs
 smapi-mod/bin/
 smapi-mod/obj/

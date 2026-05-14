@@ -1,5 +1,5 @@
 // Command smartnpc-mcp is the MCP server bridging the Stardew Valley SMAPI mod
-// to MCP clients (smartnpc-agent, Claude Desktop, Hermes, ...).
+// to MCP clients (Claude Desktop, Hermes, ...).
 //
 // Two transports are supported:
 //

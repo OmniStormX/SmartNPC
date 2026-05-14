@@ -20,7 +20,7 @@ import (
 //
 //	{ "kind": "stardew/event", "name": "<event>", "data": { ... } }
 //
-// MCP clients (e.g. smartnpc-agent) subscribe by setting LoggingMessageHandler
+// MCP clients (e.g. Hermes profiles) subscribe by setting LoggingMessageHandler
 // in their ClientOptions and filtering on kind == "stardew/event".
 func MakeEventForwarder(server *mcp.Server, log *slog.Logger) bridge.EventHandler {
 	return func(ctx context.Context, name string, data json.RawMessage) {
