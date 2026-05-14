@@ -96,16 +96,21 @@ set ACTIVE_PROFILES=xiami,abigail,haley,harvey,penny,sebastian
 start "Hermes Gateways" wsl -d Ubuntu-22.04 bash -ic "bash /mnt/d/SmartNPC/scripts/start_hermes_profiles.sh %ACTIVE_PROFILES%"
 echo      Waiting for all 6 gateways to become healthy (each up to ~90s)...
 
-for %%S in (xiami=8642 abigail=8643 haley=8644 harvey=8645 penny=8646 sebastian=8647) do call :wait_gateway %%S
+call :wait_gateway xiami     8642
+call :wait_gateway abigail   8643
+call :wait_gateway haley     8644
+call :wait_gateway harvey    8645
+call :wait_gateway penny     8646
+call :wait_gateway sebastian 8647
 echo [OK] All 6 gateways healthy.
 echo.
 goto step6
 
 :wait_gateway
-for /f "tokens=1,2 delims==" %%A in ("%~1") do (
-    set _gw_name=%%A
-    set _gw_port=%%B
-)
+rem %1 = profile name, %2 = gateway port. Two positional args (instead of
+rem name=port) avoid cmd's habit of mangling `=` in call arguments.
+set _gw_name=%~1
+set _gw_port=%~2
 :wait_gateway_retry
 curl -sS http://192.168.59.118:%_gw_port%/health >nul 2>&1
 if errorlevel 1 (
