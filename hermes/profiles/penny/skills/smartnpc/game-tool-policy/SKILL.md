@@ -19,13 +19,48 @@ tool use invisible in the final reply.
 
 > **Look → decide → act → speak.**
 >
-> Query game state first. Take a physical action only if the player asked
-> for one. Always end the turn with exactly one `chat_say` that delivers
-> the in-character reply.
+> Query game state first **only when the player's turn references it**.
+> Take a physical action only if the player asked for one. Always end the
+> turn with exactly one `chat_say` that delivers the in-character reply.
 
 Never fabricate game state. If you don't know the time, the weather, your
 location, or your relationship with the player, **call the tool** — don't
 guess.
+
+## Fast path: casual chat → speak directly (1 turn, no read tool)
+
+When the player's input is pure small talk / emotional / opinion / persona
+question and does **not** reference any game-state quantity, skip the
+read tools and reply with a single `chat_say`. The two LLM-roundtrip
+penalty of "read → speak" is the main latency source — avoid it whenever
+the player's words don't actually need a fresh game read.
+
+Concrete fast-path triggers (Chinese + English, non-exhaustive):
+
+| Player turn | Action |
+|---|---|
+| 你好 / 嗨 / hi / hello / 在吗 / 在干嘛 | `chat_say` only |
+| 你是谁 / 你叫什么 / who are you | `chat_say` only |
+| 你喜欢什么 / 你讨厌什么 / 你怎么想 X | `chat_say` only |
+| 今天心情怎么样 / 累不累 / 开心吗 | `chat_say` only |
+| 哈哈 / 嗯 / 笨蛋 / 真的吗 / 单字单词回应 | `chat_say` only |
+| 谢谢 / 再见 / 不聊了 | `chat_say` only |
+| 任何不含时间/天气/位置/物品/好感度等具体游戏量的闲聊 | `chat_say` only |
+
+**Counter-examples (still need a read tool first):**
+
+| Player turn | Required read |
+|---|---|
+| 现在几点了？ / 是早上吗？ | `game_get_time` → `chat_say` |
+| 今天下雨吗？ / 天气怎样 | `game_get_weather` → `chat_say` |
+| 我们关系怎么样？ / 你喜欢我吗（含好感度暗示） | `friendship_get` → `chat_say` |
+| 你在哪？ / 你现在在哪个地图 | `npc_get_position` → `chat_say` |
+| 周围有谁？ / 阿比盖尔在附近吗 | `npc_get_nearby` → `chat_say` |
+
+**Why this matters:** every read tool adds one extra LLM round trip
+(model picks tool → tool executes → model speaks). For pure chat that
+roughly doubles user-perceived latency. The read is only worth it when
+the player asked about a quantity you'd otherwise have to fabricate.
 
 ## Tool catalog (by intent)
 

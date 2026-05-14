@@ -128,6 +128,20 @@ type request struct {
 	Store        bool   `json:"store"`
 }
 
+// usageResponse picks the token-accounting fields out of /v1/responses.
+// Only what we need for cache-hit telemetry — silently zero when Hermes
+// omits them.
+type usageResponse struct {
+	Usage struct {
+		InputTokens        int `json:"input_tokens"`
+		OutputTokens       int `json:"output_tokens"`
+		TotalTokens        int `json:"total_tokens"`
+		InputTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+	} `json:"usage"`
+}
+
 func (r *Relay) post(input, eventName string) {
 	body, err := json.Marshal(request{
 		Model:        r.cfg.Model,
@@ -155,23 +169,46 @@ func (r *Relay) post(input, eventName string) {
 		req.Header.Set("Authorization", "Bearer "+r.cfg.APIKey)
 	}
 
+	started := time.Now()
 	resp, err := r.http.Do(req)
+	elapsed := time.Since(started)
 	if err != nil {
-		r.logger.Warn("hermesrelay POST failed", "event", eventName, "url", url, "err", err)
+		r.logger.Warn("hermesrelay POST failed",
+			"event", eventName, "url", url, "elapsed_ms", elapsed.Milliseconds(), "err", err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		r.logger.Warn("hermesrelay non-2xx",
-			"event", eventName, "status", resp.StatusCode, "body", string(b))
+			"event", eventName, "status", resp.StatusCode,
+			"elapsed_ms", elapsed.Milliseconds(), "body", string(b))
 		return
 	}
-	// Drain so the keep-alive connection can be reused.
+
+	// Read the body so we can parse usage and so the keep-alive connection
+	// can be reused. 64KB cap is plenty — /v1/responses returns a small
+	// JSON envelope, the conversation history is server-side.
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	_, _ = io.Copy(io.Discard, resp.Body)
-	r.logger.Debug("hermesrelay forwarded event",
-		"event", eventName, "status", resp.StatusCode,
-		"conversation", r.cfg.Conversation)
+
+	var u usageResponse
+	_ = json.Unmarshal(respBody, &u) // best-effort; zero values on parse miss
+
+	cacheRatio := 0.0
+	if u.Usage.InputTokens > 0 {
+		cacheRatio = float64(u.Usage.InputTokensDetails.CachedTokens) / float64(u.Usage.InputTokens)
+	}
+	r.logger.Info("hermesrelay forwarded event",
+		"event", eventName,
+		"status", resp.StatusCode,
+		"conversation", r.cfg.Conversation,
+		"elapsed_ms", elapsed.Milliseconds(),
+		"input_tokens", u.Usage.InputTokens,
+		"cached_tokens", u.Usage.InputTokensDetails.CachedTokens,
+		"cache_ratio", cacheRatio,
+		"output_tokens", u.Usage.OutputTokens,
+	)
 }
 
 // Cfg returns the resolved configuration this relay was built with. Used by

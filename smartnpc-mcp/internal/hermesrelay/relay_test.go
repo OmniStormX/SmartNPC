@@ -238,6 +238,66 @@ func TestRelay_NonOK_StatusLogged(t *testing.T) {
 	// is asserted on the slog output.
 }
 
+// TestRelay_ParsesUsageFromResponse covers the cache-hit telemetry path:
+// the response body's usage block is consumed and does not crash the
+// post handler when fields are partial or missing. The body must drain
+// even on malformed JSON so keep-alive can reuse the connection.
+func TestRelay_ParsesUsageFromResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "full_usage_with_cache",
+			body: `{"usage":{"input_tokens":1200,"input_tokens_details":{"cached_tokens":900},"output_tokens":40,"total_tokens":1240}}`,
+		},
+		{
+			name: "no_usage_field",
+			body: `{"id":"resp_123","ok":true}`,
+		},
+		{
+			name: "empty_body",
+			body: ``,
+		},
+		{
+			name: "malformed_json",
+			body: `{"usage":{"input_tokens":`,
+		},
+		{
+			name: "zero_input_tokens",
+			body: `{"usage":{"input_tokens":0,"output_tokens":0}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var wg sync.WaitGroup
+			wg.Add(1)
+			var cap captured
+			ts := fakeGateway(t, &wg, &cap, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			})
+			defer ts.Close()
+
+			r, err := New(Config{
+				URL:          ts.URL,
+				Conversation: "xiami",
+				Model:        "xiami",
+				Timeout:      2 * time.Second,
+			}, slog.Default())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			r.HandleEvent(context.Background(), bridge.EventChatMessage,
+				json.RawMessage(`{"npc":"XiaMi","text":"hi"}`))
+
+			if !waitGroupTimeout(&wg, 3*time.Second) {
+				t.Fatal("gateway never received POST")
+			}
+		})
+	}
+}
+
 // waitGroupTimeout blocks until wg is done or the timeout elapses,
 // returning true if done, false on timeout.
 func waitGroupTimeout(wg *sync.WaitGroup, d time.Duration) bool {
