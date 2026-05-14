@@ -3,6 +3,11 @@ setlocal
 title SmartNPC Launcher (Hermes-first)
 cd /d D:\SmartNPC
 
+rem Per-run log directory: D:\SmartNPC\logs\mcp_YYYYMMDD_HHMMSS.log
+if not exist D:\SmartNPC\logs mkdir D:\SmartNPC\logs
+for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value 2^>nul') do set LDT=%%I
+set MCP_LOG=D:\SmartNPC\logs\mcp_%LDT:~0,8%_%LDT:~8,6%.log
+
 echo ============================================
 echo   SmartNPC - Hermes-first One-Click Launcher
 echo ============================================
@@ -44,15 +49,19 @@ rem endpoint is down, Hermes caches "0 tools" and won't recover even
 rem after mcp comes up. Result: NPC receives the chat event but has
 rem no chat_say tool to reply with.
 echo [4/6] Starting smartnpc-mcp (--http :3000, --hermes-config multi-profile)...
+echo      stderr -^> %MCP_LOG%
 rem SMARTNPC_HERMES_KEY must match API_SERVER_KEY in each profile's config-overlay.yaml.
 rem Default 'smartnpc-test-key' matches the shipped overlays.
 if not defined SMARTNPC_HERMES_KEY set SMARTNPC_HERMES_KEY=smartnpc-test-key
+rem 2^>"%MCP_LOG%" redirects ONLY stderr (the slog stream); stdout stays clean
+rem in case the operator wants to attach to the cmd window. Tail the file with
+rem: powershell -Command "Get-Content '%MCP_LOG%' -Wait -Tail 50"
 start "smartnpc-mcp" cmd /k smartnpc-mcp\bin\smartnpc-mcp.exe ^
     --http :3000 ^
     --ws-url ws://127.0.0.1:18745/ws ^
     --hermes-config D:\SmartNPC\hermes\runtime-config.yaml ^
     --hermes-api-key %SMARTNPC_HERMES_KEY% ^
-    --log-level debug
+    --log-level debug 2^>"%MCP_LOG%"
 echo      Waiting for mcp HTTP endpoint to become reachable...
 :wait_mcp
 timeout /t 2 /nobreak >nul
@@ -99,6 +108,10 @@ echo ===========================
 echo   Active NPCs: %ACTIVE_PROFILES%
 echo   To enable haley/harvey/penny/sebastian, edit ACTIVE_PROFILES above.
 echo   Group chat: M6 (not orchestrated yet — UI works but no NPC replies).
+echo.
+echo   mcp log: %MCP_LOG%
+echo   tail it: powershell -NoProfile -Command "Get-Content '%MCP_LOG%' -Wait -Tail 50"
+echo   filter:  powershell -NoProfile -Command "Get-Content '%MCP_LOG%' -Wait | Select-String 'hermesrelay'"
 echo ===========================
 goto :eof
 
