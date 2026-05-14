@@ -313,3 +313,66 @@ func waitGroupTimeout(wg *sync.WaitGroup, d time.Duration) bool {
 		return false
 	}
 }
+
+// TestRelay_DebugPayloadDoesNotBreakPost confirms turning on the debug
+// payload flag still produces a normal POST + parse cycle. We don't
+// assert on slog output (slog's default handler is the test's concern);
+// we just verify the request still lands and the relay survives both
+// the outbound dump and the response dump branches.
+func TestRelay_DebugPayloadDoesNotBreakPost(t *testing.T) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var cap captured
+	ts := fakeGateway(t, &wg, &cap, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usage":{"input_tokens":42,"output_tokens":7}}`))
+	})
+	defer ts.Close()
+
+	r, err := New(Config{
+		URL:          ts.URL,
+		Conversation: "xiami",
+		Model:        "xiami",
+		Timeout:      2 * time.Second,
+		DebugPayload: true,
+	}, slog.Default())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	r.HandleEvent(context.Background(), bridge.EventChatMessage,
+		json.RawMessage(`{"npc":"XiaMi","text":"hi"}`))
+
+	if !waitGroupTimeout(&wg, 3*time.Second) {
+		t.Fatal("gateway never received POST with DebugPayload=true")
+	}
+	if cap.body.Conversation != "xiami" {
+		t.Errorf("Conversation = %q want xiami", cap.body.Conversation)
+	}
+}
+
+func TestDebugPayloadEnabled(t *testing.T) {
+	tests := []struct {
+		val  string
+		want bool
+	}{
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"no", false},
+		{"random", false},
+		{"1", true},
+		{"true", true},
+		{"TRUE", true},
+		{"Yes", true},
+		{"on", true},
+		{"  on  ", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.val, func(t *testing.T) {
+			t.Setenv("SMARTNPC_RELAY_DEBUG_PAYLOAD", tc.val)
+			if got := DebugPayloadEnabled(); got != tc.want {
+				t.Errorf("DebugPayloadEnabled(%q) = %v want %v", tc.val, got, tc.want)
+			}
+		})
+	}
+}

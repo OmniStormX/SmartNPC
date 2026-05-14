@@ -137,6 +137,7 @@ func main() {
 			Model:        *hermesModel,
 			NPCName:      *hermesNPC,
 			PersonaFile:  *hermesPersonaFile,
+			DebugPayload: hermesrelay.DebugPayloadEnabled(),
 		}, logger)
 		if err != nil {
 			logger.Error("hermesrelay init failed", "err", err)

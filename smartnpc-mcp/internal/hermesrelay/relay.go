@@ -42,6 +42,12 @@ type Config struct {
 
 	// Timeout for the POST. Defaults to 30s if zero.
 	Timeout time.Duration
+
+	// DebugPayload, when true, makes post() log the full outbound JSON body
+	// and full response body in addition to the usage summary. Use only for
+	// short debug sessions — the payload contains the entire persona +
+	// instructions and can be tens of KB per turn.
+	DebugPayload bool
 }
 
 // Relay forwards events to a Hermes Gateway. Safe for concurrent use.
@@ -155,6 +161,18 @@ func (r *Relay) post(input, eventName string) {
 		return
 	}
 
+	if r.cfg.DebugPayload {
+		r.logger.Debug("hermesrelay outbound payload",
+			"event", eventName,
+			"conversation", r.cfg.Conversation,
+			"model", r.cfg.Model,
+			"input", input,
+			"instructions_len", len(r.persona),
+			"body_bytes", len(body),
+			"body", string(body),
+		)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), r.cfg.Timeout)
 	defer cancel()
 
@@ -209,6 +227,17 @@ func (r *Relay) post(input, eventName string) {
 		"cache_ratio", cacheRatio,
 		"output_tokens", u.Usage.OutputTokens,
 	)
+
+	if r.cfg.DebugPayload {
+		r.logger.Debug("hermesrelay inbound response",
+			"event", eventName,
+			"conversation", r.cfg.Conversation,
+			"status", resp.StatusCode,
+			"elapsed_ms", elapsed.Milliseconds(),
+			"body_bytes", len(respBody),
+			"body", string(respBody),
+		)
+	}
 }
 
 // Cfg returns the resolved configuration this relay was built with. Used by

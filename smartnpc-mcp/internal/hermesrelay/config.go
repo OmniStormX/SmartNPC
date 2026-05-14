@@ -3,6 +3,7 @@ package hermesrelay
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,6 +28,10 @@ type profileEntry struct {
 // Config values ready to feed into NewGroup. API keys are resolved from env
 // vars at load time; a missing env var produces an empty APIKey (which the
 // underlying Relay treats as "no Authorization header").
+//
+// Env var SMARTNPC_RELAY_DEBUG_PAYLOAD=1 turns on per-turn dump of the
+// outbound request body + inbound response body via slog.Debug. Off by
+// default — the payload contains the full persona and can be 10-50KB.
 func LoadConfigFile(path string) ([]Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -39,6 +44,7 @@ func LoadConfigFile(path string) ([]Config, error) {
 	if len(file.Profiles) == 0 {
 		return nil, fmt.Errorf("hermesrelay: %q has empty profiles list", path)
 	}
+	debugPayload := DebugPayloadEnabled()
 	out := make([]Config, 0, len(file.Profiles))
 	for i, p := range file.Profiles {
 		if p.GatewayURL == "" {
@@ -56,6 +62,7 @@ func LoadConfigFile(path string) ([]Config, error) {
 			Model:        p.Model,
 			NPCName:      p.NPCFilter,
 			PersonaFile:  p.PersonaFile,
+			DebugPayload: debugPayload,
 		}
 		if p.APIKeyEnv != "" {
 			cfg.APIKey = os.Getenv(p.APIKeyEnv)
@@ -63,4 +70,18 @@ func LoadConfigFile(path string) ([]Config, error) {
 		out = append(out, cfg)
 	}
 	return out, nil
+}
+
+// DebugPayloadEnabled reports whether the env var that turns on full
+// request/response body logging is set to a truthy value (1, true, yes, on,
+// case-insensitive). Exported so callers building Configs without going
+// through LoadConfigFile (e.g. the legacy --hermes-url flag path) can apply
+// the same toggle.
+func DebugPayloadEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_DEBUG_PAYLOAD")))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
