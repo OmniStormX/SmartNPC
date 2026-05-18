@@ -1,5 +1,5 @@
 ---
-name: smartnpc-group-chat-reply
+name: group-chat-reply
 description: When the event payload starts with [group_chat group_id="<id>"], any chat_say you call must include channel="group" and group_id=<id>; otherwise your line lands in a private panel no one in the group sees. Tool calls (game_*, npc_send_message, npc_move_to, ...) and staying silent remain valid — group context only constrains the chat_say arguments, it does not shortcut your normal tool-evaluation flow.
 version: 0.2.0
 author: SmartNPC Project

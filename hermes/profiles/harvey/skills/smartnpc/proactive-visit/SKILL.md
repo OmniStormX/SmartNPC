@@ -1,5 +1,5 @@
 ---
-name: smartnpc-proactive-visit
+name: proactive-visit
 description: When a proactive-visit cron fires, decide whether to drop by the player unsolicited. Honors a 60-minute cool-down (read/write via memory), a 1-in-6 dice roll to desynchronize across the six NPCs, a player-availability check, and a politeness check on the in-game clock. On YES, warps next to the player with npc_summon, emotes a sparkle above the head with npc_emote, and opens with a short chat_say; on NO, writes a single memory line and exits silently.
 version: 0.1.0
 author: SmartNPC Project

@@ -1,5 +1,5 @@
 ---
-name: smartnpc-proactive-greeting
+name: proactive-greeting
 description: How to react when smartnpc-mcp forwards an `npc_interact` event (player walked up and clicked you). Triggers a short, in-character opening line tuned to current friendship and game state — no waiting for the player to speak first.
 version: 0.1.0
 author: SmartNPC Project

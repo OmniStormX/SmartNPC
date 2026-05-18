@@ -1,5 +1,5 @@
 ---
-name: smartnpc-memory-policy
+name: memory-policy
 description: How Sebastian uses Hermes's built-in per-profile memory to remember the player across game days. Defines what to commit to memory, what NOT to commit, and how to retrieve before speaking.
 version: 0.1.0
 author: SmartNPC Project

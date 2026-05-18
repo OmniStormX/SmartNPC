@@ -1,5 +1,5 @@
 ---
-name: smartnpc-game-tool-policy
+name: game-tool-policy
 description: Rules for using smartnpc-mcp game tools in character as a Stardew Valley NPC. Applies whenever the player interacts with the NPC and the conversation may involve game state, movement, or inter-NPC signals.
 version: 0.1.0
 author: SmartNPC Project

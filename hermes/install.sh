@@ -51,7 +51,9 @@ fi
 # Detect the WSL default-gateway IP, which resolves back to the Windows host
 # from inside WSL. Works regardless of mirrored-mode networking as long as
 # smartnpc-mcp is bound to 0.0.0.0:3000 on Windows.
-HOST_IP="$(ip route 2>/dev/null | awk '/default/ { print $3; exit }')"
+# 在 pipefail 模式下，`ip route | awk ... exit` 可能让 ip 收到 SIGPIPE。
+# 使用 awk 自行记住首个默认网关，避免提前退出导致脚本异常中断。
+HOST_IP="$(ip route 2>/dev/null | awk '/default/ && host == "" { host = $3 } END { print host }')"
 if [[ -z "$HOST_IP" ]]; then
     HOST_IP="127.0.0.1"
     echo "warning: could not detect WSL default gateway — falling back to $HOST_IP"

@@ -1,5 +1,5 @@
 ---
-name: smartnpc-inter-npc-message
+name: inter-npc-message
 description: When the player asks about or asks you to involve another NPC, send them a message instead of fabricating their response. When you receive a message from another NPC, pull it from your inbox and react in character — out loud only if the player is actually here to hear it.
 version: 0.2.0
 author: SmartNPC Project

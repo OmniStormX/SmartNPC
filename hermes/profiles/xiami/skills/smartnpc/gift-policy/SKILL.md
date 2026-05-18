@@ -1,5 +1,5 @@
 ---
-name: smartnpc-gift-policy
+name: gift-policy
 description: When the player asks for or offers to buy a specific item from you, decide whether it's on your "Signature gift items" list in SOUL.md. If yes, call npc_give_item with the qualified item id from SOUL.md and pair it with a short in-character chat_say handing it over. If no, refuse in character without calling the tool. Never give items proactively; the player must ask.
 version: 0.1.0
 author: SmartNPC Project
