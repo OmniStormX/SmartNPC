@@ -73,8 +73,8 @@ Hermes Agent Profile (per NPC)
 | 2 | 5.6 | 跑通"玩家聊天 → Hermes profile → chat_say"端到端 | ✅ | `smartnpc-mcp/cmd/smartnpc-mcp/pipeline_test.go` + `docs/manual-e2e-verification.md`；E2E 验证 2026-05-12（含 delegate-fix） |
 | 2 | 5.7 | 跑通"问时间/天气/好感度 → Hermes 自动调 game_* 工具" | ✅ | 同上 |
 | 3 | 5.8 | 事件触发链路实装（方案 B：smartnpc-mcp outbound HTTP → Hermes Gateway） | ✅ | `smartnpc-mcp/internal/hermesrelay/` + main.go `--hermes-*` flags |
-| 3 | 5.9 | NPC 主动打招呼（npc_interact event → Hermes） | ✅ | `hermes/profiles/xiami/skills/smartnpc/proactive-greeting/SKILL.md` |
-| 4 | 5.10 | 长期记忆迁移：Hermes 内置 state.db + FTS5 | ✅ | `hermes/profiles/xiami/skills/smartnpc/memory-policy/SKILL.md` (Hermes 内置 state.db 直接用) |
+| 3 | 5.9 | NPC 主动打招呼（npc_interact event → Hermes） | ✅ | `hermes/profiles/xiami/skills/smartnpc/smartnpc-proactive-greeting/SKILL.md` |
+| 4 | 5.10 | 长期记忆迁移：Hermes 内置 state.db + FTS5 | ✅ | `hermes/profiles/xiami/skills/smartnpc/smartnpc-memory-policy/SKILL.md` (Hermes 内置 state.db 直接用) |
 | 4 | 5.11 | 反思 / cron 主动行为 | ✅ | `hermes/profiles/xiami/cron-recipes.md` |
 | 4 | 5.12 | 多 NPC profile 路由：SMAPI mod 里 AudibleNPCResolver + TurnQueue | ✅ | `smapi-mod/NPC/AudibleNPCResolver.cs` + `TurnQueue.cs` + `ModEntry.cs` 接入 |
 | 5 | 5.13 | smartnpc-agent 降级为 dev harness | ✅ | `smartnpc-agent/README.md` + `CLAUDE.md` |

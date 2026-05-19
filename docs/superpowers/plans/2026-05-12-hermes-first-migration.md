@@ -29,8 +29,8 @@
 | `hermes/profiles/harvey/{SOUL.md,config-overlay.yaml,skills/smartnpc/...}` | **Create** | Full profile, port 8645. |
 | `hermes/profiles/penny/{SOUL.md,config-overlay.yaml,skills/smartnpc/...}` | **Create** | Full profile, port 8646. |
 | `hermes/profiles/sebastian/{SOUL.md,config-overlay.yaml,skills/smartnpc/...}` | **Create** | Full profile, port 8647. |
-| `hermes/profiles/<all 6>/skills/smartnpc/inter-npc-message/SKILL.md` | **Create** | New shared skill replacing `consult_npc` semantics (asker + receiver roles, query / behavioral / reply kinds). |
-| `hermes/profiles/xiami/skills/smartnpc/game-tool-policy/SKILL.md` | Modify | Add cross-reference paragraph pointing to `inter-npc-message`. |
+| `hermes/profiles/<all 6>/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md` | **Create** | New shared skill replacing `consult_npc` semantics (asker + receiver roles, query / behavioral / reply kinds). |
+| `hermes/profiles/xiami/skills/smartnpc/smartnpc-game-tool-policy/SKILL.md` | Modify | Add cross-reference paragraph pointing to `inter-npc-message`. |
 | `scripts/start_hermes_profiles.sh` | **Create** | WSL helper that starts named Hermes gateways in background, polls `/health`, writes PIDs to a tracking file. |
 | `run.bat` | **Rewrite** | Drop smartnpc-agent launch; call `install.sh` + `ensure_hermes_aux.sh`; start mcp `--http :3000 --hermes-config ...`; start xiami + abigail gateways via `start_hermes_profiles.sh`; launch game. |
 | `docs/architecture.md` | Modify | Replace single-target diagram with multi-profile fan-out diagram; describe `runtime-config.yaml`. |
@@ -1140,13 +1140,13 @@ git commit -m "feat(run): rewrite run.bat for Hermes-first runtime"
 ### Task 9: Shared `inter-npc-message` skill
 
 **Files:**
-- Create: `hermes/profiles/xiami/skills/smartnpc/inter-npc-message/SKILL.md`
+- Create: `hermes/profiles/xiami/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md`
 
 This file is authored once and copied verbatim into each of the 6 profiles' `skills/smartnpc/` directory in later tasks.
 
 - [ ] **Step 1: Write the skill**
 
-Create `hermes/profiles/xiami/skills/smartnpc/inter-npc-message/SKILL.md`:
+Create `hermes/profiles/xiami/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md`:
 
 ```markdown
 ---
@@ -1256,19 +1256,19 @@ Abigail receives, calls `npc_summon(npc="Abigail")`, then
 - [ ] **Step 2: Verify UTF-8 no BOM**
 
 ```powershell
-python -c "open(r'hermes/profiles/xiami/skills/smartnpc/inter-npc-message/SKILL.md','rb').read().decode('utf-8')"
+python -c "open(r'hermes/profiles/xiami/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md','rb').read().decode('utf-8')"
 ```
 Expected: no exception. Then check first 3 bytes are not `\xef\xbb\xbf` (BOM):
 
 ```powershell
-python -c "f=open(r'hermes/profiles/xiami/skills/smartnpc/inter-npc-message/SKILL.md','rb'); h=f.read(3); print('BOM' if h==b'\xef\xbb\xbf' else 'no-BOM')"
+python -c "f=open(r'hermes/profiles/xiami/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md','rb'); h=f.read(3); print('BOM' if h==b'\xef\xbb\xbf' else 'no-BOM')"
 ```
 Expected: `no-BOM`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add hermes/profiles/xiami/skills/smartnpc/inter-npc-message/SKILL.md
+git add hermes/profiles/xiami/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md
 git commit -m "feat(hermes): inter-npc-message skill replaces consult_npc logic"
 ```
 
@@ -1277,12 +1277,12 @@ git commit -m "feat(hermes): inter-npc-message skill replaces consult_npc logic"
 ### Task 10: Cross-reference in `game-tool-policy`
 
 **Files:**
-- Modify: `hermes/profiles/xiami/skills/smartnpc/game-tool-policy/SKILL.md`
+- Modify: `hermes/profiles/xiami/skills/smartnpc/smartnpc-game-tool-policy/SKILL.md`
 
 - [ ] **Step 1: Locate the place to insert**
 
 ```bash
-grep -n "## " hermes/profiles/xiami/skills/smartnpc/game-tool-policy/SKILL.md
+grep -n "## " hermes/profiles/xiami/skills/smartnpc/smartnpc-game-tool-policy/SKILL.md
 ```
 Look for a `## See also` section or the end of the file.
 
@@ -1304,7 +1304,7 @@ Full rules and examples: see the `smartnpc-inter-npc-message` skill.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add hermes/profiles/xiami/skills/smartnpc/game-tool-policy/SKILL.md
+git add hermes/profiles/xiami/skills/smartnpc/smartnpc-game-tool-policy/SKILL.md
 git commit -m "docs(hermes): xiami game-tool-policy points at inter-npc-message"
 ```
 
@@ -1355,10 +1355,10 @@ Each task follows the same pattern. Steps 1–4 are bite-sized; step 2 (SOUL.md 
 **Files:**
 - Create: `hermes/profiles/abigail/SOUL.md`
 - Create: `hermes/profiles/abigail/config-overlay.yaml`
-- Create: `hermes/profiles/abigail/skills/smartnpc/game-tool-policy/SKILL.md` (copy from xiami)
-- Create: `hermes/profiles/abigail/skills/smartnpc/proactive-greeting/SKILL.md` (copy from xiami)
-- Create: `hermes/profiles/abigail/skills/smartnpc/memory-policy/SKILL.md` (copy from xiami)
-- Create: `hermes/profiles/abigail/skills/smartnpc/inter-npc-message/SKILL.md` (copy from xiami)
+- Create: `hermes/profiles/abigail/skills/smartnpc/smartnpc-game-tool-policy/SKILL.md` (copy from xiami)
+- Create: `hermes/profiles/abigail/skills/smartnpc/smartnpc-proactive-greeting/SKILL.md` (copy from xiami)
+- Create: `hermes/profiles/abigail/skills/smartnpc/smartnpc-memory-policy/SKILL.md` (copy from xiami)
+- Create: `hermes/profiles/abigail/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md` (copy from xiami)
 
 - [ ] **Step 1: Read source and template**
 

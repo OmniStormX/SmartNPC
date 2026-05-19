@@ -18,11 +18,26 @@
 #
 # WHAT IT SETS (per profile)
 #   model.context_length = 64000
+#   model.default = $SMARTNPC_HERMES_MODEL   (only when env var is set)
 #   compression.enabled = true
 #   compression.threshold = 0.15
 #   compression.target_ratio = 0.10
 #   compression.protect_last_n = 8
 #   compression.hygiene_hard_message_limit = 60
+#   agent.tool_use_enforcement = false
+#
+# WHY agent.tool_use_enforcement = false
+#   Hermes' bootstrap injects a "Tool-use enforcement" + <tool_persistence>
+#   block into the system prompt for any model whose name matches gpt /
+#   codex / gemini / gemma / grok (default `auto`). That block tells the
+#   model "Keep calling tools until task complete & verified" and "Do not
+#   stop early when another tool call would materially improve the
+#   result" — which DIRECTLY conflicts with our SmartNPC "exactly one
+#   chat_say per wake-up, then end the turn" rule. The model defers to
+#   the developer-level system prompt over our skill content, so even
+#   with the chat_say TURN_END signal it keeps emitting more tool calls
+#   in a loop. Disabling the injection lets SOUL.md + skills own the
+#   tool-loop policy.
 #
 # Usage:
 #   bash scripts/apply_hermes_tuning.sh                    # all 6 profiles
@@ -30,6 +45,25 @@
 #   HERMES_HOME=/custom/path bash scripts/apply_hermes_tuning.sh
 
 set -euo pipefail
+
+# Auto-load SMARTNPC_HERMES_MODEL from the repo's .env so the user can set
+# it once there instead of exporting every run. We do NOT `source` the file
+# — .env is authored on Windows (CRLF) and contains unquoted values with
+# spaces (e.g. SMARTNPC_GAME_PATH=...Stardew Valley), both of which crash
+# `source`. Instead, grep just the line we care about, strip CR, and pull
+# the value out manually. Anything fancier is out of scope for this script.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/../.env"
+if [[ -z "${SMARTNPC_HERMES_MODEL:-}" && -f "$ENV_FILE" ]]; then
+  line="$(grep -E '^[[:space:]]*SMARTNPC_HERMES_MODEL[[:space:]]*=' "$ENV_FILE" | tail -n1 | tr -d '\r' || true)"
+  if [[ -n "$line" ]]; then
+    val="${line#*=}"
+    # strip surrounding single or double quotes if present
+    val="${val%\"}"; val="${val#\"}"
+    val="${val%\'}"; val="${val#\'}"
+    export SMARTNPC_HERMES_MODEL="$val"
+  fi
+fi
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PROFILES_DIR="$HERMES_HOME/profiles"
@@ -73,18 +107,24 @@ for profile in "${targets[@]}"; do
     continue
   fi
 
-  "$PY" - "$cfg" <<'PY'
+  "$PY" - "$cfg" "${SMARTNPC_HERMES_MODEL:-}" <<'PY'
 import sys, yaml, pathlib
 
 path = pathlib.Path(sys.argv[1])
+hermes_model = sys.argv[2] if len(sys.argv) > 2 else ""
 text = path.read_text(encoding="utf-8")
 data = yaml.safe_load(text) or {}
 
-# model: keep every existing field; just set context_length.
+# model: keep every existing field; just set context_length, and override
+# model.default ONLY when SMARTNPC_HERMES_MODEL is set in the environment
+# (otherwise leave the bootstrap-provided default — typically gpt-5.5 —
+# untouched). provider/base_url stay bootstrap-controlled in both cases.
 model = data.get("model")
 if not isinstance(model, dict):
     model = {} if model is None else {"_legacy": model}
 model["context_length"] = 64000
+if hermes_model:
+    model["default"] = hermes_model
 data["model"] = model
 
 # compression: union with existing.
@@ -100,12 +140,25 @@ comp.update({
 })
 data["compression"] = comp
 
+# agent: turn off tool_use_enforcement so Hermes does NOT inject the
+# "keep calling tools until task complete" / <tool_persistence> block
+# into the system prompt. That injection competes with our SmartNPC
+# "one chat_say per wake-up then stop" rule and produces the chat_say
+# loop. Keeping the rest of `agent.*` (max_turns, max_iterations, ...)
+# untouched.
+agent = data.get("agent")
+if not isinstance(agent, dict):
+    agent = {}
+agent["tool_use_enforcement"] = False
+data["agent"] = agent
+
 # Write back. sort_keys=False preserves authoring order on top-level
 # keys we did not touch; PyYAML will reorder dict insertion order on
 # nested mutated dicts but Hermes does not care about ordering.
 new_text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096)
 path.write_text(new_text, encoding="utf-8")
-print(f"  - wrote model.context_length=64000 + compression.* → {path}")
+extras = f", model.default={hermes_model}" if hermes_model else ""
+print(f"  - wrote model.context_length=64000{extras} + compression.* + agent.tool_use_enforcement=false → {path}")
 PY
   applied=$((applied + 1))
 done

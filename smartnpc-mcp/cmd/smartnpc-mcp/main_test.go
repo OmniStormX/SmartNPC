@@ -22,7 +22,7 @@ func TestHTTPTransport_PingRoundTrip(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name: "smartnpc-mcp-test", Version: "test",
 	}, nil)
-	tools.RegisterAll(server, nil, nil, nil) // no bridge — only meta + in-process tools
+	tools.RegisterAll(server, nil, nil, nil, nil) // no bridge — only meta + in-process tools
 
 	handler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },

@@ -42,13 +42,10 @@ type profileEntry struct {
 //	                                            lines) instead of the main
 //	                                            slog stream. Implicitly turns
 //	                                            DEBUG_PAYLOAD on.
-//	SMARTNPC_RELAY_HISTORY_TURNS=<int>        — short-window cap (player+npc
-//	                                            combined). Default 6, set 0
-//	                                            to disable mcp-managed
-//	                                            history.
-//	SMARTNPC_RELAY_STORE=1|true               — flip Hermes server-side store
-//	                                            back on. Default off; the
-//	                                            mcp window replaces it.
+//	SMARTNPC_RELAY_STORE=0|false              — disable Hermes server-side
+//	                                            conversation store. Default
+//	                                            on; only flip when debugging
+//	                                            duplicate-memory issues.
 //	SMARTNPC_RELAY_TIMEOUT_MS=<int>           — POST timeout. Default 120000.
 func LoadConfigFile(path string) ([]Config, error) {
 	b, err := os.ReadFile(path)
@@ -67,7 +64,6 @@ func LoadConfigFile(path string) ([]Config, error) {
 		return nil, err
 	}
 	debugPayload := DebugPayloadEnabled() || payloadEnabled
-	maxHistory := HistoryTurnsFromEnv()
 	store := StoreFromEnv()
 	timeout := TimeoutFromEnv()
 	out := make([]Config, 0, len(file.Profiles))
@@ -82,16 +78,15 @@ func LoadConfigFile(path string) ([]Config, error) {
 			return nil, fmt.Errorf("hermesrelay: profile %d (%s): model required", i, p.Name)
 		}
 		cfg := Config{
-			URL:             p.GatewayURL,
-			Conversation:    p.Conversation,
-			Model:           p.Model,
-			NPCName:         p.NPCFilter,
-			PersonaFile:     p.PersonaFile,
-			DebugPayload:    debugPayload,
-			PayloadLogger:   payloadLogger,
-			MaxHistoryTurns: maxHistory,
-			Store:           store,
-			Timeout:         timeout,
+			URL:           p.GatewayURL,
+			Conversation:  p.Conversation,
+			Model:         p.Model,
+			NPCName:       p.NPCFilter,
+			PersonaFile:   p.PersonaFile,
+			DebugPayload:  debugPayload,
+			PayloadLogger: payloadLogger,
+			Store:         store,
+			Timeout:       timeout,
 		}
 		if p.APIKeyEnv != "" {
 			cfg.APIKey = os.Getenv(p.APIKeyEnv)
@@ -101,27 +96,10 @@ func LoadConfigFile(path string) ([]Config, error) {
 	return out, nil
 }
 
-// HistoryTurnsFromEnv resolves SMARTNPC_RELAY_HISTORY_TURNS, defaulting to 0
-// (disabled). The mcp-managed short window duplicates Hermes' built-in
-// conversation memory, so it's off by default — turn it on only as an escape
-// hatch when Hermes compression is misbehaving. Negative or non-numeric
-// values clamp to 0.
-func HistoryTurnsFromEnv() int {
-	v := strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_HISTORY_TURNS"))
-	if v == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return 0
-	}
-	return n
-}
-
 // StoreFromEnv resolves SMARTNPC_RELAY_STORE, defaulting to true so Hermes
-// owns the conversation history (with its compression layer). Flip to false
-// only when the SMARTNPC_RELAY_HISTORY_TURNS escape hatch is also on, to
-// avoid double-storing.
+// owns the conversation history (with its compression layer). mcp does NOT
+// maintain its own short-window history; this knob exists only as an escape
+// hatch for debugging.
 func StoreFromEnv() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("SMARTNPC_RELAY_STORE")))
 	switch v {

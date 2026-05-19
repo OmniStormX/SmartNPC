@@ -136,17 +136,16 @@ func main() {
 			os.Exit(1)
 		}
 		single, err := hermesrelay.New(hermesrelay.Config{
-			URL:             *hermesURL,
-			APIKey:          *hermesAPIKey,
-			Conversation:    *hermesConversation,
-			Model:           *hermesModel,
-			NPCName:         *hermesNPC,
-			PersonaFile:     *hermesPersonaFile,
-			DebugPayload:    hermesrelay.DebugPayloadEnabled() || payloadEnabled,
-			PayloadLogger:   payloadLogger,
-			MaxHistoryTurns: hermesrelay.HistoryTurnsFromEnv(),
-			Store:           hermesrelay.StoreFromEnv(),
-			Timeout:         hermesrelay.TimeoutFromEnv(),
+			URL:           *hermesURL,
+			APIKey:        *hermesAPIKey,
+			Conversation:  *hermesConversation,
+			Model:         *hermesModel,
+			NPCName:       *hermesNPC,
+			PersonaFile:   *hermesPersonaFile,
+			DebugPayload:  hermesrelay.DebugPayloadEnabled() || payloadEnabled,
+			PayloadLogger: payloadLogger,
+			Store:         hermesrelay.StoreFromEnv(),
+			Timeout:       hermesrelay.TimeoutFromEnv(),
 		}, logger)
 		if err != nil {
 			logger.Error("hermesrelay init failed", "err", err)
@@ -161,6 +160,12 @@ func main() {
 		hermesHandler = nil
 	}
 
+	// Group-chat speak budget: one chat_say per (group, speaker) per player
+	// turn; reset by player input into that group. Lives at process scope so
+	// the same instance is observed by both the chat_say tool handler and
+	// the bridge router that resets it on player_group events.
+	chatGuard := tools.NewChatSayGuard()
+
 	// Wire the ws bridge first so we can attach event forwarders during
 	// tool registration.
 	var br *bridge.WSClient
@@ -168,7 +173,7 @@ func main() {
 		// Construct first, then bind the handler — the handler needs to
 		// reference the client to issue chat_say in echo mode.
 		br = bridge.NewWSClient(bridge.WSClientOptions{URL: *wsURL, Logger: logger})
-		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler))
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, chatGuard))
 		if err := br.Connect(ctx); err != nil {
 			// Mod may not be running yet. The ws client retries in the
 			// background; meanwhile non-mod tools (ping) still work.
@@ -176,7 +181,7 @@ func main() {
 		}
 	}
 
-	tools.RegisterAll(server, br, hermesHandler, logger)
+	tools.RegisterAll(server, br, hermesHandler, chatGuard, logger)
 
 	if *httpAddr != "" {
 		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin,
@@ -277,13 +282,23 @@ func runHTTP(
 //     issue a chat_say back through the same bridge.
 //   - optional Hermes relay: POST the event to a running Hermes Gateway
 //     so an NPC profile can drive its turn.
+//   - group-chat speak-budget reset: every chat_received with
+//     source="player_group" calls ResetGroup on chatGuard so each NPC in
+//     that group gets a fresh chat_say budget for the new player turn.
 //
 // br may be nil during initial wiring; in that case echo-mode is a no-op.
 // relay may be nil; in that case the Hermes forwarding is skipped.
-func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay bridge.EventHandler) bridge.EventHandler {
+// chatGuard may be nil; the reset hook becomes a no-op.
+func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay bridge.EventHandler, chatGuard *tools.ChatSayGuard) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
 
 	return func(ctx context.Context, name string, data json.RawMessage) {
+		// Refresh chat_say budgets before the relay fires so the recipient
+		// NPC's wake-up starts clean. MaybeResetGuard handles both the
+		// group reset (on player_group input) and the private reset (any
+		// event addressed to a specific NPC).
+		tools.MaybeResetGuard(chatGuard, name, data)
+
 		// MCP clients always see the raw event stream.
 		forward(ctx, name, data)
 
@@ -299,6 +314,9 @@ func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, ec
 
 		switch {
 		case synthOK:
+			// The synth carries the recipient NPC; refresh that NPC's
+			// private budget before the relay wakes their Hermes profile.
+			tools.MaybeResetGuard(chatGuard, bridge.EventChatMessage, synthData)
 			forward(ctx, bridge.EventChatMessage, synthData)
 			if relay != nil {
 				relay(ctx, bridge.EventChatMessage, synthData)

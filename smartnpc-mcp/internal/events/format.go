@@ -105,7 +105,31 @@ func FormatForHermes(name string, data json.RawMessage) string {
 	case bridge.EventNpcMessage:
 		var p NpcMessage
 		if err := json.Unmarshal(data, &p); err == nil && p.Text != "" {
-			return fmt.Sprintf("NPC %s says to you (privately): %s", p.From, p.Text)
+			kindHint := ""
+			if p.Kind != "" {
+				kindHint = fmt.Sprintf(" The sender tagged it kind=%q.", p.Kind)
+			}
+			return fmt.Sprintf(
+				"[inter_npc_message from=%q to=%q] NPC %s sent you a private message: %s\n\n"+
+					"⚠️ This is an INTER-NPC wake-up, NOT a player turn. The player did "+
+					"NOT speak; do NOT chat_say back to the player as if they did.%s\n\n"+
+					"Follow `smartnpc-inter-npc-message` (load it via skill_view if "+
+					"unfamiliar). Mandatory flow:\n"+
+					"  1. `npc_inbox_get(npc=%q)` to read the full item (id + kind).\n"+
+					"  2. Decide audibility via `npc_get_position` + `player_get_status`.\n"+
+					"  3. Branch on kind:\n"+
+					"     • kind=\"query\"      → compose answer, call `npc_send_message"+
+					"(to=%q, kind=\"reply\", ...)`. **Do NOT chat_say** — the player has "+
+					"not heard the question.\n"+
+					"     • kind=\"behavioral\" → run the implied game tool, then maybe "+
+					"one short chat_say IFF audible, then `npc_send_message(kind=\"reply\")`.\n"+
+					"     • kind=\"reply\"      → fold into your NEXT player turn; do NOT "+
+					"counter-reply via npc_send_message. No chat_say right now if player "+
+					"isn't here.\n"+
+					"  4. `npc_inbox_ack(npc=%q, ids=[...])` for every item handled.\n"+
+					"Hard rule: never send `kind=\"query\"`/`\"behavioral\"` back to the "+
+					"original sender — only `kind=\"reply\"`, once per inbox item.",
+				p.From, p.To, p.From, p.Text, kindHint, p.To, p.From, p.To)
 		}
 	case bridge.EventNpcBroadcast:
 		var p NpcBroadcast

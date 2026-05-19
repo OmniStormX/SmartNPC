@@ -27,11 +27,11 @@ F1 section has the full audit). Concretely:
 
 | File | Hard-coded literals per profile |
 |---|---|
-| `skills/smartnpc/memory-policy/SKILL.md` | 9 hits — `(XiaMi)` headings, `memories/xiami/state.db` path, `conversation 'xiami'`, XiaMi-specific 口癖 examples, frontmatter `description:` reads "How XiaMi uses…" |
-| `skills/smartnpc/inter-npc-message/SKILL.md` | 9 → ~17 hits after delegate-fix rewrite — `Player → XiaMi` example pairs, `to="Penny"` literal arguments, CN aliases `潘妮` / `阿比盖尔` |
-| `skills/smartnpc/game-tool-policy/SKILL.md` | 1 hit — `speaker = "XiaMi"` example |
+| `skills/smartnpc/smartnpc-memory-policy/SKILL.md` | 9 hits — `(XiaMi)` headings, `memories/xiami/state.db` path, `conversation 'xiami'`, XiaMi-specific 口癖 examples, frontmatter `description:` reads "How XiaMi uses…" |
+| `skills/smartnpc/smartnpc-inter-npc-message/SKILL.md` | 9 → ~17 hits after delegate-fix rewrite — `Player → XiaMi` example pairs, `to="Penny"` literal arguments, CN aliases `潘妮` / `阿比盖尔` |
+| `skills/smartnpc/smartnpc-game-tool-policy/SKILL.md` | 1 hit — `speaker = "XiaMi"` example |
 | `config-overlay.yaml` | 1 hit — comment-only reference to "see xiami for the full template" |
-| `skills/smartnpc/proactive-greeting/SKILL.md` | 0 hits — already generic (heart-tier abstractions), no work needed |
+| `skills/smartnpc/smartnpc-proactive-greeting/SKILL.md` | 0 hits — already generic (heart-tier abstractions), no work needed |
 
 Net effect: the silent-ack memory write path on a non-xiami profile
 writes to **xiami**'s memory namespace and self-narrates in XiaMi's

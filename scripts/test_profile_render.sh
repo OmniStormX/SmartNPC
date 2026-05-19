@@ -12,13 +12,14 @@
 #   2. No XiaMi / xiami / 夏弥 string leaks in non-xiami profiles outside SOUL.md
 #      (SOUL.md is hand-written per NPC and may legitimately reference peers,
 #      including XiaMi).
-#   3. SKILL files that hermes-profile classifies as "shared, no per-NPC fields"
+#   3. No XiaMi / xiami / display-name string leaks in non-xiami rendered files.
+#   4. SmartNPC SKILL.md frontmatter names match their global Hermes skill IDs:
+#      name: <directory-name> (directories are globally namespaced as smartnpc-*).
+#   5. SKILL files that hermes-profile classifies as "shared, no per-NPC fields"
 #      are byte-identical across all 6 NPCs (md5sum). Today the only such file
 #      is proactive-greeting/SKILL.md. group-chat-reply DOES carry per-NPC
 #      placeholders ({{NPC_NAME}} appears in its body and tool examples) and
 #      is intentionally NOT byte-identical.
-#   4. The TABLE in render_profiles.sh and the per-NPC directory list agree
-#      (each NPC dir we expect must exist).
 #
 # This script does NOT re-run render_profiles.sh — that requires GNU sed +
 # bash and may mutate the working tree. To check render idempotency, run
@@ -49,7 +50,7 @@ for n in "${NPCS[@]}"; do
   [ -d "$PROFILES/$n" ]      || fail "missing profile dir: $PROFILES/$n"
   [ -f "$PROFILES/$n/SOUL.md" ] || fail "missing SOUL.md for $n"
 done
-green "[1/4] all 6 NPC profile directories present with SOUL.md"
+green "[1/5] all 6 NPC profile directories present with SOUL.md"
 
 # 2. no placeholder leaks anywhere
 LEAKS="$(grep -rln '{{' "${NPCS[@]/#/$PROFILES/}" 2>/dev/null || true)"
@@ -58,7 +59,7 @@ if [ -n "$LEAKS" ]; then
   printf '  %s\n' $LEAKS >&2
   fail "fix by re-running scripts/render_profiles.sh"
 fi
-green "[2/4] no '{{...}}' placeholder leaks in any rendered profile"
+green "[2/5] no '{{...}}' placeholder leaks in any rendered profile"
 
 # 3. no xiami-name leaks in non-xiami profiles, excluding SOUL.md
 LEAK_FILES=""
@@ -74,9 +75,50 @@ if [ -n "${LEAK_FILES%$'\n'}" ]; then
   printf '%s' "$LEAK_FILES" >&2
   fail "rendered template referencing XiaMi outside SOUL.md — fix _master/ template or re-run render"
 fi
-green "[3/4] no XiaMi/xiami/夏弥 leaks in non-xiami profiles (SOUL.md excluded)"
+green "[3/5] no XiaMi/xiami/夏弥 leaks in non-xiami profiles (SOUL.md excluded)"
 
-# 4. byte-identity for skills that should be fully shared
+# 4. SmartNPC skill directories and frontmatter names must use the same globally namespaced ID.
+check_skill_frontmatter_names() {
+  local root="$1"
+  local label="$2"
+  local base="$root/skills/smartnpc"
+  local bad=0
+
+  [ -d "$base" ] || fail "missing smartnpc skill dir: $base"
+
+  while IFS= read -r d; do
+    local dirname
+    dirname="$(basename "$d")"
+    if [[ "$dirname" != smartnpc-* ]]; then
+      red "  $label/$dirname: smartnpc skill directory must be prefixed with smartnpc-"
+      bad=1
+    fi
+  done < <(find "$base" -mindepth 1 -maxdepth 1 -type d | sort)
+
+  while IFS= read -r f; do
+    local slug expected actual
+    slug="$(basename "$(dirname "$f")")"
+    expected="$slug"
+    actual="$(sed -n 's/^name:[[:space:]]*//p' "$f" | head -n 1 | tr -d '\r')"
+    if [ "$actual" != "$expected" ]; then
+      red "  $label/$slug: expected frontmatter name '$expected', got '${actual:-<missing>}'"
+      bad=1
+    fi
+  done < <(find "$base" -type f -name SKILL.md | sort)
+
+  [ "$bad" -eq 0 ]
+}
+
+echo "[4/5] smartnpc skill frontmatter names"
+ok=1
+check_skill_frontmatter_names "$PROFILES/_master" "_master" || ok=0
+for n in "${NPCS[@]}"; do
+  check_skill_frontmatter_names "$PROFILES/$n" "$n" || ok=0
+done
+[ "$ok" -eq 1 ] || fail "smartnpc skill frontmatter name check failed; see above"
+green "  ok: all smartnpc SKILL.md names match their smartnpc-* directory"
+
+# 5. byte-identity for skills that should be fully shared
 check_identical() {
   local rel="$1"; shift
   local mode="$1"; shift   # "fail" or "warn"
@@ -114,9 +156,9 @@ check_identical() {
   green "  ok:   $rel — byte-identical across all 6 NPCs"
 }
 
-echo "[4/4] byte-identity for skills with no per-NPC placeholders"
+echo "[5/5] byte-identity for skills with no per-NPC placeholders"
 ok=1
-check_identical "skills/smartnpc/proactive-greeting/SKILL.md" "fail" || ok=0
+check_identical "skills/smartnpc/smartnpc-proactive-greeting/SKILL.md" "fail" || ok=0
 [ "$ok" -eq 1 ] || fail "byte-identity check failed; see above"
 
 echo ""

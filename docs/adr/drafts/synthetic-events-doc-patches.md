@@ -376,7 +376,7 @@ hunks together when E2E unblocks Patch 10.)
 ## Patch F1 — `REFACTOR.md` (append new section, end of file)
 
 **Why**: 5 of the 6 NPC profiles (`abigail`, `haley`, `harvey`, `penny`,
-`sebastian`) have `skills/smartnpc/memory-policy/SKILL.md` files that are
+`sebastian`) have `skills/smartnpc/smartnpc-memory-policy/SKILL.md` files that are
 verbatim copies of the xiami version, with `XiaMi` / `xiami` /
 `memories/xiami/` / `conversation:xiami` left as hard-coded literals. The
 heart-tier-7+ examples even carry XiaMi-specific phrasing/口癖. Net effect: the
@@ -413,11 +413,11 @@ xiami's memory store. Severity: medium.
 +
 +| File | hits/profile | Notes |
 +|---|---|---|
-+| `skills/smartnpc/memory-policy/SKILL.md` | 9 | `(XiaMi)` 标题、`memories/xiami/state.db` 路径、`conversation 'xiami'`、口癖示例。Frontmatter `description:` 也写 XiaMi。 |
-+| `skills/smartnpc/inter-npc-message/SKILL.md` | 9 (becomes ~17 after delegate-fix rewrite) | Example A/B 段 "Player → XiaMi"、`to="Penny"` 字面例子，含中文角色名 `潘妮`/`阿比盖尔`。 |
-+| `skills/smartnpc/game-tool-policy/SKILL.md` | 1 | 一句 `speaker = "XiaMi"` 当例子 (line 53)。 |
++| `skills/smartnpc/smartnpc-memory-policy/SKILL.md` | 9 | `(XiaMi)` 标题、`memories/xiami/state.db` 路径、`conversation 'xiami'`、口癖示例。Frontmatter `description:` 也写 XiaMi。 |
++| `skills/smartnpc/smartnpc-inter-npc-message/SKILL.md` | 9 (becomes ~17 after delegate-fix rewrite) | Example A/B 段 "Player → XiaMi"、`to="Penny"` 字面例子，含中文角色名 `潘妮`/`阿比盖尔`。 |
++| `skills/smartnpc/smartnpc-game-tool-policy/SKILL.md` | 1 | 一句 `speaker = "XiaMi"` 当例子 (line 53)。 |
 +| `config-overlay.yaml` | 1 | 第 1 行注释 `see xiami for the full template`。**仅注释，无功能影响**——可顺手清，但不阻塞。 |
-+| `skills/smartnpc/proactive-greeting/SKILL.md` | 0 | 已用 hearts-tier 表写得通用，**无需改动**。 |
++| `skills/smartnpc/smartnpc-proactive-greeting/SKILL.md` | 0 | 已用 hearts-tier 表写得通用，**无需改动**。 |
 +| `cron-recipes.md` | n/a | **此文件仅 xiami 有**，其他 5 profile 不持有。是否分发到 6 profile 是另一个 follow-up（"分发还是保留为 xiami-only 参考食谱"），不在 F1 scope。 |
 +| `SOUL.md` | n/a | 各 profile 自己的人格本，本就不共享，不在 follow-up scope。 |
 +
@@ -430,7 +430,7 @@ xiami's memory store. Severity: medium.
 +`memories/` directory with foreign data attributed to XiaMi.
 +
 +The most direct evidence (visible to anyone opening the file): the YAML
-+frontmatter `description:` on `abigail/skills/smartnpc/memory-policy/SKILL.md`
++frontmatter `description:` on `abigail/skills/smartnpc/smartnpc-memory-policy/SKILL.md`
 +still reads "How XiaMi uses Hermes's built-in per-profile memory…" —
 +i.e. Abigail's profile literally describes itself as XiaMi to its own
 +SKILL loader. Equivalent text appears in haley/harvey/penny/sebastian.

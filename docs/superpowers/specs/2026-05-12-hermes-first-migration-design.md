@@ -184,7 +184,7 @@ The skill has two roles in one document:
 
 This skill replaces the entire Go-side delegation pipeline. No `consult_npc` synthetic tool, no router back-reference, no scratch history swapping.
 
-### 3.6 Extended: `hermes/profiles/xiami/skills/smartnpc/game-tool-policy/SKILL.md`
+### 3.6 Extended: `hermes/profiles/xiami/skills/smartnpc/smartnpc-game-tool-policy/SKILL.md`
 
 Add a "Delegation" section that points to `inter-npc-message`, so the existing global skill keeps holistic discoverability. No behavior change beyond a cross-reference.
 
@@ -262,7 +262,7 @@ This is **end-to-end through Hermes profiles + MCP tools** — no Go-side delega
 | `hermes/profiles/harvey/{SOUL.md, config-overlay.yaml, skills/}` | ditto, port 8645 |
 | `hermes/profiles/penny/{SOUL.md, config-overlay.yaml, skills/}` | ditto, port 8646 |
 | `hermes/profiles/sebastian/{SOUL.md, config-overlay.yaml, skills/}` | ditto, port 8647 |
-| `hermes/profiles/*/skills/smartnpc/inter-npc-message/SKILL.md` | new shared skill (6 copies / symlinks) |
+| `hermes/profiles/*/skills/smartnpc/smartnpc-inter-npc-message/SKILL.md` | new shared skill (6 copies / symlinks) |
 | `scripts/start_hermes_profiles.sh` | WSL gateway launcher with health check |
 | `docs/superpowers/specs/2026-05-12-hermes-first-migration-design.md` | this file |
 
@@ -273,7 +273,7 @@ This is **end-to-end through Hermes profiles + MCP tools** — no Go-side delega
 | `smartnpc-mcp/cmd/smartnpc-mcp/main.go` | `--hermes-config` flag; precedence over legacy single-target flags |
 | `smartnpc-mcp/internal/hermesrelay/relay.go` | multi-target routing; YAML config loader; `Route(event) *ProfileTarget` |
 | `smartnpc-mcp/internal/hermesrelay/*_test.go` | new tests: yaml load, routing by npc, drop unknown |
-| `hermes/profiles/xiami/skills/smartnpc/game-tool-policy/SKILL.md` | cross-reference to inter-npc-message |
+| `hermes/profiles/xiami/skills/smartnpc/smartnpc-game-tool-policy/SKILL.md` | cross-reference to inter-npc-message |
 | `run.bat` | rewrite (§3.7) |
 | `docs/architecture.md` | add multi-profile diagram + fan-out config description |
 | `docs/hermes-profiles.md` | document `runtime-config.yaml`, link in "Multi-NPC checklist" |

@@ -81,7 +81,7 @@ func TestFormatForHermes_CoversKnownEvents(t *testing.T) {
 			name:    "npc_message",
 			event:   bridge.EventNpcMessage,
 			payload: NpcMessage{From: "Abigail", To: "XiaMi", Text: "农场出事了"},
-			want:    "Abigail says to you",
+			want:    "[inter_npc_message from=\"Abigail\" to=\"XiaMi\"]",
 		},
 		{
 			name:    "npc_broadcast",

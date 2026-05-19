@@ -61,7 +61,7 @@ func TestNpcSendMessage_RoutesToHermesGroup(t *testing.T) {
 
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, group.HandleEvent, logger)
+	RegisterAll(server, nil, group.HandleEvent, nil, logger)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {

@@ -135,7 +135,7 @@ bash /mnt/d/SmartNPC/hermes/install.sh
 ## 新增 NPC
 
 1. 在 `hermes/profiles/<new-npc>/` 下放 `SOUL.md` + `mcp-servers.yaml`（可复用 xiami 的 mcp-servers.yaml，每个 NPC 一般都连同一个 smartnpc_game）
-2. 可选：拷 `skills/smartnpc/game-tool-policy/` 过来或单独写
+2. 可选：拷 `skills/smartnpc/smartnpc-game-tool-policy/` 过来或单独写
 3. 重跑 `install.sh`
 4. 启 `hermes -p <new-npc> gateway run --accept-hooks`（多 profile 并存时注意改 `API_SERVER_PORT` 避免端口冲突）
 

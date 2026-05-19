@@ -68,10 +68,10 @@ API_SERVER_HOST: 0.0.0.0
 API_SERVER_PORT: {{NPC_PORT}}
 API_SERVER_MODEL_NAME: {{NPC_DIR}}
 
-# Note: model.context_length and compression.* tuning are NOT in this
-# overlay because Hermes' bootstrapped config.yaml already defines those
-# top-level keys, and install.sh does a dumb append — so writing them
-# here would create duplicate YAML keys, and PyYAML silently lets the
-# second (overlay) block clobber the bootstrap one (which carries the
-# real LLM provider/base_url). Tuning is applied via
-# scripts/apply_hermes_tuning.sh, which does a real per-key yaml merge.
+# Note: model.context_length, compression.*, and agent.tool_use_enforcement
+# are NOT in this overlay because Hermes' bootstrapped config.yaml already
+# defines those top-level keys, and install.sh does a dumb append — so
+# writing them here would create duplicate YAML keys, and PyYAML silently
+# lets the second (overlay) block clobber the bootstrap one (which carries
+# the real LLM provider/base_url + agent.max_turns etc). Tuning is applied
+# via scripts/apply_hermes_tuning.sh, which does a real per-key yaml merge.
