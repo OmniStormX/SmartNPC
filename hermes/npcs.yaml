@@ -1,0 +1,70 @@
+# Canonical SmartNPC NPC/profile registry.
+# Keep all per-NPC metadata here first; scripts and sanity checks use this
+# to prevent profile/render/runtime configuration drift.
+
+npcs:
+  - id: xiami
+    game_name: XiaMi
+    display_name: 夏弥
+    gateway_port: 8642
+    enabled: true
+    kind: custom
+    peer_a_name: Penny
+    peer_a_display: 潘妮
+    peer_b_name: Abigail
+    peer_b_display: 阿比盖尔
+
+  - id: abigail
+    game_name: Abigail
+    display_name: 阿比盖尔
+    gateway_port: 8643
+    enabled: true
+    kind: vanilla
+    peer_a_name: Penny
+    peer_a_display: 潘妮
+    peer_b_name: Sebastian
+    peer_b_display: 塞巴斯蒂安
+
+  - id: haley
+    game_name: Haley
+    display_name: 黑利
+    gateway_port: 8644
+    enabled: true
+    kind: vanilla
+    peer_a_name: Penny
+    peer_a_display: 潘妮
+    peer_b_name: Abigail
+    peer_b_display: 阿比盖尔
+
+  - id: harvey
+    game_name: Harvey
+    display_name: 哈维
+    gateway_port: 8645
+    enabled: true
+    kind: vanilla
+    peer_a_name: Penny
+    peer_a_display: 潘妮
+    peer_b_name: Abigail
+    peer_b_display: 阿比盖尔
+
+  - id: penny
+    game_name: Penny
+    display_name: 潘妮
+    gateway_port: 8646
+    enabled: true
+    kind: vanilla
+    peer_a_name: Abigail
+    peer_a_display: 阿比盖尔
+    peer_b_name: Haley
+    peer_b_display: 黑利
+
+  - id: sebastian
+    game_name: Sebastian
+    display_name: 塞巴斯蒂安
+    gateway_port: 8647
+    enabled: true
+    kind: vanilla
+    peer_a_name: Abigail
+    peer_a_display: 阿比盖尔
+    peer_b_name: Penny
+    peer_b_display: 潘妮

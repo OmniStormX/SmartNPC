@@ -51,15 +51,17 @@ tasks:
       - go vet {{.GO_MODULES}}
 
   ci:
-    desc: Full local equivalent of GitHub Actions CI (lint + test + build)
+    desc: Full local equivalent of GitHub Actions CI (profile verify + lint + test + build)
     cmds:
+      - task: profiles:verify
       - task: lint
       - task: test
       - task: build
 
   ci-fast:
-    desc: Quick CI (lint + test, skip build)
+    desc: Quick CI (profile verify + lint + test, skip build)
     cmds:
+      - task: profiles:verify
       - task: lint
       - task: test
 
@@ -72,7 +74,7 @@ tasks:
   # ── Hermes profile render sanity (opt-in) ───────────────────────
 
   profiles:verify:
-    desc: Sanity-check the rendered hermes/profiles/ tree (no placeholder leaks, no XiaMi leaks in non-xiami profiles, shared skills byte-identical). NOT part of ci-fast — run manually after editing _master/ or regenerating profiles.
+    desc: Sanity-check hermes/npcs.yaml, runtime-config, and rendered hermes/profiles/ tree.
     cmds:
       - cmd: bash scripts/test_profile_render.sh
         platforms: [linux, darwin]

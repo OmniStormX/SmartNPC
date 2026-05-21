@@ -1,67 +1,183 @@
 #!/usr/bin/env bash
 # Read-only sanity checks on the rendered Hermes profile tree.
 #
-# Phase 2 follow-up PR (F1/F2): hermes-profile introduced
-# hermes/profiles/_master/ + scripts/render_profiles.sh so that 6 NPCs share a
-# single source of truth. This script asserts the working tree is consistent
-# with that source — it does NOT re-render, does NOT modify files, does NOT
-# require a clean git state.
+# The source of truth is hermes/profiles/_master/ plus hermes/npcs.yaml.
+# This script asserts the working tree is consistent with those sources — it
+# does NOT re-render, does NOT modify files, does NOT require a clean git state.
 #
 # Checks performed (each fatal on failure):
-#   1. No `{{...}}` placeholder leaks in any rendered profile (xiami included).
-#   2. No XiaMi / xiami / 夏弥 string leaks in non-xiami profiles outside SOUL.md
-#      (SOUL.md is hand-written per NPC and may legitimately reference peers,
-#      including XiaMi).
-#   3. No XiaMi / xiami / display-name string leaks in non-xiami rendered files.
-#   4. SmartNPC SKILL.md frontmatter names match their global Hermes skill IDs:
-#      name: <directory-name> (directories are globally namespaced as smartnpc-*).
-#   5. SKILL files that hermes-profile classifies as "shared, no per-NPC fields"
-#      are byte-identical across all 6 NPCs (md5sum). Today the only such file
-#      is proactive-greeting/SKILL.md. group-chat-reply DOES carry per-NPC
-#      placeholders ({{NPC_NAME}} appears in its body and tool examples) and
-#      is intentionally NOT byte-identical.
+#   1. hermes/npcs.yaml is present, complete, and internally consistent.
+#   2. Rendered profile directories and SOUL.md exist for every enabled NPC.
+#   3. runtime-config.yaml and per-profile config overlays match registry ports
+#      and NPC filters.
+#   4. No `{{...}}` placeholder leaks in any rendered profile.
+#   5. No XiaMi / xiami / 夏弥 string leaks in non-xiami profiles outside SOUL.md.
+#   6. SmartNPC SKILL.md frontmatter names match their global Hermes skill IDs:
+#      name: <directory-name>.
+#   7. SKILL files classified as "shared, no per-NPC fields" are byte-identical
+#      across all enabled NPCs. Today this is proactive-greeting/SKILL.md.
 #
-# This script does NOT re-run render_profiles.sh — that requires GNU sed +
-# bash and may mutate the working tree. To check render idempotency, run
-# `bash scripts/render_profiles.sh && git diff --exit-code hermes/profiles/`
-# manually.
+# This script does NOT re-run render_profiles.sh — that requires GNU sed + bash
+# and may mutate the working tree. To check render idempotency, run:
+#   bash scripts/render_profiles.sh && git diff --exit-code hermes/profiles/
 #
 # Usage (from repo root):
 #   bash scripts/test_profile_render.sh
 #
-# Windows: run inside Git Bash or WSL. Pure POSIX, no GNU-only features.
+# Windows: run inside Git Bash or WSL.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROFILES="$REPO_ROOT/hermes/profiles"
-NPCS=(xiami abigail haley harvey penny sebastian)
-NON_XIAMI=(abigail haley harvey penny sebastian)
+REGISTRY="$REPO_ROOT/hermes/npcs.yaml"
+RUNTIME_CONFIG="$REPO_ROOT/hermes/runtime-config.yaml"
+
+NPCS=()
+NON_XIAMI=()
+declare -A NPC_NAME=()
+declare -A NPC_DISPLAY=()
+declare -A NPC_PORT=()
+declare -A NPC_KIND=()
+declare -A NPC_ENABLED=()
+declare -A NPC_PEER_A_NAME=()
+declare -A NPC_PEER_A_DISPLAY=()
+declare -A NPC_PEER_B_NAME=()
+declare -A NPC_PEER_B_DISPLAY=()
 
 red()   { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
 
 fail() { red "FAIL: $*"; exit 1; }
+trim_cr() { printf '%s' "${1%$'\r'}"; }
+strip_quotes() {
+  local v
+  v="$(trim_cr "$1")"
+  v="${v%\"}"; v="${v#\"}"
+  v="${v%\'}"; v="${v#\'}"
+  printf '%s' "$v"
+}
 
-# 1. directories exist
+load_registry() {
+  [ -f "$REGISTRY" ] || fail "missing NPC registry: $REGISTRY"
+
+  local current="" key="" val="" line=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="$(trim_cr "$line")"
+    line="${line%%#*}"
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+
+    if [[ "$line" =~ ^[[:space:]]*-[[:space:]]id:[[:space:]]*([^[:space:]]+)[[:space:]]*$ ]]; then
+      current="$(strip_quotes "${BASH_REMATCH[1]}")"
+      NPC_ENABLED["$current"]="true"
+      continue
+    fi
+
+    if [[ -n "$current" && "$line" =~ ^[[:space:]]*([A-Za-z_]+):[[:space:]]*(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      val="$(strip_quotes "${BASH_REMATCH[2]}")"
+      case "$key" in
+        game_name) NPC_NAME["$current"]="$val" ;;
+        display_name) NPC_DISPLAY["$current"]="$val" ;;
+        gateway_port) NPC_PORT["$current"]="$val" ;;
+        enabled) NPC_ENABLED["$current"]="$val" ;;
+        kind) NPC_KIND["$current"]="$val" ;;
+        peer_a_name) NPC_PEER_A_NAME["$current"]="$val" ;;
+        peer_a_display) NPC_PEER_A_DISPLAY["$current"]="$val" ;;
+        peer_b_name) NPC_PEER_B_NAME["$current"]="$val" ;;
+        peer_b_display) NPC_PEER_B_DISPLAY["$current"]="$val" ;;
+      esac
+    fi
+  done < "$REGISTRY"
+
+  local n="" seen_ports=""
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    if [ "${NPC_ENABLED[$n]:-true}" = "true" ]; then
+      NPCS+=("$n")
+      [ "$n" = "xiami" ] || NON_XIAMI+=("$n")
+    fi
+  done < <(sed -n 's/^[[:space:]]*-[[:space:]]id:[[:space:]]*//p' "$REGISTRY" | tr -d '\r' | awk '{print $1}')
+
+  [ "${#NPCS[@]}" -gt 0 ] || fail "registry has no enabled NPCs"
+
+  for n in "${NPCS[@]}"; do
+    [ -n "${NPC_NAME[$n]:-}" ] || fail "registry missing game_name for $n"
+    [ -n "${NPC_DISPLAY[$n]:-}" ] || fail "registry missing display_name for $n"
+    [ -n "${NPC_PORT[$n]:-}" ] || fail "registry missing gateway_port for $n"
+    [[ "${NPC_PORT[$n]}" =~ ^[0-9]+$ ]] || fail "registry gateway_port for $n is not numeric: ${NPC_PORT[$n]}"
+    [ -n "${NPC_KIND[$n]:-}" ] || fail "registry missing kind for $n"
+    case "${NPC_KIND[$n]}" in custom|vanilla) ;; *) fail "registry kind for $n must be custom or vanilla, got ${NPC_KIND[$n]}" ;; esac
+
+    if printf '%s\n' "$seen_ports" | grep -qx "${NPC_PORT[$n]}"; then
+      fail "duplicate gateway_port in registry: ${NPC_PORT[$n]}"
+    fi
+    seen_ports="$seen_ports${NPC_PORT[$n]}"$'\n'
+  done
+}
+
+runtime_field() {
+  local profile="$1" key="$2"
+  awk -v profile="$profile" -v key="$key" '
+    $0 ~ "^[[:space:]]*-[[:space:]]name:[[:space:]]*" profile "[[:space:]]*$" { inside=1; next }
+    inside && $0 ~ "^[[:space:]]*-[[:space:]]name:" { inside=0 }
+    inside && $0 ~ "^[[:space:]]*" key ":" {
+      sub("^[[:space:]]*" key ":[[:space:]]*", "")
+      sub("[[:space:]]*$", "")
+      print
+      exit
+    }
+  ' "$RUNTIME_CONFIG" | tr -d '\r'
+}
+
+extract_port_from_url() {
+  printf '%s' "$1" | sed -n 's|.*:\([0-9][0-9]*\)\(/.*\)\{0,1\}$|\1|p'
+}
+
+# 1. registry is valid
+load_registry
+green "[1/7] NPC registry valid (${#NPCS[@]} enabled profiles)"
+
+# 2. directories exist
 for n in "${NPCS[@]}"; do
-  [ -d "$PROFILES/$n" ]      || fail "missing profile dir: $PROFILES/$n"
+  [ -d "$PROFILES/$n" ] || fail "missing profile dir: $PROFILES/$n"
   [ -f "$PROFILES/$n/SOUL.md" ] || fail "missing SOUL.md for $n"
 done
-green "[1/5] all 6 NPC profile directories present with SOUL.md"
+green "[2/7] enabled NPC profile directories present with SOUL.md"
 
-# 2. no placeholder leaks anywhere
+# 3. runtime-config.yaml and rendered config overlays match registry
+[ -f "$RUNTIME_CONFIG" ] || fail "missing runtime config: $RUNTIME_CONFIG"
+for n in "${NPCS[@]}"; do
+  npc_filter="$(runtime_field "$n" npc_filter)"
+  conversation="$(runtime_field "$n" conversation)"
+  gateway_url="$(runtime_field "$n" gateway_url)"
+  gateway_port="$(extract_port_from_url "$gateway_url")"
+
+  [ "$npc_filter" = "${NPC_NAME[$n]}" ] || fail "runtime-config $n npc_filter=$npc_filter, want ${NPC_NAME[$n]}"
+  [ "$conversation" = "$n" ] || fail "runtime-config $n conversation=$conversation, want $n"
+  [ "$gateway_port" = "${NPC_PORT[$n]}" ] || fail "runtime-config $n gateway_url port=$gateway_port, want ${NPC_PORT[$n]}"
+
+  overlay="$PROFILES/$n/config-overlay.yaml"
+  [ -f "$overlay" ] || fail "missing config overlay for $n: $overlay"
+  overlay_port="$(sed -n 's/^API_SERVER_PORT:[[:space:]]*//p' "$overlay" | head -n 1 | tr -d '\r')"
+  overlay_model="$(sed -n 's/^API_SERVER_MODEL_NAME:[[:space:]]*//p' "$overlay" | head -n 1 | tr -d '\r')"
+  [ "$overlay_port" = "${NPC_PORT[$n]}" ] || fail "$n config-overlay API_SERVER_PORT=$overlay_port, want ${NPC_PORT[$n]}"
+  [ "$overlay_model" = "$n" ] || fail "$n config-overlay API_SERVER_MODEL_NAME=$overlay_model, want $n"
+done
+green "[3/7] runtime-config and config overlays match NPC registry"
+
+# 4. no placeholder leaks anywhere
 LEAKS="$(grep -rln '{{' "${NPCS[@]/#/$PROFILES/}" 2>/dev/null || true)"
 if [ -n "$LEAKS" ]; then
   red "placeholder leak — files still contain '{{':"
   printf '  %s\n' $LEAKS >&2
   fail "fix by re-running scripts/render_profiles.sh"
 fi
-green "[2/5] no '{{...}}' placeholder leaks in any rendered profile"
+green "[4/7] no '{{...}}' placeholder leaks in any rendered profile"
 
-# 3. no xiami-name leaks in non-xiami profiles, excluding SOUL.md
+# 5. no xiami-name leaks in non-xiami profiles, excluding SOUL.md
 LEAK_FILES=""
 for n in "${NON_XIAMI[@]}"; do
   while IFS= read -r f; do
@@ -75,9 +191,9 @@ if [ -n "${LEAK_FILES%$'\n'}" ]; then
   printf '%s' "$LEAK_FILES" >&2
   fail "rendered template referencing XiaMi outside SOUL.md — fix _master/ template or re-run render"
 fi
-green "[3/5] no XiaMi/xiami/夏弥 leaks in non-xiami profiles (SOUL.md excluded)"
+green "[5/7] no XiaMi/xiami/夏弥 leaks in non-xiami profiles (SOUL.md excluded)"
 
-# 4. SmartNPC skill directories and frontmatter names must use the same globally namespaced ID.
+# 6. SmartNPC skill directories and frontmatter names must use the same globally namespaced ID.
 check_skill_frontmatter_names() {
   local root="$1"
   local label="$2"
@@ -109,7 +225,7 @@ check_skill_frontmatter_names() {
   [ "$bad" -eq 0 ]
 }
 
-echo "[4/5] smartnpc skill frontmatter names"
+echo "[6/7] smartnpc skill frontmatter names"
 ok=1
 check_skill_frontmatter_names "$PROFILES/_master" "_master" || ok=0
 for n in "${NPCS[@]}"; do
@@ -118,7 +234,7 @@ done
 [ "$ok" -eq 1 ] || fail "smartnpc skill frontmatter name check failed; see above"
 green "  ok: all smartnpc SKILL.md names match their smartnpc-* directory"
 
-# 5. byte-identity for skills that should be fully shared
+# 7. byte-identity for skills that should be fully shared
 check_identical() {
   local rel="$1"; shift
   local mode="$1"; shift   # "fail" or "warn"
@@ -153,10 +269,10 @@ check_identical() {
     printf '%s' "$hashes" >&2
     return 1
   fi
-  green "  ok:   $rel — byte-identical across all 6 NPCs"
+  green "  ok:   $rel — byte-identical across all enabled NPCs"
 }
 
-echo "[5/5] byte-identity for skills with no per-NPC placeholders"
+echo "[7/7] byte-identity for skills with no per-NPC placeholders"
 ok=1
 check_identical "skills/smartnpc/smartnpc-proactive-greeting/SKILL.md" "fail" || ok=0
 [ "$ok" -eq 1 ] || fail "byte-identity check failed; see above"
