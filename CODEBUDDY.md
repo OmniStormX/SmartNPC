@@ -23,14 +23,17 @@ Go 模块通过根 `go.work` 联动。
 
 ```bash
 task --list                # 列出所有任务
-task ci                    # lint + test + build（与 GitHub Actions 等价）
-task ci-fast               # lint + test（跳过 build）
+task ci                    # profiles:verify + lint + test + build（与 GitHub Actions 等价）
+task ci-fast               # profiles:verify + lint + test（跳过 build）
 task lint                  # go work sync + go vet
 task test                  # 所有 Go + mod 测试
 task build                 # 构建三端全部产物
+task profiles:verify       # sanity-check hermes/npcs.yaml + runtime-config + 渲染 profiles 树
 task tidy                  # 每个 Go 模块 go mod tidy + go work sync
 task clean                 # 清理产物
 ```
+
+> 根 Taskfile 已 `dotenv: ['.env']`，所有 task 自动加载仓库根 `.env`（git ignored，按 `.env.example` 复制）。
 
 子项目命名空间：
 
@@ -186,7 +189,7 @@ Agent 启动时 `-llm-url` 指向对应 profile 的端口，`-model` 用 profile
 | `smartnpc-mcp/Taskfile.yml` `mcp:run` | `cmd /c start ...` 新窗口，只 Windows 能跑 | 加 `platforms: [linux, darwin]` 分支：`nohup ./bin/smartnpc-mcp --http :{{.PORT}} ... &` 或直接前台跑 |
 | `smapi-mod/Taskfile.yml` `mod:install` | `powershell Copy-Item`、`New-Item` | Linux / macOS 加 `cp -f ... $HOME/.local/share/Steam/steamapps/common/Stardew Valley/Mods/StardewMCPBridge/` 的 `platforms: [linux, darwin]` 分支 |
 
-**推荐集中配置方式**：在仓库根加一个 `.env.example`（git 追踪）+ `.env`（`.gitignore`），Taskfile 用 `dotenv: ['.env']` 全局加载。关键变量：
+**集中配置方式**：仓库根已落地 `.env.example`（git 追踪）+ `.env`（`.gitignore`），根 `Taskfile.yml` 用 `dotenv: ['.env']` 全局加载。新机器接入只需 `cp .env.example .env` 后按本机改值。关键变量：
 
 ```env
 # .env.example —— 复制成 .env，按本机实际填写
@@ -225,6 +228,17 @@ SMARTNPC_HTTP_PORT=3000
 每个 milestone 做完**等用户验证**再进下一个，不要自动连推。
 
 ## 启动全栈（Windows）
+
+> ⚠️ **`run.bat` 必须 CRLF 行尾**。`write_to_file` 工具在 Windows 上偶发把它写成 LF，导致 cmd 解析时每行掉前 1–3 字符（症状：`'tlocal' 不是内部或外部命令`）。改完 `run.bat` 后立即自检：
+> ```cmd
+> powershell -NoProfile -Command "$b=[IO.File]::ReadAllBytes('D:\SmartNPC\run.bat'); $b[9..10] -join ','"
+> ```
+> 第 9 字节应该是 `13`（CR），不是 `10`（LF）。若是 LF 立即转 CRLF：
+> ```cmd
+> powershell -NoProfile -Command "$p='D:\SmartNPC\run.bat'; $t=[IO.File]::ReadAllText($p); $t=$t -replace \"`r`n\",\"`n\" -replace \"`n\",\"`r`n\"; [IO.File]::WriteAllText($p,$t,[Text.UTF8Encoding]::new($false))"
+> ```
+> `.gitattributes` 已声明 `*.bat text eol=crlf`，但写文件工具不一定经过 git。
+
 
 ```cmd
 :: 推荐一键: run.bat（build mod + 起 mcp + 起 hermes + 起游戏）
