@@ -68,6 +68,21 @@ API_SERVER_HOST: 0.0.0.0
 API_SERVER_PORT: {{NPC_PORT}}
 API_SERVER_MODEL_NAME: {{NPC_DIR}}
 
+# Hermes built-in plugin: observability/langfuse — uploads every agent
+# turn (LLM calls, tool calls, errors) to Langfuse Cloud for tracing.
+# Credentials are NOT stored here; the plugin reads them from
+# ~/.hermes/.env (HERMES_LANGFUSE_PUBLIC_KEY / HERMES_LANGFUSE_SECRET_KEY /
+# HERMES_LANGFUSE_BASE_URL — standard LANGFUSE_* names also work).
+#
+# Caveat: if ~/.hermes/profiles/{{NPC_DIR}}/config.yaml already has a
+# top-level `plugins:` block (Hermes bootstrap may or may not write one),
+# install.sh's dumb append will produce a duplicate key and PyYAML will
+# silently keep the LAST one. Merge by hand in that case, or reset the
+# profile via scripts/reset_hermes_overlay.sh first.
+plugins:
+  enabled:
+    - observability/langfuse
+
 # Note: model.context_length, compression.*, and agent.tool_use_enforcement
 # are NOT in this overlay because Hermes' bootstrapped config.yaml already
 # defines those top-level keys, and install.sh does a dumb append — so

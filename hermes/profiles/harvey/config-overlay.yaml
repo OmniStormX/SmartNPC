@@ -68,10 +68,25 @@ API_SERVER_HOST: 0.0.0.0
 API_SERVER_PORT: 8645
 API_SERVER_MODEL_NAME: harvey
 
-# Note: model.context_length and compression.* tuning are NOT in this
-# overlay because Hermes' bootstrapped config.yaml already defines those
-# top-level keys, and install.sh does a dumb append — so writing them
-# here would create duplicate YAML keys, and PyYAML silently lets the
-# second (overlay) block clobber the bootstrap one (which carries the
-# real LLM provider/base_url). Tuning is applied via
-# scripts/apply_hermes_tuning.sh, which does a real per-key yaml merge.
+# Hermes built-in plugin: observability/langfuse — uploads every agent
+# turn (LLM calls, tool calls, errors) to Langfuse Cloud for tracing.
+# Credentials are NOT stored here; the plugin reads them from
+# ~/.hermes/.env (HERMES_LANGFUSE_PUBLIC_KEY / HERMES_LANGFUSE_SECRET_KEY /
+# HERMES_LANGFUSE_BASE_URL — standard LANGFUSE_* names also work).
+#
+# Caveat: if ~/.hermes/profiles/harvey/config.yaml already has a
+# top-level `plugins:` block (Hermes bootstrap may or may not write one),
+# install.sh's dumb append will produce a duplicate key and PyYAML will
+# silently keep the LAST one. Merge by hand in that case, or reset the
+# profile via scripts/reset_hermes_overlay.sh first.
+plugins:
+  enabled:
+    - observability/langfuse
+
+# Note: model.context_length, compression.*, and agent.tool_use_enforcement
+# are NOT in this overlay because Hermes' bootstrapped config.yaml already
+# defines those top-level keys, and install.sh does a dumb append — so
+# writing them here would create duplicate YAML keys, and PyYAML silently
+# lets the second (overlay) block clobber the bootstrap one (which carries
+# the real LLM provider/base_url + agent.max_turns etc). Tuning is applied
+# via scripts/apply_hermes_tuning.sh, which does a real per-key yaml merge.
