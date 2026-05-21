@@ -9,17 +9,101 @@ SmartNPC 是一个面向《星露谷物语》（Stardew Valley）的智能 NPC �
     
 ### 2.1 聊天
 
+<figure>
+  <img src="image.png" alt="聊天">
+  <span style="display: block; text-align: center;">
+    <figcaption>图 1. 与带有人设的 NPC 对话</figcaption>
+  </span>
+</figure>
+
+
 ### 2.2 群聊
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_094521.png" alt="群聊">
+</figure>
+
+
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_095421.png" alt="群聊">
+</figure>
+
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_095327.png" alt="群聊">
+  <span style="display: block; text-align: center;">
+    <figcaption>图 2-5. 与若干 NPC 群聊 </figcaption>
+  </span>
+</figure>
+
 
 ### 2.3 委托
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_100958.png" alt="群聊">
+  <span style="display: block; text-align: center;">
+    <figcaption> 向 NPC 发布委托任务</figcaption>
+  </span>
+</figure>
+
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_100933.png" alt="群聊">
+  <span style="display: block; text-align: center;">
+    <figcaption> NPC 完成并响应委托任务</figcaption>
+  </span>
+</figure>
+
+<figure>
+  <img src="局部截取_20260520_100720.png" alt="群聊">
+  <span style="display: block; text-align: center;">
+    <figcaption> 其他 NPC 完成指定任务 </figcaption>
+  </span>
+</figure>
+
+
 
 ### 2.4 NPC主动行为
 
-### 2.5 XXX
+
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_104338.png" alt="系统架构图">
+  <span style="display: block; text-align: center;">
+    <figcaption> 定时主动传唤一个 NPC </figcaption>
+  </span>
+</figure>
+
+### 2.5 游戏事件记忆
+
+![alt text](StardewModdingAPI.exe_20260520_104639.png)
+
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_104639.png" alt="系统架构图">
+  <span style="display: block; text-align: center;">
+    <figcaption>即使重新启动游戏，NPC 依然有过去发生的游戏事件的记忆</figcaption>
+  </span>
+</figure>
+
+### 2.6 好感度系统
+
+
+<figure>
+  <img src="StardewModdingAPI.exe_20260520_105050.png" alt="系统架构图">
+  <span style="display: block; text-align: center;">
+    <figcaption> NPC 会根据互动调整好感度与行为</figcaption>
+  </span>
+</figure>
+
+例如：
+| 好感度 | Sample opening |
+|---|---|
+| 0-2 | "哦？又是你。怎么，今天又想不开跑来找我聊天？" |
+| 3-5 (sunny morning) | "这么早就来找我，笨蛋是不是想骗早饭？" |
+| 6-8 (rainy afternoon) | "……下这么大的雨还跑过来。别误会，我只是顺便问一句。" |
+| 9-10 (evening) | "天都黑了。……今天，过得还行吧？" |
 
 ## 3.详细技术方案
 
+
 ### 3.1 技术架构
+
+
 
 SmartNPC 的整体架构可以概括为：**游戏侧负责接入，Go 服务负责协议桥接，Hermes 负责智能体运行，LLM 负责语言生成与行为规划**。这样的分层设计可以避免游戏 Mod 直接承载复杂 AI 逻辑，也便于后续扩展更多 NPC、更多工具和更多行为能力。
 
@@ -107,7 +191,7 @@ flowchart LR
 
 每个 NPC 都拥有独立的 Hermes Profile，包括独立的人格文件、记忆目录、端口和 API key。这样做的好处主要有三点：
 
-- **Agent 人格不串扰**：`XiaMi` 的说话风格、记忆和行为偏好不会影响 `Abigail`。
+- **Agent 人格相互独立**：`XiaMi` 的说话风格、记忆和行为偏好不会影响 `Abigail`。
 - **发生故障可隔离**：某个 NPC 的 Hermes Gateway 挂掉，只会影响该 NPC，不会拖垮整个系统。
 - **扩展 NPC 更简单**：新增 NPC 时，只需要新增 profile，并在 `hermes/runtime-config.yaml` 中配置 `npc_filter` 和 `gateway_url`。
 
@@ -138,32 +222,30 @@ sequenceDiagram
     autonumber
     participant P as 玩家
     participant Mod as L1 Mod
+    participant Bridge as WebSocket Bridge
     participant MCP as L2 MCP
-    participant Relay as L3 Relay
     participant H as L4 Hermes
     participant LLM as LLM
 
-    P->>Mod: Ctrl+T 输入“你好”
+    P->>Mod: Ctrl+T 输入"你好"
     Note over Mod: Harmony Postfix<br/>捕获 ChatBox.receiveChatMessage
 
-    Mod->>MCP: ws event<br/>chat_received{text, aimed_npcs}
-
-    Note over MCP: 重置本轮配额<br/>并合成定向 chat_message
-    MCP->>Relay: chat_message{npc:"XiaMi", text}
-
-    Note over Relay: 按 npc_filter 选择目标 profile
-    Relay->>H: POST /v1/responses<br/>"Farmer says to you: 你好"
+    Mod->>Bridge: ws event<br/>chat_received{text, aimed_npcs}
+    Note over Bridge: ws_client 接收帧<br/>解析协议类型 + 事件合成<br/>按 npc_filter 路由到目标 profile
+    Bridge->>H: POST /v1/responses<br/>"Farmer says to you: 你好"
 
     H->>LLM: SOUL.md + skills + memory + event
     LLM-->>H: tool_call: chat_say(...)
     H->>MCP: POST /mcp<br/>调用 chat_say
 
     Note over MCP: ChatSayGuard.AllowPrivate<br/>检查并扣减一问一答配额
-    MCP->>Mod: ws request<br/>chat_say{speaker, text}
+    MCP->>Bridge: 封装 ws request 帧<br/>chat_say{speaker, text}
+    Bridge->>Mod: ws request<br/>chat_say{speaker, text}
     Mod->>Mod: 消息入队<br/>下一 tick 回到主线程处理
     Mod->>P: ChatPanel 渲染 NPC 回复
 
-    Mod-->>MCP: ws response{ok:true}
+    Mod-->>Bridge: ws response{ok:true}
+    Bridge-->>MCP: 解析 response 帧并回调
     MCP-->>H: {ok:true, hint:"TURN_END"}
     Note over H,LLM: Hermes 收到 TURN_END<br/>结束本轮工具调用
 ```
@@ -207,28 +289,32 @@ sequenceDiagram
     autonumber
     participant P as 玩家
     participant Mod as L1 Mod
+    participant Bridge as WebSocket Bridge
     participant MCP as L2 MCP
     participant H as L4 Hermes
     participant SDV as Stardew API
 
-    P->>Mod: 聊天框 / 互动键<br/>“过来一下”
-    Mod->>MCP: ws event<br/>chat_received / npc_interact
-    Note over MCP: 复用对话流程前半段<br/>事件合成 + relay 路由
-    MCP->>H: 自然语言事件
+    P->>Mod: 聊天框 / 互动键<br/>"过来一下"
+    Mod->>Bridge: ws event<br/>chat_received / npc_interact
+    Note over Bridge: 解析协议帧 + 事件合成<br/>按 npc_filter 路由到目标 profile
+    Bridge->>H: POST /v1/responses<br/>自然语言事件
 
     rect rgb(240,248,255)
         Note over H: LLM 根据 skills 判断<br/>本轮应触发行为工具
         H->>MCP: POST /mcp<br/>npc_move{npc, x, y}
-        MCP->>Mod: ws request<br/>npc_move{...}
+        MCP->>Bridge: 封装 ws request 帧<br/>npc_move{npc, x, y}
+        Bridge->>Mod: ws request<br/>npc_move{...}
         Mod->>SDV: 创建或更新 NPC 行为控制器<br/>例如 PathFindController
         SDV-->>Mod: 启动寻路 / 返回失败原因
-        Mod-->>MCP: ws response{ok, error?}
+        Mod-->>Bridge: ws response{ok, error?}
+        Bridge-->>MCP: 解析 response 帧并回调
         MCP-->>H: tool result
     end
 
     opt 行为完成后的补充表达
         H->>MCP: POST /mcp<br/>chat_say{"我过来了"}
-        MCP->>Mod: ws request chat_say
+        MCP->>Bridge: 封装 ws request 帧
+        Bridge->>Mod: ws request chat_say
         Mod->>P: ChatPanel 渲染
     end
 ```
@@ -305,9 +391,10 @@ flowchart LR
 
 + 当前大模型算力有限，且 Agent 编排流程存在较多冗余上下文与可优化的空间，而且 Hermes Agent 自身存在较多内置的 Tool , 这些 Tool 在实际使用中几乎不会被调用，但是却占据了不小的上下文，影响大模型的相应与判断，后续可以尝试精简 Hermes Agent 编排或者自制 Agent 以剔除冗余流程。
 
-4. 3 Agent 模型的多级管理
+
+4.3 Agent 模型的多级管理
     
-+ 当前项目在初期采用了 gpt-5.5 模型处理所有流程，后续可以引入其他模型并多级化管理，把好钢用在刀上，简单的总结应答完全可以使用更轻量级的模型，效果不会丢失太多的同时响应速度也会有所提高，而对于复杂场景进行判断与决策的时候应该使用可以承载更长上下文、产出质量更高的模型。
++ 当前项目在初期采用了 gpt-5.5 模型处理所有流程，后续可以引入其他模型并多级化管理，简单的总结应答完全可以使用更轻量级的模型，效果不会丢失太多的同时响应速度也会有所提高，而对于复杂场景进行判断与决策的时候应该使用可以承载更长上下文、产出质量更高的模型。
 
 4.4 给 NPC 行为加“任务状态机”
 
