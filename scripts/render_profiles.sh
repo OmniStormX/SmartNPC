@@ -4,11 +4,12 @@
 # Scope: renders everything EXCEPT SOUL.md. The six SOUL.md files are hand-
 # written per-NPC personas and must never be touched by this script.
 #
+# NPC metadata is read from hermes/npcs.yaml.
 # Placeholders (replaced by GNU sed):
 #   {{NPC_NAME}}       PascalCase internal name (XiaMi, Abigail, ...)
 #   {{NPC_DISPLAY}}    Chinese display name (夏弥, 阿比盖尔, ...)
 #   {{NPC_DIR}}        lower-case profile directory name (xiami, abigail, ...)
-#   {{NPC_PORT}}       Hermes Gateway API_SERVER_PORT (per runtime-config.yaml)
+#   {{NPC_PORT}}       Hermes Gateway API_SERVER_PORT
 #   {{PEER_A_NAME}}    First peer, PascalCase
 #   {{PEER_A_DISPLAY}} First peer, Chinese display name
 #   {{PEER_B_NAME}}    Second peer, PascalCase
@@ -37,23 +38,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MASTER="$REPO_ROOT/hermes/profiles/_master"
+REGISTRY="$REPO_ROOT/hermes/npcs.yaml"
+
+# shellcheck source=scripts/lib/npc_registry.sh
+source "$REPO_ROOT/scripts/lib/npc_registry.sh"
 
 if [ ! -d "$MASTER" ]; then
   echo "error: master template directory not found: $MASTER" >&2
   exit 1
 fi
 
-# NPC table: DIR NAME DISPLAY PORT PEER_A_NAME PEER_A_DISPLAY PEER_B_NAME PEER_B_DISPLAY
-# Ports mirror hermes/runtime-config.yaml. Keep in sync when editing either.
-TABLE='xiami XiaMi 夏弥 8642 Penny 潘妮 Abigail 阿比盖尔
-abigail Abigail 阿比盖尔 8643 Penny 潘妮 Sebastian 塞巴斯蒂安
-haley Haley 黑利 8644 Penny 潘妮 Abigail 阿比盖尔
-harvey Harvey 哈维 8645 Penny 潘妮 Abigail 阿比盖尔
-penny Penny 潘妮 8646 Abigail 阿比盖尔 Haley 黑利
-sebastian Sebastian 塞巴斯蒂安 8647 Abigail 阿比盖尔 Penny 潘妮'
+smartnpc_load_registry "$REGISTRY"
 
-while read -r DIR NAME DISP PORT PAN PAD PBN PBD; do
-  [ -z "$DIR" ] && continue
+for DIR in "${SMARTNPC_NPCS[@]}"; do
+  NAME="${SMARTNPC_NPC_GAME_NAME[$DIR]}"
+  DISP="${SMARTNPC_NPC_DISPLAY_NAME[$DIR]}"
+  PORT="${SMARTNPC_NPC_GATEWAY_PORT[$DIR]}"
+  PAN="${SMARTNPC_NPC_PEER_A_NAME[$DIR]:-}"
+  PAD="${SMARTNPC_NPC_PEER_A_DISPLAY[$DIR]:-}"
+  PBN="${SMARTNPC_NPC_PEER_B_NAME[$DIR]:-}"
+  PBD="${SMARTNPC_NPC_PEER_B_DISPLAY[$DIR]:-}"
   TARGET="$REPO_ROOT/hermes/profiles/$DIR"
   mkdir -p "$TARGET/skills"
 
@@ -88,7 +92,7 @@ while read -r DIR NAME DISP PORT PAN PAD PBN PBD; do
   done
 
   echo "rendered: $DIR ($NAME / $DISP, port $PORT, peers $PAN + $PBN)"
-done <<< "$TABLE"
+done
 
 echo ""
-echo "done. Sanity check: 'git diff hermes/profiles/xiami/' should be empty."
+echo "done. Sanity check: 'git diff hermes/profiles/' should be empty."

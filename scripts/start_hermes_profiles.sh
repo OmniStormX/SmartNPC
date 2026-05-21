@@ -6,8 +6,7 @@
 # Env:     HERMES_BOOT_TIMEOUT (seconds per profile, default 90)
 #          HERMES_PIDFILE (default /tmp/smartnpc-hermes-pids.txt)
 #
-# Port map (must match hermes/profiles/<name>/config-overlay.yaml):
-#   xiami=8642 abigail=8643 haley=8644 harvey=8645 penny=8646 sebastian=8647
+# Profile metadata is loaded from hermes/npcs.yaml.
 #
 # Exit codes:
 #   0  every requested profile is healthy
@@ -15,19 +14,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REGISTRY="$REPO_ROOT/hermes/npcs.yaml"
+
+# shellcheck source=scripts/lib/npc_registry.sh
+source "$REPO_ROOT/scripts/lib/npc_registry.sh"
+
 if [[ $# -lt 1 ]]; then
     echo "usage: $0 profile1[,profile2,...]" >&2
     exit 2
 fi
 
-declare -A PORT_OF=(
-    [xiami]=8642
-    [abigail]=8643
-    [haley]=8644
-    [harvey]=8645
-    [penny]=8646
-    [sebastian]=8647
-)
+smartnpc_load_registry "$REGISTRY"
 
 TIMEOUT="${HERMES_BOOT_TIMEOUT:-90}"
 PIDFILE="${HERMES_PIDFILE:-/tmp/smartnpc-hermes-pids.txt}"
@@ -37,9 +36,12 @@ IFS=',' read -ra PROFILES <<<"$1"
 failed=()
 
 for profile in "${PROFILES[@]}"; do
-    port="${PORT_OF[$profile]:-}"
-    if [[ -z "$port" ]]; then
-        echo "[start_hermes_profiles] unknown profile: $profile" >&2
+    profile="${profile//[[:space:]]/}"
+    [ -z "$profile" ] && continue
+
+    port="${SMARTNPC_NPC_GATEWAY_PORT[$profile]:-}"
+    if [[ -z "$port" || "${SMARTNPC_NPC_ENABLED[$profile]:-true}" != "true" ]]; then
+        echo "[start_hermes_profiles] unknown or disabled profile: $profile" >&2
         failed+=("$profile")
         continue
     fi
