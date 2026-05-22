@@ -5,8 +5,9 @@
 SmartNPC — 星露谷物语 AI NPC 系统。每个 NPC 对应一个独立的 Hermes Agent profile（隔离 SOUL / 记忆 / API 端口）。
 
 ```
-Stardew Valley (SMAPI) ── ws :18745 ── smartnpc-mcp (Go, --http :3000) ── MCP HTTP ── Hermes Profiles (OpenAI 兼容)
-                                              └── hermesrelay ── POST /v1/responses ──┘
+Stardew Valley (SMAPI) ── ws :18745 ── smartnpc-mcp (Go, --http :3000) ── MCP HTTP ── 6× Hermes Profile
+                                              └── hermesrelay ── POST /v1/responses ──┘  (xiami, abigail, haley,
+                                                                                          harvey, penny, sebastian)
 ```
 
 | 模块 | 语言 | 角色 |
@@ -64,18 +65,19 @@ CI 本地复现：`task ci`（**任何提交前必须通过**；失败禁止说"
 
 ### MCP 工具注册
 
-所有工具放 `smartnpc-mcp/internal/tools/`，一个 domain 一个文件，在 `registry.go` 的 `RegisterAll` 里统一挂载。新增工具的硬约束：
+所有工具放 `smartnpc-mcp/internal/tools/`，一个 domain 一个文件，在 `registry.go` 的 `RegisterAll` 里统一挂载。新增工具的硬约束（缺一不可）：
 
 - 命名 `<domain>_<verb>` 全小写下划线
 - Input/Output struct 必须带 `json` + `jsonschema` tag
 - Output 首字段是 `OK bool`
 - Handler 第一个返回值传 `nil`，让 SDK 用 Output 自动填充 content
-- 必须配 `InMemoryTransport` 端到端测试（参考 `meta_test.go`）
-- 同步更新 `docs/protocol.md`
+- **(a) 在 `RegisterAll` 注册** + **(b) 配 `InMemoryTransport` 端到端测试**（参考 `meta_test.go`）+ **(c) 同步更新 `docs/protocol.md`**
+
+> inter-NPC 工具 `npc_send_message` / `npc_broadcast_event` 复用 hermesrelay outbound 路径触发 recipient profile —— 详见 [ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md)。
 
 ### stdio vs HTTP 模式
 
-`smartnpc-mcp` 入口在 `smartnpc-mcp/cmd/smartnpc-mcp/main.go:39`：
+`smartnpc-mcp` 入口在 `smartnpc-mcp/cmd/smartnpc-mcp/main.go`，运行模式由 `--http` flag 切换：
 - stdio 模式（默认）：`server.Run(ctx, &mcp.StdioTransport{})` —— 本地 MCP 客户端用
 - HTTP 模式（`--http :3000`）：Streamable HTTP 在 `/mcp`，健康检查 `/healthz` —— 给 Hermes / Claude Desktop 等跨主机 MCP 客户端用
 
@@ -119,16 +121,21 @@ CI 本地复现：`task ci`（**任何提交前必须通过**；失败禁止说"
 | SOUL.md | `~/.hermes/profiles/<npc>/SOUL.md` | NPC 人格（替代 Hermes 默认人格） |
 | .env | `~/.hermes/profiles/<npc>/.env` | 独立 API key、端口、host |
 | 记忆 | `~/.hermes/profiles/<npc>/memories/` | 自动隔离，不跨 profile |
-| 端口 | `API_SERVER_PORT=864x` | 每个 NPC 不同端口 |
+| 端口 | `API_SERVER_PORT=864x` | 每个 NPC 不同端口（xiami=8642, abigail=8643, …, sebastian=8647） |
 
-创建新 NPC profile：
+**仓库内的 profile 源是渲染出来的**：
+
+- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `skills/`，**不含 `SOUL.md`**）
+- `hermes/profiles/<npc>/` — 渲染产物，仅 `SOUL.md` 是手写保留
+- `scripts/render_profiles.sh` 通过 8 个 `{{NPC_NAME}}` 类占位符把 `_master/` 渲染到每个 NPC 目录
+- ⚠️ **不要直接编辑非 `_master/` 下的渲染产物 ——`task profiles:verify` 会失败，下次 render 也会被覆盖**。详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)
+
+创建新 NPC profile（仅本机运行时）：
 ```bash
 hermes profile create <npc_name> --clone
 # 编辑 SOUL.md + .env（设置 API_SERVER_PORT / API_SERVER_KEY / OPENAI_API_KEY）
 hermes -p <npc_name> gateway run --accept-hooks
 ```
-
-Agent 启动时 `-llm-url` 指向对应 profile 的端口，`-model` 用 profile 名。
 
 ### 协议
 
@@ -137,11 +144,14 @@ Agent 启动时 `-llm-url` 指向对应 profile 的端口，`-model` 用 profile
 - `response`（关联 `id`）
 - `event`（push，无 `id`）
 
-已实现动作：`chat_say`、`mail_send`；事件：`chat_received`。
+**已实现 actions**：`chat_say` / `mail_send` / `game_*`（`game_get_time` / `game_get_weather` 等）/ `friendship_get` / `npc_*`（`npc_move_to` / `npc_summon` / `npc_emote` / `npc_give_item` / `npc_follow_*` / `npc_lead_to` / `npc_send_message` / `npc_broadcast_event` 等）/ `player_get_status`
+
+**已实现 events**：`chat_message` / `chat_received` / `npc_interact` / `group_create`（详见 [`docs/events.md`](docs/events.md)）
 
 ## 代码规范（硬约束）
 
-- Go 1.22+，可用 `log/slog`、泛型、`for range int`
+- **Go 1.25+**（`go.mod` 声明 `go 1.25.0`）；可用 `log/slog`、泛型、`for range int`
+- ⚠️ CI workflow 中 `GO_VERSION: '1.22'` 滞后于 `go.mod`，未来若用到 1.25 独有特性需先升 CI
 - 错误包装：`fmt.Errorf("...: %w", err)`，不要丢原 err
 - 包注释和导出符号注释写英文；TODO/FIXME 标注 milestone
 - 新增 Go package **必须**有 `*_test.go`（至少一个 smoke test）
@@ -168,13 +178,15 @@ Agent 启动时 `-llm-url` 指向对应 profile 的端口，`-model` 用 profile
 ## CI 反馈循环
 
 用户说"看 CI"/"check ci"：
-1. `gh run list --limit 1` 拿 runId
+1. `python .codebuddy\skills\ci-doctor\scripts\fetch_run.py --limit 1`（或 `gh run list --limit 1`）拿 runId
 2. SUCCESS → 一句话汇报
-3. FAILURE → `gh run view <runId> --log-failed` → 归类（compile / test / lint / env / workflow）→ 报根因 + 修复方案
+3. FAILURE → `gh run view <runId> --log-failed` → 归类（compile / test / lint / dependency / environment / workflow / flake）→ 报根因 + 修复方案
 4. 修复后 `task ci` → commit → push → 循环
 5. 3 次不过停下找用户
 
 禁止：盲猜原因、改 workflow 掩盖、用 `continue-on-error` 装作过了。
+
+> 完整 SOP 见 `.codebuddy/skills/ci-doctor/SKILL.md` + `references/failure-patterns.md`。
 
 ## 跨平台 / Linux 接入注意
 
@@ -223,9 +235,18 @@ SMARTNPC_HTTP_PORT=3000
 | M2 SMAPI Mod + HTTP bridge | ✅ |
 | M3 WebSocket bridge + 游戏内聊天框 + echo agent | ✅ |
 | M4 OpenAI provider + persona + Hermes 隔离 + NPC spawn | ✅ |
-| M5 Hermes-first：mcp HTTP + hermesrelay + 6 NPC profile | ✅ 代码就绪，待实机 E2E |
+| M5 Hermes-first：mcp HTTP + hermesrelay + 6 NPC profile | ✅ 代码就绪；**5.6 / 5.7 实机 happy path 待人工验证** |
 
 每个 milestone 做完**等用户验证**再进下一个，不要自动连推。
+
+## 网络拓扑注意
+
+- **WSL 内的 Hermes Gateway 访问 Windows 上的 mcp `:3000/mcp` 时，可能需要 Windows host IP，而不是 `127.0.0.1`**
+  - WSL2 默认 NAT，`127.0.0.1` 只指向 WSL 自身
+  - 用 `wsl hostname -I` 拿 WSL IP；用 `ipconfig`（Windows 侧）拿 Windows host IP（通常 `192.168.x.x` 或 vEthernet 接口的 IP）
+  - 实际值以仓库 `.env` 中 `OPENAI_BASE_URL` 和 `hermes/runtime-config.yaml` 中 `gateway_url` 为准
+- **mcp 必须先于 Hermes Gateway 启动**，否则 Hermes 启动时发现 `:3000/mcp` 不在线会缓存到 "0 tools"
+- **不要起多个 mcp** —— SMAPI Mod ws 只接受一个客户端
 
 ## 启动全栈（Windows）
 
@@ -263,5 +284,3 @@ wsl -d Ubuntu-22.04 bash -lc "bash /mnt/d/SmartNPC/scripts/start_hermes_profiles
 task mod:install
 "D:\Stardew Valley\StardewModdingAPI.exe"
 ```
-
-⚠️ **不要起多个 mcp** — mod ws 只接受一个客户端。
