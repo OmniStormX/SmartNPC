@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
 )
 
 // captured records what the test gateway received for one POST.

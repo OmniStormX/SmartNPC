@@ -85,7 +85,7 @@ bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
 ## 架构与模块边界
 
 **Go Workspace** — 根 `go.work` 联动：
-- `github.com/smartnpc/smartnpc-mcp`
+- `github.com/OmniStormX/SmartNPC`
 
 **边界原则：**
 - C# 只放 SMAPI 胶水（事件、Harmony patch、ws 编解码）；业务逻辑在 Go

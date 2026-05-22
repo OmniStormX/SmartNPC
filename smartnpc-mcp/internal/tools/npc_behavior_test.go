@@ -9,7 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
 )
 
 // newBehaviorClientServer mirrors newMovementClientServer but registers the

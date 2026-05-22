@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/events"
+	"github.com/OmniStormX/SmartNPC/internal/events"
 )
 
 // Config controls a single Relay. One relay = one Hermes profile / one NPC.

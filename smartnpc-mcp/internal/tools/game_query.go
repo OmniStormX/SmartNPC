@@ -7,7 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
 )
 
 // ── game_get_time ──────────────────────────────────────────────

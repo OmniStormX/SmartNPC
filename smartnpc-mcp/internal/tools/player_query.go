@@ -7,7 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
 )
 
 // PlayerGetStatusInput takes no parameters; the mod returns whatever

@@ -9,7 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
 )
 
 // newPerceptionClient wires an MCP server/client pair with only the perception

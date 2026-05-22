@@ -18,9 +18,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
-	"github.com/smartnpc/smartnpc-mcp/internal/hermesrelay"
-	"github.com/smartnpc/smartnpc-mcp/internal/tools"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/hermesrelay"
+	"github.com/OmniStormX/SmartNPC/internal/tools"
 )
 
 // TestPipeline_ChatMessageReachesHermes wires the full server-side

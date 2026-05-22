@@ -1,4 +1,4 @@
-module github.com/smartnpc/smartnpc-mcp
+module github.com/OmniStormX/SmartNPC
 
 go 1.25.0
 

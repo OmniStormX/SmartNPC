@@ -10,7 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/tools"
+	"github.com/OmniStormX/SmartNPC/internal/tools"
 )
 
 // TestHTTPTransport_PingRoundTrip wires the same MCP server we serve in

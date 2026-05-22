@@ -23,7 +23,7 @@ package events
 import (
 	"encoding/json"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
 )
 
 // ChatMessage — player sent a line targeted at a specific NPC via the

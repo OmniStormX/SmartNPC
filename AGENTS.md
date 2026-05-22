@@ -55,7 +55,7 @@ Notes:
 
 ### Go (`smartnpc-mcp/`)
 
-- Module path: `github.com/smartnpc/smartnpc-mcp`.
+- Module path: `github.com/OmniStormX/SmartNPC`.
 - Keep MCP tools under `internal/tools/`; register new tools in `internal/tools/registry.go`.
 - For stdio MCP mode, logs must go to stderr. Do not use stdout logging that can corrupt the MCP protocol stream.
 - Wrap errors with context using `fmt.Errorf("...: %w", err)`.

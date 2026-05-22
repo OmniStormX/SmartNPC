@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/events"
+	"github.com/OmniStormX/SmartNPC/internal/events"
 )
 
 // Group fans an event out to every Relay whose NPC filter matches. Use this

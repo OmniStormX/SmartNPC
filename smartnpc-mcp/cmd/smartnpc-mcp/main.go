@@ -31,10 +31,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/smartnpc/smartnpc-mcp/internal/bridge"
-	"github.com/smartnpc/smartnpc-mcp/internal/hermesrelay"
-	"github.com/smartnpc/smartnpc-mcp/internal/log"
-	"github.com/smartnpc/smartnpc-mcp/internal/tools"
+	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/internal/hermesrelay"
+	"github.com/OmniStormX/SmartNPC/internal/log"
+	"github.com/OmniStormX/SmartNPC/internal/tools"
 )
 
 var version = "0.1.0-dev"
