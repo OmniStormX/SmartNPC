@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/OmniStormX/SmartNPC/internal/events"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/events"
 )
 
 // Group fans an event out to every Relay whose NPC filter matches. Use this

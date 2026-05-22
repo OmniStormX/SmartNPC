@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 )
 
 // capitalize returns s with its first rune upper-cased. Empty input is a

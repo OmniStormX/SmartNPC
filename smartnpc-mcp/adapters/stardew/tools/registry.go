@@ -1,4 +1,9 @@
-// Package tools registers MCP tools on the server.
+// Package tools registers Stardew Valley-specific MCP tools on the server.
+//
+// Framework-level tools (e.g. `ping`) live in pkg/agentbridge.RegisterMeta
+// and are registered separately by the composition root (main.go) — keeping
+// adapter-agnostic introspection in core means it stays available even when
+// the SDV bridge is detached.
 package tools
 
 import (
@@ -6,14 +11,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 )
 
-// RegisterAll wires every available tool group onto the given server.
+// RegisterAll wires every Stardew-specific tool group onto the given server.
 //
 // br may be nil; mod-backed tools (chat_say, mail_send, game_*, npc_*) are
-// then omitted so that the server is still usable for the meta `ping` tool
-// and inter-NPC messaging alone (which run entirely in-process).
+// then omitted so the inter-NPC messaging tools (which run entirely
+// in-process) remain usable on a bridge-less deployment.
 //
 // hermes, when non-nil, is the same bridge.EventHandler used for forwarding
 // mod events to the Hermes Gateway. Inter-NPC messaging tools fan their
@@ -33,7 +38,6 @@ func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler,
 	if logger == nil {
 		logger = slog.Default()
 	}
-	registerMeta(s)
 	registerNpcMessage(s, logger, hermes)
 	if br != nil {
 		registerMail(s, br)

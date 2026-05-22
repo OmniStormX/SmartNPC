@@ -9,8 +9,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/OmniStormX/SmartNPC/internal/bridge"
-	"github.com/OmniStormX/SmartNPC/internal/events"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/events"
 )
 
 // ChatSayInput drives the `chat_say` tool.

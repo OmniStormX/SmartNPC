@@ -1,4 +1,4 @@
-package tools
+package agentbridge
 
 import (
 	"context"
@@ -9,16 +9,17 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestPingEndToEnd wires up an in-memory MCP server + client, calls `ping`,
-// and verifies both the listing and the structured tool result. It also
-// catches any breakage of the AddTool generic signature against the live SDK.
-func TestPingEndToEnd(t *testing.T) {
+// TestRegisterMeta_PingEndToEnd wires up an in-memory MCP server + client,
+// calls the `ping` tool, and verifies both the tool listing and the
+// structured response shape. Catches breakage of the AddTool generic
+// signature against the live SDK.
+func TestRegisterMeta_PingEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	server := mcp.NewServer(&mcp.Implementation{
-		Name: "smartnpc-mcp-test", Version: "test",
+		Name: "agentbridge-test", Version: "test",
 	}, nil)
-	RegisterAll(server, nil, nil, nil, nil)
+	RegisterMeta(server)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {
@@ -26,7 +27,7 @@ func TestPingEndToEnd(t *testing.T) {
 	}
 
 	client := mcp.NewClient(&mcp.Implementation{
-		Name: "smartnpc-mcp-test", Version: "test",
+		Name: "agentbridge-test", Version: "test",
 	}, nil)
 	cs, err := client.Connect(ctx, t2, nil)
 	if err != nil {

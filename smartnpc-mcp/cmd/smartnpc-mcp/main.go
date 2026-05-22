@@ -30,9 +30,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/tools"
 	"github.com/OmniStormX/SmartNPC/internal/log"
-	"github.com/OmniStormX/SmartNPC/internal/tools"
+	"github.com/OmniStormX/SmartNPC/pkg/agentbridge"
 	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 	"github.com/OmniStormX/SmartNPC/pkg/transport"
 )
@@ -182,6 +183,9 @@ func main() {
 	}
 
 	tools.RegisterAll(server, br, hermesHandler, chatGuard, logger)
+	// Framework-level tools (ping) live in agentbridge so they remain
+	// available even if the SDV adapter is detached.
+	agentbridge.RegisterMeta(server)
 
 	if *httpAddr != "" {
 		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin,

@@ -1,4 +1,4 @@
-package tools
+package agentbridge
 
 import (
 	"context"
@@ -19,8 +19,14 @@ type PingOutput struct {
 	ServerNow string `json:"serverNow"    jsonschema:"server timestamp in RFC3339"`
 }
 
-// registerMeta installs introspection / liveness tools.
-func registerMeta(s *mcp.Server) {
+// RegisterMeta installs the framework-level introspection / liveness tools
+// onto the given mcp.Server. Today: a single `ping` tool that adapters and
+// MCP clients can rely on regardless of whether a domain adapter is wired.
+//
+// Adapter-agnostic: ping never touches game state, so it works during
+// startup, when no save is loaded, and on bridges that have no event source
+// attached at all.
+func RegisterMeta(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "ping",
 		Description: "Liveness check. Returns the server's current UTC timestamp and " +

@@ -10,7 +10,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/OmniStormX/SmartNPC/internal/tools"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/tools"
+	"github.com/OmniStormX/SmartNPC/pkg/agentbridge"
 )
 
 // TestHTTPTransport_PingRoundTrip wires the same MCP server we serve in
@@ -22,7 +23,8 @@ func TestHTTPTransport_PingRoundTrip(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name: "smartnpc-mcp-test", Version: "test",
 	}, nil)
-	tools.RegisterAll(server, nil, nil, nil, nil) // no bridge — only meta + in-process tools
+	tools.RegisterAll(server, nil, nil, nil, nil) // no bridge — only in-process tools (npc_message)
+	agentbridge.RegisterMeta(server)              // framework `ping` lives in core
 
 	handler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },

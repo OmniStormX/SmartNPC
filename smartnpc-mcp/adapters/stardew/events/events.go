@@ -23,7 +23,7 @@ package events
 import (
 	"encoding/json"
 
-	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 )
 
 // ChatMessage — player sent a line targeted at a specific NPC via the

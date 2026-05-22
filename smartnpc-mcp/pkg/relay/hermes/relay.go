@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/OmniStormX/SmartNPC/internal/events"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/events"
 )
 
 // Config controls a single Relay. One relay = one Hermes profile / one NPC.

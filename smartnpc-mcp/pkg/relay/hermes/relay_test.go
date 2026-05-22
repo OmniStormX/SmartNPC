@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 )
 
 // captured records what the test gateway received for one POST.

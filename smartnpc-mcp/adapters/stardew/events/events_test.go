@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OmniStormX/SmartNPC/internal/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 )
 
 func TestDecodeChatMessage_Roundtrip(t *testing.T) {
