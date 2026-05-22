@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -32,9 +31,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OmniStormX/SmartNPC/internal/bridge"
-	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 	"github.com/OmniStormX/SmartNPC/internal/log"
 	"github.com/OmniStormX/SmartNPC/internal/tools"
+	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
+	"github.com/OmniStormX/SmartNPC/pkg/transport"
 )
 
 var version = "0.1.0-dev"
@@ -201,14 +201,13 @@ func runStdio(ctx context.Context, logger *slog.Logger, server *mcp.Server) {
 	logger.Info("smartnpc-mcp shut down cleanly")
 }
 
-// runHTTP serves the MCP server over Streamable HTTP at /mcp. Suitable for
-// remote MCP clients (e.g. Hermes inside WSL connecting to the Windows host).
+// runHTTP serves the MCP server over Streamable HTTP via pkg/transport.
 //
-// Also exposes /healthz (liveness, no dependencies) and /status (operator
-// dashboard: ws connection state + per-profile gateway health probe). The
-// status endpoint is read-only and probes each Hermes Gateway's /health URL
-// in parallel with a short per-call timeout so a single dead gateway can't
-// stall the response.
+// Also exposes /status (SDV-specific operator dashboard: ws connection
+// state + per-Hermes-profile gateway health probe). /mcp + /healthz are
+// owned by transport.RunHTTP. The status endpoint is read-only and
+// probes each Hermes Gateway's /health URL in parallel with a short
+// per-call timeout so a single dead gateway can't stall the response.
 func runHTTP(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -220,50 +219,18 @@ func runHTTP(
 	br *bridge.WSClient,
 	hermesRelays []*hermesrelay.Relay,
 ) {
-	mcpHandler := mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return server },
-		&mcp.StreamableHTTPOptions{
-			// Make cross-host access work out of the box. We listen on
-			// :PORT (all interfaces) so DNS-rebinding protection only
-			// triggers when the listener resolves to a loopback address;
-			// passing this flag also keeps Hermes-from-WSL hitting the
-			// Windows host IP from being rejected.
-			DisableLocalhostProtection: allowAnyOrigin,
-			// CrossOriginProtection: leave nil so the SDK's default
-			// (zero-value http.CrossOriginProtection) is used. If a remote
-			// MCP client gets blocked by Origin checks, set the env var
-			// GODEBUG=disablecrossoriginprotection=1 when launching mcp.
-		},
-	)
-
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("/mcp/", mcpHandler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		snap := buildStatusSnapshot(r.Context(), startTime, wsURL, br, hermesRelays)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(snap)
 	})
 
-	httpServer := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-	}()
-
-	logger.Info("listening on streamable HTTP", "addr", addr, "endpoint", "/mcp")
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := transport.RunHTTP(ctx, logger, server, transport.HTTPOptions{
+		Addr:           addr,
+		AllowAnyOrigin: allowAnyOrigin,
+		Mux:            mux,
+	}); err != nil {
 		logger.Error("http server terminated with error", "err", err)
 		os.Exit(1)
 	}
