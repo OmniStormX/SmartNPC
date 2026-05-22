@@ -1,78 +1,46 @@
 ---
 name: smartnpc-memory-policy
-description: How XiaMi uses Hermes's built-in per-profile memory to remember the player across game days. Defines what to commit to memory, what NOT to commit, and how to retrieve before speaking.
-version: 0.1.0
+description: Optional memory module. Use only for durable player facts, pending promises, or delayed inter-NPC results. Do not save ordinary chat turns.
+version: 0.2.0
 author: SmartNPC Project
 license: MIT
 metadata:
   hermes:
-    tags: [SmartNPC, Stardew-Valley, memory, in-character]
+    tags: [SmartNPC, memory]
 ---
 
-# SmartNPC Memory Policy (XiaMi)
+# Memory policy — XiaMi
 
-Hermes ships a per-profile memory layer backed by `state.db` at
-`~/.hermes/profiles/xiami/state.db` plus markdown notes in `memories/`.
-Each profile is isolated — XiaMi's memories live only in XiaMi's profile
-and never leak to other NPC profiles.
+Each NPC profile has isolated memory under `~/.hermes/profiles/xiami/`.
 
-You have two writable surfaces:
+## Save only durable facts
 
-| Surface | Contents | Persists across days |
-|---|---|---|
-| Conversation history | Recent turns in the current named conversation (`xiami`) | Yes (Hermes stores it server-side) |
-| Long-term memory notes | Markdown files under `memories/` written via the `memory` toolset | Yes |
+Good memory:
 
-## What to commit to long-term memory
+- player preferences or personal facts
+- promises and pending favors
+- relationship turning points
+- delayed inter-NPC replies worth surfacing later
+- recurring schedule/habit facts
 
-Save things that matter for **future conversations**:
+Do not save:
 
-- The player's farm name, layout, what they grow.
-- Personal facts the player shared ("they have a sister in Zuzu City").
-- Promises ("I told them I'd help with the barn next week").
-- Notable shifts in relationship tone ("first time they said something
-  sincere").
-- Schedule patterns ("usually shows up around dinner").
+- raw current dialogue
+- raw tool output, hearts, coordinates, timestamps
+- temporary reasoning or plans
+- facts the player asked you to forget
+- guesses about other NPCs
 
-## What NOT to commit
+## Read memory when
 
-- Raw tool output (timestamps, hearts numbers, coordinates).
-- The player's literal current message — it's already in conversation
-  history.
-- Anything the player explicitly asked to forget.
-- Your own internal narration / planning.
-- Information about other NPCs you only inferred — record only what was
-  said to you or by you.
+- the player says `还记得...`
+- a pending promise/reply may matter
+- the turn is intimate or references history
 
-## When to read memory
+Do not read memory for every greeting; it adds latency.
 
-- At the start of a turn that opens a new topic, scan recent notes for
-  context before deciding on tone.
-- When the player references something old ("还记得我说过的那件事吗"),
-  check memory before guessing.
-- Before a heart-tier-7+ intimate moment, reread the last few notes —
-  XiaMi remembers, even when acting like nothing happened.
+## Style
 
-## Writing style
+One short in-character note. Prefer season/day over Unix time.
 
-Notes are for your future self. Keep them:
-
-- Short: one or two sentences per fact.
-- In-character: write as XiaMi would think it, not as a database row.
-  ✗ `"Player friendship: 1750 points"`
-  ✓ `"心数升到 7 颗了。这家伙今天竟然没说蠢话。"`
-- Time-stamped where it matters: include season/day ("Spring 5") not raw
-  Unix time.
-
-## What state.db handles automatically
-
-Conversation history is automatic — every `chat_say` and every player
-message in conversation `xiami` is stored by Hermes. You do not need to
-manually "save" the dialogue. Only commit notes for things you want to
-recall outside the current conversation thread.
-
-## Boundary with persona
-
-`SOUL.md` defines **who XiaMi is** (timeless). Memory captures **what
-has happened** (mutable). Keep them separate — don't rewrite SOUL.md to
-encode recent events.
+Example: `Spring 5：玩家说想以后一起去海边拍照，我装作没兴趣。`

@@ -48,8 +48,21 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			if p.Source != "" && p.Source != "player" {
 				who = p.Source
 			}
-			return fmt.Sprintf("%s says to you: %s", who, p.Text)
+			speaker := p.NPC
+			if speaker == "" {
+				speaker = p.Target
+			}
+			if speaker == "" {
+				speaker = "your exact internal NPC name"
+			}
+			return fmt.Sprintf(
+				"[private_chat npc=%q] %s says to you: %s\n\n"+
+					"⚠️ This is a PRIVATE player turn. If you answer, you MUST call chat_say "+
+					"with speaker=%q. Plain assistant text is invisible to the player; "+
+					"do not finish with text-only output. Call at most one chat_say, then stop.",
+				speaker, who, p.Text, speaker)
 		}
+
 	case bridge.EventChatReceived:
 		var p ChatReceived
 		if err := json.Unmarshal(data, &p); err == nil && p.Text != "" {

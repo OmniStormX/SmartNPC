@@ -73,6 +73,14 @@ tasks:
 
   # ── Hermes profile render sanity (opt-in) ───────────────────────
 
+  profiles:render:
+    desc: Render hermes/profiles and runtime-config from hermes/npcs.yaml.
+    cmds:
+      - cmd: bash scripts/render_profiles.sh
+        platforms: [linux, darwin]
+      - cmd: bash scripts/render_profiles.sh
+        platforms: [windows]
+
   profiles:verify:
     desc: Sanity-check hermes/npcs.yaml, runtime-config, and rendered hermes/profiles/ tree.
     cmds:
@@ -84,6 +92,7 @@ tasks:
   # ── Git hooks (opt-in dev convenience) ──────────────────────────
 
   hooks:enable:
+
     desc: Enable repo-local git hooks (.githooks). Auto-deploys mod after commits that touch smapi-mod/.
     cmds:
       - cmd: git config core.hooksPath .githooks

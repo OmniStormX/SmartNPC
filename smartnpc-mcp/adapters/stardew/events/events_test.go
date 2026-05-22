@@ -105,7 +105,28 @@ func TestFormatForHermes_CoversKnownEvents(t *testing.T) {
 	}
 }
 
+func TestFormatForHermes_ChatMessagePrivateRequiresVisibleChatSay(t *testing.T) {
+	payload := ChatMessage{NPC: "Sebastian", Text: "hello!", Source: "player"}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := FormatForHermes(bridge.EventChatMessage, raw)
+	wantSubs := []string{
+		`[private_chat npc="Sebastian"]`,
+		`speaker="Sebastian"`,
+		"Plain assistant text is invisible",
+		"Call at most one chat_say",
+	}
+	for _, want := range wantSubs {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FormatForHermes private chat = %q; want contains %q", got, want)
+		}
+	}
+}
+
 func TestFormatForHermes_ChatReceivedGroupSource(t *testing.T) {
+
 	payload := ChatReceived{
 		Text:    "hi",
 		Source:  "player_group",

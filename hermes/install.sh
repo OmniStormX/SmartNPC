@@ -2,13 +2,11 @@
 # Sync the xiami (and any other) Hermes profile from this repo into the
 # user's ~/.hermes/profiles/<name>/ directory inside WSL.
 #
-# What gets copied:
+# What gets synced:
 #   - SOUL.md
+#   - .env
 #   - skills/           (merged, not replaced — Hermes's built-in skills are preserved)
-#
-# What does NOT get copied automatically:
-#   - mcp-servers.yaml block → you must paste it into ~/.hermes/profiles/<name>/config.yaml
-#     (the script prints the block + the target file at the end)
+#   - config-overlay.yaml merged into ~/.hermes/profiles/<name>/config.yaml
 #
 # Usage (from inside WSL, with this repo mounted at /mnt/d/SmartNPC):
 #
@@ -43,9 +41,17 @@ mkdir -p "$TARGET_BASE"
 declare -a synced=()
 declare -a pending_merge=()
 
-have_yq=0
-if command -v yq >/dev/null 2>&1; then
-    have_yq=1
+PY=""
+for candidate in "$HERMES_HOME/hermes-agent/venv/bin/python" "$HERMES_HOME/bin/python" python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+        PY="$candidate"
+        break
+    fi
+done
+if [[ -z "$PY" ]]; then
+    echo "error: no Python with PyYAML found (tried Hermes venv + system python)" >&2
+    echo "       install PyYAML or run Hermes setup first." >&2
+    exit 1
 fi
 
 # Detect the WSL default-gateway IP, which resolves back to the Windows host
@@ -63,6 +69,9 @@ fi
 
 for profile_dir in "$REPO_PROFILES"/*/; do
     profile="$(basename "$profile_dir")"
+    if [[ "$profile" == "_master" ]]; then
+        continue
+    fi
     target="$TARGET_BASE/$profile"
     mkdir -p "$target"
 
@@ -70,6 +79,12 @@ for profile_dir in "$REPO_PROFILES"/*/; do
     if [[ -f "$profile_dir/SOUL.md" ]]; then
         cp "$profile_dir/SOUL.md" "$target/SOUL.md"
         echo "[sync] $profile/SOUL.md"
+    fi
+
+    # Copy .env (LLM + Langfuse credentials)
+    if [[ -f "$profile_dir/.env" ]]; then
+        cp "$profile_dir/.env" "$target/.env"
+        echo "[sync] $profile/.env"
     fi
 
     # Merge skills/ (recursive copy; preserves existing Hermes skills)
@@ -87,22 +102,65 @@ for profile_dir in "$REPO_PROFILES"/*/; do
     fi
     if [[ -f "$overlay" ]]; then
         target_cfg="$target/config.yaml"
-        # Render the block with HOST_IP substituted.
-        rendered="$(sed "s|__HOST_IP__|$HOST_IP|g" "$overlay")"
+        rendered_overlay="$(mktemp)"
+        sed "s|__HOST_IP__|$HOST_IP|g" "$overlay" > "$rendered_overlay"
 
         if [[ ! -f "$target_cfg" ]]; then
+            rm -f "$rendered_overlay"
             pending_merge+=("$profile:needs_bootstrap")
-        elif grep -q "^mcp_servers:" "$target_cfg" || grep -q "^API_SERVER_ENABLED:" "$target_cfg"; then
-            # Existing overlay-ish content — don't clobber; let the operator decide.
-            pending_merge+=("$profile:already_present")
         else
-            # Append the rendered block.
-            {
-                echo
-                echo "# ── injected by hermes/install.sh (smartnpc profile) ──"
-                echo "$rendered"
-            } >> "$target_cfg"
-            echo "[merge] $profile/config.yaml overlay appended (HOST_IP=$HOST_IP)"
+            "$PY" - "$target_cfg" "$rendered_overlay" <<'PY'
+import os
+import pathlib
+import re
+import sys
+import yaml
+
+cfg_path = pathlib.Path(sys.argv[1])
+overlay_path = pathlib.Path(sys.argv[2])
+
+
+def load_env(path):
+    env = dict(os.environ)
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            env[key.strip()] = value.strip().strip('"').strip("'")
+    return env
+
+
+def expand_env_refs(text, env):
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: env.get(m.group(1), m.group(0)), text)
+
+
+base = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+overlay_text = expand_env_refs(overlay_path.read_text(encoding="utf-8"), load_env(cfg_path.parent / ".env"))
+overlay = yaml.safe_load(overlay_text) or {}
+
+
+def merge(dst, src, path=()):
+    if isinstance(dst, dict) and isinstance(src, dict):
+        for key, value in src.items():
+            dst[key] = merge(dst.get(key), value, path + (str(key),))
+        return dst
+    if isinstance(dst, list) and isinstance(src, list):
+        if path[-1:] == ("enabled",):
+            out = list(dst)
+            for item in src:
+                if item not in out:
+                    out.append(item)
+            return out
+        return src
+    return src
+
+merged = merge(base, overlay)
+cfg_path.write_text(yaml.safe_dump(merged, sort_keys=False, allow_unicode=True, width=4096), encoding="utf-8")
+PY
+            rm -f "$rendered_overlay"
+            echo "[merge] $profile/config.yaml overlay merged (HOST_IP=$HOST_IP)"
         fi
     fi
 
@@ -123,13 +181,6 @@ if [[ ${#pending_merge[@]} -gt 0 ]]; then
                 echo "  - $profile: config.yaml does not exist yet."
                 echo "      Run once in WSL: hermes -p $profile run"
                 echo "      Then re-run this script."
-                ;;
-            already_present)
-                target_cfg="$TARGET_BASE/$profile/config.yaml"
-                echo "  - $profile: config.yaml already has mcp_servers: or API_SERVER_*."
-                echo "      Review and manually merge the blocks from"
-                echo "      $REPO_PROFILES/$profile/config-overlay.yaml"
-                echo "      into $target_cfg (substituting __HOST_IP__ → $HOST_IP)."
                 ;;
         esac
     done

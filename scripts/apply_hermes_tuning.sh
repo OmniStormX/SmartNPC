@@ -17,8 +17,11 @@
 # IDEMPOTENT: re-runs are safe; the values converge.
 #
 # WHAT IT SETS (per profile)
+#   model.provider = custom:smartnpc-agent
+#   model.default = HERMES_AGENT_MODEL from profile .env
+#   model.base_url = HERMES_AGENT_URL from profile .env
 #   model.context_length = 64000
-#   model.default = $SMARTNPC_HERMES_MODEL   (only when env var is set)
+#   providers.smartnpc-agent.key_env = HERMES_AGENT_API_KEY
 #   compression.enabled = true
 #   compression.threshold = 0.15
 #   compression.target_ratio = 0.10
@@ -46,32 +49,20 @@
 
 set -euo pipefail
 
-# Auto-load SMARTNPC_HERMES_MODEL from the repo's .env so the user can set
-# it once there instead of exporting every run. We do NOT `source` the file
-# — .env is authored on Windows (CRLF) and contains unquoted values with
-# spaces (e.g. SMARTNPC_GAME_PATH=...Stardew Valley), both of which crash
-# `source`. Instead, grep just the line we care about, strip CR, and pull
-# the value out manually. Anything fancier is out of scope for this script.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/../.env"
-if [[ -z "${SMARTNPC_HERMES_MODEL:-}" && -f "$ENV_FILE" ]]; then
-  line="$(grep -E '^[[:space:]]*SMARTNPC_HERMES_MODEL[[:space:]]*=' "$ENV_FILE" | tail -n1 | tr -d '\r' || true)"
-  if [[ -n "$line" ]]; then
-    val="${line#*=}"
-    # strip surrounding single or double quotes if present
-    val="${val%\"}"; val="${val#\"}"
-    val="${val%\'}"; val="${val#\'}"
-    export SMARTNPC_HERMES_MODEL="$val"
-  fi
-fi
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REGISTRY="$REPO_ROOT/hermes/npcs.yaml"
+
+# shellcheck source=scripts/lib/npc_registry.sh
+source "$SCRIPT_DIR/lib/npc_registry.sh"
+smartnpc_load_registry "$REGISTRY"
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PROFILES_DIR="$HERMES_HOME/profiles"
 
-ALL_PROFILES=(xiami abigail haley harvey penny sebastian)
 targets=("$@")
 if [[ ${#targets[@]} -eq 0 ]]; then
-  targets=("${ALL_PROFILES[@]}")
+  targets=("${SMARTNPC_NPCS[@]}")
 fi
 
 if [[ ! -d "$PROFILES_DIR" ]]; then
@@ -107,25 +98,57 @@ for profile in "${targets[@]}"; do
     continue
   fi
 
-  "$PY" - "$cfg" "${SMARTNPC_HERMES_MODEL:-}" <<'PY'
-import sys, yaml, pathlib
+  "$PY" - "$cfg" <<'PY'
+import os, sys, yaml, pathlib
 
 path = pathlib.Path(sys.argv[1])
-hermes_model = sys.argv[2] if len(sys.argv) > 2 else ""
 text = path.read_text(encoding="utf-8")
 data = yaml.safe_load(text) or {}
 
-# model: keep every existing field; just set context_length, and override
-# model.default ONLY when SMARTNPC_HERMES_MODEL is set in the environment
-# (otherwise leave the bootstrap-provided default — typically gpt-5.5 —
-# untouched). provider/base_url stay bootstrap-controlled in both cases.
+
+def load_env(path):
+    env = dict(os.environ)
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            env[key.strip()] = value.strip().strip('"').strip("'")
+    return env
+
+
+env = load_env(path.parent / ".env")
+agent_url = env.get("HERMES_AGENT_URL", "${HERMES_AGENT_URL}")
+agent_model = env.get("HERMES_AGENT_MODEL", "${HERMES_AGENT_MODEL}")
+
+# SmartNPC profiles are model-provider driven by each profile's .env.
+# Write non-secret url/model values into config.yaml so Hermes gateway paths
+# that do not expand ${...} still call the intended OpenAI-compatible API.
 model = data.get("model")
 if not isinstance(model, dict):
     model = {} if model is None else {"_legacy": model}
-model["context_length"] = 64000
-if hermes_model:
-    model["default"] = hermes_model
+model.update({
+    "provider": "custom:smartnpc-agent",
+    "default": agent_model,
+    "base_url": agent_url,
+    "api_mode": "chat_completions",
+    "context_length": 64000,
+})
 data["model"] = model
+
+providers = data.get("providers")
+if not isinstance(providers, dict):
+    providers = {}
+providers["smartnpc-agent"] = {
+    "name": "smartnpc-agent",
+    "base_url": agent_url,
+    "key_env": "HERMES_AGENT_API_KEY",
+    "default_model": agent_model,
+    "api_mode": "chat_completions",
+    "discover_models": False,
+}
+data["providers"] = providers
 
 # compression: union with existing.
 comp = data.get("compression")
@@ -157,8 +180,7 @@ data["agent"] = agent
 # nested mutated dicts but Hermes does not care about ordering.
 new_text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096)
 path.write_text(new_text, encoding="utf-8")
-extras = f", model.default={hermes_model}" if hermes_model else ""
-print(f"  - wrote model.context_length=64000{extras} + compression.* + agent.tool_use_enforcement=false → {path}")
+print(f"  - wrote SmartNPC model/provider env refs + compression.* + agent.tool_use_enforcement=false → {path}")
 PY
   applied=$((applied + 1))
 done

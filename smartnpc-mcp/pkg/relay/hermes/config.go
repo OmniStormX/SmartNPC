@@ -47,6 +47,21 @@ type profileEntry struct {
 //	                                            on; only flip when debugging
 //	                                            duplicate-memory issues.
 //	SMARTNPC_RELAY_TIMEOUT_MS=<int>           — POST timeout. Default 120000.
+func expandRuntimeValue(value string) string {
+	return os.Expand(value, func(key string) string {
+		if key == "SMARTNPC_HERMES_GATEWAY_HOST" {
+			if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+				return v
+			}
+			if v := strings.TrimSpace(os.Getenv("WSL_IP")); v != "" {
+				return v
+			}
+			return "127.0.0.1"
+		}
+		return os.Getenv(key)
+	})
+}
+
 func LoadConfigFile(path string) ([]Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -68,6 +83,7 @@ func LoadConfigFile(path string) ([]Config, error) {
 	timeout := TimeoutFromEnv()
 	out := make([]Config, 0, len(file.Profiles))
 	for i, p := range file.Profiles {
+		p.GatewayURL = expandRuntimeValue(p.GatewayURL)
 		if p.GatewayURL == "" {
 			return nil, fmt.Errorf("hermesrelay: profile %d (%s): gateway_url required", i, p.Name)
 		}

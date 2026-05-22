@@ -56,13 +56,17 @@ if not defined WSL_IP (
     echo [WARN] could not auto-detect WSL_IP via hostname -I; falling back to 127.0.0.1
     set "WSL_IP=127.0.0.1"
 )
+if not defined SMARTNPC_HERMES_GATEWAY_HOST set "SMARTNPC_HERMES_GATEWAY_HOST=%WSL_IP%"
 
 echo [cfg] SMARTNPC_REPO       = %SMARTNPC_REPO%
+
 echo [cfg] TASK_EXE            = %TASK_EXE%
 echo [cfg] WSL_DISTRO          = %WSL_DISTRO%
 echo [cfg] WIN_HOST_IP         = %WIN_HOST_IP%
 echo [cfg] WSL_IP              = %WSL_IP%
+echo [cfg] HERMES_GATEWAY_HOST = %SMARTNPC_HERMES_GATEWAY_HOST%
 echo [cfg] SMARTNPC_GAME_PATH  = %SMARTNPC_GAME_PATH%
+
 echo [cfg] SMARTNPC_HTTP_PORT  = %SMARTNPC_HTTP_PORT%
 echo [cfg] SMARTNPC_WS_URL     = %SMARTNPC_WS_URL%
 echo [cfg] ACTIVE_PROFILES     = %SMARTNPC_ACTIVE_PROFILES%

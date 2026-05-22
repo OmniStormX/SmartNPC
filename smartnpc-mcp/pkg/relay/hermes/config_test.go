@@ -50,6 +50,30 @@ func TestLoadConfigFile_Valid(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFile_ExpandsGatewayHostEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rt.yaml")
+	yaml := `profiles:
+  - name: xiami
+    npc_filter: XiaMi
+    gateway_url: http://${SMARTNPC_HERMES_GATEWAY_HOST}:8642
+    conversation: xiami
+    model: hermes-agent
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv("SMARTNPC_HERMES_GATEWAY_HOST", "192.0.2.10")
+
+	cfgs, err := LoadConfigFile(path)
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	if cfgs[0].URL != "http://192.0.2.10:8642" {
+		t.Errorf("expanded URL = %q", cfgs[0].URL)
+	}
+}
+
 func TestLoadConfigFile_MissingEnv(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rt.yaml")
