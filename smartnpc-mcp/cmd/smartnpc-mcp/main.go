@@ -32,7 +32,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OmniStormX/SmartNPC/internal/bridge"
-	"github.com/OmniStormX/SmartNPC/internal/hermesrelay"
+	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 	"github.com/OmniStormX/SmartNPC/internal/log"
 	"github.com/OmniStormX/SmartNPC/internal/tools"
 )

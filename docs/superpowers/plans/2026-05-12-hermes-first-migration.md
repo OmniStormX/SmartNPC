@@ -760,7 +760,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OmniStormX/SmartNPC/internal/hermesrelay"
+	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 )
 ```
 

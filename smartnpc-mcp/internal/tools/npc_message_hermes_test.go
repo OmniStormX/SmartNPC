@@ -15,7 +15,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/OmniStormX/SmartNPC/internal/hermesrelay"
+	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 )
 
 // TestNpcSendMessage_RoutesToHermesGroup is the integration test pinning the
