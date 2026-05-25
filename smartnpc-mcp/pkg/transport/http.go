@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,6 +29,11 @@ type HTTPOptions struct {
 	// underlying mcp Streamable HTTP handler. Required for cross-host
 	// clients (e.g. Hermes inside WSL hitting the Windows host IP).
 	AllowAnyOrigin bool
+
+	// MCPAPIKey, when non-empty, requires clients to present a matching
+	// Bearer token in the Authorization header for /mcp requests. This
+	// protects the MCP endpoint when exposed on a public network.
+	MCPAPIKey string
 
 	// Mux is the http.ServeMux RunHTTP attaches to. Optional; nil means
 	// "allocate a fresh one". Callers wanting custom endpoints should
@@ -71,8 +77,15 @@ func RunHTTP(ctx context.Context, logger *slog.Logger, server *mcp.Server, opts 
 			DisableLocalhostProtection: opts.AllowAnyOrigin,
 		},
 	)
-	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("/mcp/", mcpHandler)
+
+	// Wrap with API key auth if configured.
+	var mcpHTTP http.Handler = mcpHandler
+	if opts.MCPAPIKey != "" {
+		mcpHTTP = apiKeyMiddleware(opts.MCPAPIKey, mcpHandler)
+		logger.Info("MCP API key authentication enabled")
+	}
+	mux.Handle("/mcp", mcpHTTP)
+	mux.Handle("/mcp/", mcpHTTP)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -96,4 +109,16 @@ func RunHTTP(ctx context.Context, logger *slog.Logger, server *mcp.Server, opts 
 		return err
 	}
 	return nil
+}
+
+// apiKeyMiddleware rejects requests that don't carry a valid Bearer token.
+func apiKeyMiddleware(key string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != key {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

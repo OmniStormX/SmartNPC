@@ -1,0 +1,120 @@
+# SmartNPC Hermes Agent — Remote Deployment
+#
+# Runs all 6 NPC Hermes Gateways on a single server.
+# Each service is the same image with different NPC_PROFILE / NPC_PORT.
+#
+# Usage:
+#   cp .env.example .env  # fill in values
+#   bash scripts/sync-profiles.sh
+#   docker compose up -d
+#   docker compose ps     # check health
+
+x-hermes-common: &hermes-common
+  build: .
+  restart: unless-stopped
+  env_file: .env
+  environment: &hermes-env
+    HERMES_AGENT_URL: ${HERMES_AGENT_URL}
+    HERMES_AGENT_API_KEY: ${HERMES_AGENT_API_KEY}
+    HERMES_AGENT_MODEL: ${HERMES_AGENT_MODEL:-deepseek-v4-flash}
+    HERMES_LANGFUSE_PUBLIC_KEY: ${HERMES_LANGFUSE_PUBLIC_KEY:-}
+    HERMES_LANGFUSE_SECRET_KEY: ${HERMES_LANGFUSE_SECRET_KEY:-}
+    HERMES_LANGFUSE_BASE_URL: ${HERMES_LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+    SMARTNPC_MCP_URL: http://${MCP_PUBLIC_HOST}:${MCP_PUBLIC_PORT:-3000}/mcp
+
+services:
+  hermes-xiami:
+    <<: *hermes-common
+    container_name: hermes-xiami
+    environment:
+      <<: *hermes-env
+      NPC_PROFILE: xiami
+      NPC_PORT: "8642"
+    ports:
+      - "8642:8642"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8642/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  hermes-abigail:
+    <<: *hermes-common
+    container_name: hermes-abigail
+    environment:
+      <<: *hermes-env
+      NPC_PROFILE: abigail
+      NPC_PORT: "8643"
+    ports:
+      - "8643:8643"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8643/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  hermes-haley:
+    <<: *hermes-common
+    container_name: hermes-haley
+    environment:
+      <<: *hermes-env
+      NPC_PROFILE: haley
+      NPC_PORT: "8644"
+    ports:
+      - "8644:8644"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8644/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  hermes-harvey:
+    <<: *hermes-common
+    container_name: hermes-harvey
+    environment:
+      <<: *hermes-env
+      NPC_PROFILE: harvey
+      NPC_PORT: "8645"
+    ports:
+      - "8645:8645"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8645/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  hermes-penny:
+    <<: *hermes-common
+    container_name: hermes-penny
+    environment:
+      <<: *hermes-env
+      NPC_PROFILE: penny
+      NPC_PORT: "8646"
+    ports:
+      - "8646:8646"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8646/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  hermes-sebastian:
+    <<: *hermes-common
+    container_name: hermes-sebastian
+    environment:
+      <<: *hermes-env
+      NPC_PROFILE: sebastian
+      NPC_PORT: "8647"
+    ports:
+      - "8647:8647"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8647/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

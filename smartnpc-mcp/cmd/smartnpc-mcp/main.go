@@ -80,6 +80,9 @@ func main() {
 			"path to a YAML file with a `profiles:` array (one entry per NPC) "+
 				"for multi-profile fan-out. When set, takes precedence over "+
 				"--hermes-url / --hermes-npc / --hermes-conversation / --hermes-model.")
+		mcpAPIKey = flag.String("mcp-api-key", "",
+			"if set, require this Bearer token on /mcp requests. "+
+				"Use when exposing --http to a public network.")
 	)
 	flag.Parse()
 
@@ -188,7 +191,7 @@ func main() {
 	agentbridge.RegisterMeta(server)
 
 	if *httpAddr != "" {
-		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin,
+		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin, *mcpAPIKey,
 			startTime, *wsURL, br, hermesRelays)
 	} else {
 		runStdio(ctx, logger, server)
@@ -218,6 +221,7 @@ func runHTTP(
 	server *mcp.Server,
 	addr string,
 	allowAnyOrigin bool,
+	mcpAPIKey string,
 	startTime time.Time,
 	wsURL string,
 	br *bridge.WSClient,
@@ -233,6 +237,7 @@ func runHTTP(
 	if err := transport.RunHTTP(ctx, logger, server, transport.HTTPOptions{
 		Addr:           addr,
 		AllowAnyOrigin: allowAnyOrigin,
+		MCPAPIKey:      mcpAPIKey,
 		Mux:            mux,
 	}); err != nil {
 		logger.Error("http server terminated with error", "err", err)
