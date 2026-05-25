@@ -104,16 +104,11 @@ timeout /t 1 /nobreak >nul
 echo [OK] Old processes cleared.
 echo.
 
-rem ---- Step 3: Install mod + sync hermes profiles + ensure auxiliary model ----
-echo [3/6] Installing mod, syncing Hermes profiles, ensuring auxiliary model...
+rem ---- Step 3: Install mod ----
+echo [3/6] Installing mod...
 call "%TASK_EXE%" mod:install
 if errorlevel 1 goto install_fail
-wsl -d %WSL_DISTRO% bash -lc "bash %REPO_WSL%/hermes/install.sh"
-if errorlevel 1 goto install_fail
-wsl -d %WSL_DISTRO% bash -lc "bash %REPO_WSL%/scripts/apply_hermes_tuning.sh"
-if errorlevel 1 goto install_fail
-wsl -d %WSL_DISTRO% bash -lc "bash %REPO_WSL%/scripts/ensure_hermes_aux.sh"
-echo [OK] Mod installed, Hermes profiles synced, tuning applied, session_search routed to gpt-4o-mini.
+echo [OK] Mod installed.
 echo.
 
 rem ---- Step 4: Start mcp in --http mode with multi-profile fan-out ----
@@ -144,15 +139,29 @@ goto wait_mcp
 echo [OK] mcp HTTP up at :%SMARTNPC_HTTP_PORT%/mcp.
 echo.
 
-rem ---- Step 5: Start Hermes Gateways for selected NPC profiles ----
-rem Each gateway adds ~300-500MB RAM and 30-60s cold start. With 6 gateways
-rem expect ~2-3GB RAM and ~3-6 min total before all 6 are healthy. To trim,
-rem set SMARTNPC_ACTIVE_PROFILES in .env (comma-separated subset).
-echo [5/6] Starting Hermes Gateways: %SMARTNPC_ACTIVE_PROFILES% ...
-start "Hermes Gateways" wsl -d %WSL_DISTRO% bash -ic "bash %REPO_WSL%/scripts/start_hermes_profiles.sh %SMARTNPC_ACTIVE_PROFILES%"
-echo      Waiting for selected gateways to become healthy (each up to ~90s)...
+rem ---- Step 5: Start Hermes Gateways via Docker Compose ----
+rem Pulls latest image from ghcr.io, generates .env for Docker, then starts.
+echo [5/6] Starting Hermes Gateways via Docker Compose ...
 
-rem Iterate ACTIVE_PROFILES, pick port from the static profile→port table.
+rem Generate deploy/hermes/.env from root config (single source of truth).
+echo SMARTNPC_MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp> "%SMARTNPC_REPO%\deploy\hermes\.env"
+echo SMARTNPC_HERMES_KEY=%SMARTNPC_HERMES_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+if defined HERMES_AGENT_URL echo HERMES_AGENT_URL=%HERMES_AGENT_URL%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+if defined HERMES_AGENT_API_KEY echo HERMES_AGENT_API_KEY=%HERMES_AGENT_API_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+if defined HERMES_AGENT_MODEL echo HERMES_AGENT_MODEL=%HERMES_AGENT_MODEL%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+if defined HERMES_LANGFUSE_PUBLIC_KEY echo HERMES_LANGFUSE_PUBLIC_KEY=%HERMES_LANGFUSE_PUBLIC_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+if defined HERMES_LANGFUSE_SECRET_KEY echo HERMES_LANGFUSE_SECRET_KEY=%HERMES_LANGFUSE_SECRET_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+if defined HERMES_LANGFUSE_BASE_URL echo HERMES_LANGFUSE_BASE_URL=%HERMES_LANGFUSE_BASE_URL%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+echo      Generated deploy/hermes/.env (MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp)
+
+rem Pull latest image and start containers in WSL Docker.
+wsl -d %WSL_DISTRO% bash -lc "cd %REPO_WSL%/deploy/hermes && docker compose pull 2>&1 | tail -5 && docker compose up -d 2>&1 | tail -10"
+if errorlevel 1 (
+    echo [WARN] docker compose pull failed, trying local build...
+    wsl -d %WSL_DISTRO% bash -lc "cd %REPO_WSL%/deploy/hermes && docker compose up -d --build 2>&1 | tail -10"
+)
+
+echo      Waiting for selected gateways to become healthy (each up to ~90s)...
 for %%P in (%SMARTNPC_ACTIVE_PROFILES:,= %) do call :wait_one_profile %%P
 echo [OK] All selected gateways healthy.
 echo.

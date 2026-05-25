@@ -1,9 +1,14 @@
-# SmartNPC Hermes Agent — Remote Deployment
+# SmartNPC Hermes Agent — Docker Compose
 #
-# One-step deploy: cp .env.example .env → fill values → docker compose up -d
-# No manual scripts needed. All config is generated from .env at container start.
+# Usage:
+#   docker compose pull   # pull latest pre-built image from ghcr.io
+#   docker compose up -d  # start all NPC gateways
+#
+# Local dev (build from source instead of pulling):
+#   docker compose up -d --build
 
 x-hermes-common: &hermes-common
+  image: ghcr.io/omnistormx/smartnpc-hermes:latest
   build: .
   restart: unless-stopped
   env_file: .env
