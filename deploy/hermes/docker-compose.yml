@@ -1,33 +1,18 @@
 # SmartNPC Hermes Agent — Remote Deployment
 #
-# Runs all 6 NPC Hermes Gateways on a single server.
-# Each service is the same image with different NPC_PROFILE / NPC_PORT.
-#
-# Usage:
-#   cp .env.example .env  # fill in values
-#   bash scripts/sync-profiles.sh
-#   docker compose up -d
-#   docker compose ps     # check health
+# One-step deploy: cp .env.example .env → fill values → docker compose up -d
+# No manual scripts needed. All config is generated from .env at container start.
 
 x-hermes-common: &hermes-common
   build: .
   restart: unless-stopped
   env_file: .env
-  environment: &hermes-env
-    HERMES_AGENT_URL: ${HERMES_AGENT_URL}
-    HERMES_AGENT_API_KEY: ${HERMES_AGENT_API_KEY}
-    HERMES_AGENT_MODEL: ${HERMES_AGENT_MODEL:-deepseek-v4-flash}
-    HERMES_LANGFUSE_PUBLIC_KEY: ${HERMES_LANGFUSE_PUBLIC_KEY:-}
-    HERMES_LANGFUSE_SECRET_KEY: ${HERMES_LANGFUSE_SECRET_KEY:-}
-    HERMES_LANGFUSE_BASE_URL: ${HERMES_LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
-    SMARTNPC_MCP_URL: http://${MCP_PUBLIC_HOST}:${MCP_PUBLIC_PORT:-3000}/mcp
 
 services:
   hermes-xiami:
     <<: *hermes-common
     container_name: hermes-xiami
     environment:
-      <<: *hermes-env
       NPC_PROFILE: xiami
       NPC_PORT: "8642"
     ports:
@@ -37,13 +22,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   hermes-abigail:
     <<: *hermes-common
     container_name: hermes-abigail
     environment:
-      <<: *hermes-env
       NPC_PROFILE: abigail
       NPC_PORT: "8643"
     ports:
@@ -53,13 +37,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   hermes-haley:
     <<: *hermes-common
     container_name: hermes-haley
     environment:
-      <<: *hermes-env
       NPC_PROFILE: haley
       NPC_PORT: "8644"
     ports:
@@ -69,13 +52,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   hermes-harvey:
     <<: *hermes-common
     container_name: hermes-harvey
     environment:
-      <<: *hermes-env
       NPC_PROFILE: harvey
       NPC_PORT: "8645"
     ports:
@@ -85,13 +67,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   hermes-penny:
     <<: *hermes-common
     container_name: hermes-penny
     environment:
-      <<: *hermes-env
       NPC_PROFILE: penny
       NPC_PORT: "8646"
     ports:
@@ -101,13 +82,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   hermes-sebastian:
     <<: *hermes-common
     container_name: hermes-sebastian
     environment:
-      <<: *hermes-env
       NPC_PROFILE: sebastian
       NPC_PORT: "8647"
     ports:
@@ -117,4 +97,4 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s

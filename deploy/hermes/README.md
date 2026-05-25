@@ -1,130 +1,105 @@
 # Hermes Agent — Remote Deployment
 
-Deploy all 6 NPC Hermes Gateways on a remote Linux server via Docker Compose.
+一键部署 6 个 NPC Hermes Gateway 到远程 Linux 服务器。
 
-## Architecture
-
-```
-[Player PC - Windows]
-  Stardew Valley ── ws ── smartnpc-mcp (:3000, public)
-                                │
-                          Internet (HTTP)
-                                │
-[Remote Server - Linux]         ▼
-  Docker Compose: 6× Hermes Gateway (:8642-8647)
-    ↕ tool calls via MCP HTTP back to player's :3000/mcp
-```
-
-## Prerequisites
-
-- Remote server: Docker + Docker Compose v2
-- Player PC: `smartnpc-mcp` exposed on a public IP or domain (port 3000)
-
-## Quick Start
+## 部署步骤（只需 3 步）
 
 ```bash
-# 1. Clone repo (or just copy deploy/hermes/)
+# 1. 克隆仓库 & 准备 profile 数据（首次）
 git clone https://github.com/OmniStormX/SmartNPC.git
 cd SmartNPC/deploy/hermes
-
-# 2. Configure
-cp .env.example .env
-# Edit .env — see comments for each variable
-
-# 3. Sync profile data from repo
 bash scripts/sync-profiles.sh
 
-# 4. Build & start
-docker compose up -d --build
+# 2. 配置 .env（唯一需要手动编辑的文件）
+cp .env.example .env
+vim .env
 
-# 5. Verify
-bash scripts/healthcheck.sh
-# or: docker compose ps
+# 3. 启动
+docker compose up -d --build
 ```
 
-## Player-Side Setup
+之后所有配置变更只需改 `.env` 然后 `docker compose up -d`（无需重新 build）。
 
-On the Windows PC running the game + `smartnpc-mcp`:
+## .env 配置项
 
-1. Ensure `:3000` is reachable from the remote server (port forward / firewall rule)
+```env
+# 玩家 PC 的 mcp 公网地址（Hermes 回调 MCP 工具用）
+SMARTNPC_MCP_URL=http://your-public-ip:3000/mcp
 
-2. Update `.env` in repo root:
-   ```env
-   # Point hermesrelay to the remote server's public IP
-   SMARTNPC_HERMES_GATEWAY_HOST=<remote-server-ip>
+# Gateway 鉴权 key（与玩家侧 --hermes-api-key 一致）
+SMARTNPC_HERMES_KEY=smartnpc-test-key
 
-   # (Optional) Enable MCP API key auth
-   SMARTNPC_MCP_API_KEY=your-strong-random-key
-   ```
+# LLM 供应商
+HERMES_AGENT_URL=https://api.deepseek.com/v1
+HERMES_AGENT_API_KEY=sk-xxx
+HERMES_AGENT_MODEL=deepseek-v4-flash
 
-3. Start mcp with the API key:
-   ```cmd
-   smartnpc-mcp\bin\smartnpc-mcp.exe ^
-     --http :3000 ^
-     --ws-url ws://127.0.0.1:18745/ws ^
-     --hermes-config hermes\runtime-config.yaml ^
-     --hermes-api-key %SMARTNPC_HERMES_KEY% ^
-     --mcp-api-key %SMARTNPC_MCP_API_KEY% ^
-     --log-level debug
-   ```
+# Langfuse（可选，留空关闭）
+HERMES_LANGFUSE_PUBLIC_KEY=
+HERMES_LANGFUSE_SECRET_KEY=
+HERMES_LANGFUSE_BASE_URL=https://cloud.langfuse.com
+```
 
-## Configuration Reference
+## 玩家侧设置
 
-### Remote `.env` variables
+Windows PC 的 `.env` 加一行：
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MCP_PUBLIC_HOST` | Yes | Public IP/domain of the player's mcp server |
-| `MCP_PUBLIC_PORT` | No | mcp HTTP port (default: 3000) |
-| `MCP_API_KEY` | Recommended | Bearer token for MCP auth (must match player's `--mcp-api-key`) |
-| `SMARTNPC_HERMES_KEY` | Yes | Bearer token for hermesrelay → gateway auth |
-| `HERMES_AGENT_URL` | Yes | LLM provider base URL |
-| `HERMES_AGENT_API_KEY` | Yes | LLM provider API key |
-| `HERMES_AGENT_MODEL` | No | Model name (default: deepseek-v4-flash) |
-| `HERMES_LANGFUSE_*` | No | Langfuse observability (leave empty to disable) |
+```env
+SMARTNPC_HERMES_GATEWAY_HOST=<远程服务器公网IP>
+```
 
-### Port Mapping
+启动 mcp 时带上远程服务器地址：
 
-| NPC | Container Port | Host Port |
-|-----|---------------|-----------|
-| xiami | 8642 | 8642 |
-| abigail | 8643 | 8643 |
-| haley | 8644 | 8644 |
-| harvey | 8645 | 8645 |
-| penny | 8646 | 8646 |
-| sebastian | 8647 | 8647 |
+```cmd
+smartnpc-mcp\bin\smartnpc-mcp.exe --http :3000 ^
+  --ws-url ws://127.0.0.1:18745/ws ^
+  --hermes-config hermes\runtime-config.yaml ^
+  --hermes-api-key smartnpc-test-key ^
+  --mcp-api-key %SMARTNPC_MCP_API_KEY% ^
+  --log-level debug
+```
 
-## Operations
+确保玩家 PC 的 `:3000` 端口从公网可达（路由器端口转发 / 防火墙规则）。
+
+## 运维
 
 ```bash
-# View logs for a specific NPC
-docker compose logs -f hermes-xiami
-
-# Restart a single NPC gateway
-docker compose restart hermes-xiami
-
-# Stop all
-docker compose down
-
-# Rebuild after profile changes
-bash scripts/sync-profiles.sh
-docker compose up -d --build
-
-# Check health of all gateways
-bash scripts/healthcheck.sh
+docker compose ps                          # 查看状态
+docker compose logs -f hermes-xiami        # 看日志
+docker compose restart hermes-xiami        # 重启单个
+docker compose down                        # 停止全部
+bash scripts/healthcheck.sh                # 批量健康检查
 ```
 
-## Security
+修改 SOUL.md 或 skills 后需要重新 build：
 
-- **mcp → Hermes**: Already uses `SMARTNPC_HERMES_KEY` as Bearer token
-- **Hermes → mcp**: Use `--mcp-api-key` flag (added in this deployment)
-- **Recommended**: Also restrict `:3000` via firewall to only the remote server's IP
+```bash
+bash scripts/sync-profiles.sh
+docker compose up -d --build
+```
 
-## Troubleshooting
+修改 .env（LLM key、MCP 地址等）只需重启：
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Gateway unhealthy | Container crashed or still starting | `docker compose logs hermes-<npc>` |
-| Tool calls timeout | mcp :3000 unreachable from remote | Check firewall, verify with `curl http://<mcp-host>:3000/healthz` |
-| 401 on tool calls | API key mismatch | Ensure `MCP_API_KEY` in remote `.env` matches `--mcp-api-key` on mcp |
-| NPC doesn't respond | hermesrelay can't reach gateway | Verify remote server ports 8642-8647 are open, `SMARTNPC_HERMES_GATEWAY_HOST` is correct |
+```bash
+docker compose up -d
+```
+
+## 端口
+
+| NPC | 端口 |
+|-----|------|
+| xiami | 8642 |
+| abigail | 8643 |
+| haley | 8644 |
+| harvey | 8645 |
+| penny | 8646 |
+| sebastian | 8647 |
+
+## 排障
+
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| Gateway unhealthy | 容器崩溃或启动中 | `docker compose logs hermes-<npc>` |
+| Tool calls timeout | mcp 不可达 | `curl http://<mcp-host>:3000/healthz` |
+| 401 on tool calls | API key 不匹配 | 检查 `.env` 中的 key 与 mcp 侧一致 |
+| NPC 不回复 | hermesrelay 连不上 gateway | 确认 8642-8647 端口开放 |

@@ -1,27 +1,27 @@
 # Hermes Agent Gateway — SmartNPC remote deployment
 #
-# Each container runs ONE NPC profile's Hermes gateway.
-# Build once, run 6 times with different NPC_PROFILE / NPC_PORT env vars.
+# All profile data (SOUL.md, skills, cron) is baked into the image at build time.
+# At runtime, only a .env file is needed — entrypoint.sh generates the full
+# Hermes config.yaml from environment variables automatically.
+#
+# Build: docker compose build  (from deploy/hermes/)
+# Run:   docker compose up -d  (reads .env for all config)
 
-FROM python:3.11-slim AS base
+FROM python:3.11-slim
 
-# System deps for hermes-agent (includes git for pip VCS installs, curl for healthcheck)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl git && \
     rm -rf /var/lib/apt/lists/*
 
-# Install hermes-agent + MCP client dependency
 RUN pip install --no-cache-dir hermes-agent mcp
 
 WORKDIR /hermes
 
-# Copy all profile data (mounted or built-in)
-COPY profiles/ /root/.hermes/profiles/
+# Bake all profile data into image (SOUL.md, skills, cron-recipes)
+COPY profiles/ /hermes/profiles/
 
-# Entrypoint script handles env var expansion
+# Entrypoint generates config.yaml from env vars and starts gateway
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-EXPOSE ${NPC_PORT:-8642}
 
 ENTRYPOINT ["/entrypoint.sh"]
