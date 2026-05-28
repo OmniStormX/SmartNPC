@@ -20,6 +20,13 @@ dist/
 .env.local
 *.local
 
+# Hermes rendered profile artifacts (generated from _master/ at startup)
+# Only SOUL.md is hand-written and tracked per NPC.
+hermes/profiles/*/config-overlay.yaml
+hermes/profiles/*/cron-recipes.md
+hermes/profiles/*/skills/
+hermes/profiles/*/.env
+
 # C# build outputs
 smapi-mod/bin/
 smapi-mod/obj/

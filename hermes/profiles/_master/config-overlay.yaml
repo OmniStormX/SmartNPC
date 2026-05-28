@@ -11,10 +11,11 @@
 # NOT overwrite an existing top-level mcp_servers: block — review manually
 # in that case).
 #
-# URL resolution (in priority order):
-#   1. ${SMARTNPC_MCP_URL} env var (for remote/Docker deployment)
-#   2. install.sh substitutes __HOST_IP__ to WSL default gateway IP (local WSL)
-#   3. http://127.0.0.1:3000/mcp (mirrored-mode WSL or same-host)
+# URL resolution:
+#   Hermes expands ${SMARTNPC_MCP_URL} from the profile's .env at startup.
+#   This variable is REQUIRED — set it in each profile's .env or as a
+#   system environment variable before starting the gateway.
+#   Typical value: http://127.0.0.1:3000/mcp (same-host deployment).
 #
 # Prerequisites:
 #   - smartnpc-mcp running in --http :3000 mode (task mcp:run)
@@ -23,9 +24,7 @@
 
 mcp_servers:
   smartnpc_game:
-    # Remote deploy: set SMARTNPC_MCP_URL=http://<mcp-host>:3000/mcp
-    # Local WSL: install.sh replaces __HOST_IP__ with Windows host IP.
-    url: ${SMARTNPC_MCP_URL:-http://__HOST_IP__:3000/mcp}
+    url: ${SMARTNPC_MCP_URL}
     timeout: 60
     connect_timeout: 10
     tools:

@@ -54,18 +54,15 @@ if [[ -z "$PY" ]]; then
     exit 1
 fi
 
-# Detect the WSL default-gateway IP, which resolves back to the Windows host
-# from inside WSL. Works regardless of mirrored-mode networking as long as
-# smartnpc-mcp is bound to 0.0.0.0:3000 on Windows.
-# 在 pipefail 模式下，`ip route | awk ... exit` 可能让 ip 收到 SIGPIPE。
-# 使用 awk 自行记住首个默认网关，避免提前退出导致脚本异常中断。
+# Legacy: previously detected WSL default-gateway IP to substitute __HOST_IP__
+# in config-overlay.yaml. Now the overlay uses ${SMARTNPC_MCP_URL} which Hermes
+# expands at runtime from the profile's .env. The sed below is kept as a no-op
+# safety net for any leftover __HOST_IP__ references.
 HOST_IP="$(ip route 2>/dev/null | awk '/default/ && host == "" { host = $3 } END { print host }')"
 if [[ -z "$HOST_IP" ]]; then
     HOST_IP="127.0.0.1"
-    echo "warning: could not detect WSL default gateway — falling back to $HOST_IP"
-else
-    echo "[detect] WSL→Windows host IP = $HOST_IP"
 fi
+echo "[detect] host IP = $HOST_IP (used only if __HOST_IP__ placeholder remains in overlay)"
 
 for profile_dir in "$REPO_PROFILES"/*/; do
     profile="$(basename "$profile_dir")"
@@ -160,7 +157,7 @@ merged = merge(base, overlay)
 cfg_path.write_text(yaml.safe_dump(merged, sort_keys=False, allow_unicode=True, width=4096), encoding="utf-8")
 PY
             rm -f "$rendered_overlay"
-            echo "[merge] $profile/config.yaml overlay merged (HOST_IP=$HOST_IP)"
+            echo "[merge] $profile/config.yaml overlay merged"
         fi
     fi
 

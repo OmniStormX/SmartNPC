@@ -34,6 +34,9 @@ PROFILES="$REPO_ROOT/hermes/profiles"
 REGISTRY="$REPO_ROOT/hermes/npcs.yaml"
 RUNTIME_CONFIG="$REPO_ROOT/hermes/runtime-config.yaml"
 
+# Ensure rendered profiles exist (they are gitignored; regenerate from _master/).
+bash "$SCRIPT_DIR/render_profiles.sh" >/dev/null
+
 NPCS=()
 NON_XIAMI=()
 declare -A NPC_NAME=()

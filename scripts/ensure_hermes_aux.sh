@@ -26,7 +26,7 @@ while (<>) {
     if ($in) {
         s|^(    provider: ).*|${1}custom|;
         s|^(    model: ).*|${1}gpt-4o-mini|;
-        s|^(    base_url: ).*|${1}http://v2.open.venus.oa.com/llmproxy/v1|;
+        s|^(    base_url: ).*|;
     }
     print;
 }
@@ -43,4 +43,3 @@ fi
 
 cp "$CONFIG" "$CONFIG.bak.$(date +%s)"
 mv "$TMP" "$CONFIG"
-echo "[ensure-hermes-aux] patched session_search → gpt-4o-mini @ Venus llmproxy"
