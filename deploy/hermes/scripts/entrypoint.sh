@@ -9,7 +9,7 @@ set -euo pipefail
 : "${HERMES_AGENT_API_KEY:?HERMES_AGENT_API_KEY is required}"
 : "${SMARTNPC_HERMES_KEY:?SMARTNPC_HERMES_KEY is required (gateway Bearer token)}"
 
-HERMES_AGENT_MODEL="${HERMES_AGENT_MODEL:-deepseek-v4-flash}"
+HERMES_AGENT_MODEL="${HERMES_AGENT_MODEL:-deepseek-v4-pro-external}"
 
 # ── Set up profile directory ──────────────────────────────────────────────
 PROFILE_DIR="/root/.hermes/profiles/${NPC_PROFILE}"
@@ -94,6 +94,40 @@ echo "[diag]   HERMES_LANGFUSE_BASE_URL: ${HERMES_LANGFUSE_BASE_URL:-https://clo
 
 if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ] && [ -n "${HERMES_LANGFUSE_SECRET_KEY:-}" ]; then
     echo "[diag] Langfuse credentials found — enabling observability/langfuse plugin"
+
+    # ── Workaround: hermes-agent 0.14.0 bundled plugin at
+    #    plugins/observability/langfuse/ is NOT discoverable due to:
+    #    1. Missing plugin.yaml manifest (pip packaging omits it)
+    #    2. Scan depth cap prevents 3-level-deep discovery
+    #
+    #    Fix: symlink plugin code into profile's user plugins dir
+    #    ($PROFILE_DIR/plugins/) at depth=1, with a proper manifest
+    #    whose name matches the config key "observability/langfuse".
+    #    hermes -p <profile> sets HERMES_HOME=$PROFILE_DIR, so user
+    #    plugins are scanned at $PROFILE_DIR/plugins/<name>/.
+    LANGFUSE_USER_PLUGIN="$PROFILE_DIR/plugins/langfuse"
+    LANGFUSE_BUNDLED="/usr/local/lib/python3.11/site-packages/plugins/observability/langfuse/__init__.py"
+    mkdir -p "$LANGFUSE_USER_PLUGIN"
+    cat > "$LANGFUSE_USER_PLUGIN/plugin.yaml" <<PLUGINYAML
+name: observability/langfuse
+description: Langfuse observability — traces LLM calls, tool usage, and conversations
+version: "1.0.0"
+kind: standalone
+provides_hooks:
+  - pre_api_request
+  - post_api_request
+  - pre_llm_call
+  - post_llm_call
+  - pre_tool_call
+  - post_tool_call
+PLUGINYAML
+    if [ -f "$LANGFUSE_BUNDLED" ]; then
+        ln -sf "$LANGFUSE_BUNDLED" "$LANGFUSE_USER_PLUGIN/__init__.py"
+        echo "[diag] Linked bundled langfuse plugin → $LANGFUSE_USER_PLUGIN/"
+    else
+        echo "[diag] WARNING: bundled langfuse plugin not found at $LANGFUSE_BUNDLED"
+    fi
+
     cat >> "$PROFILE_DIR/config.yaml" <<EOF
 
 plugins:
@@ -203,14 +237,48 @@ else
 fi
 echo "==============================="
 
-# ── Explicitly register langfuse plugin via Hermes CLI ─────────────────────
-# config.yaml `plugins.enabled` may not be sufficient; the CLI command
-# writes to Hermes's internal plugin registry.
+# ── Verify langfuse plugin discovery ─────────────────────────────────────────
 if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ] && [ -n "${HERMES_LANGFUSE_SECRET_KEY:-}" ]; then
-    echo "[diag] Registering langfuse plugin via CLI..."
-    hermes -p "${NPC_PROFILE}" plugins enable observability/langfuse 2>&1 || echo "[diag] WARNING: 'hermes plugins enable' failed (may not be supported in this version)"
-    echo "[diag] Plugin list:"
+    echo "[diag] Verifying plugin discovery..."
     hermes -p "${NPC_PROFILE}" plugins list 2>&1 || echo "[diag] WARNING: 'hermes plugins list' failed"
+fi
+
+# ── Diagnostic: Direct Langfuse SDK test trace ─────────────────────────────
+# Sends a test trace bypassing Hermes to verify SDK + credentials + network
+if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ] && [ -n "${HERMES_LANGFUSE_SECRET_KEY:-}" ]; then
+    echo "[diag] Sending test trace directly via Langfuse Python SDK..."
+    python3 -c "
+import os, sys
+try:
+    from langfuse import Langfuse
+    import langfuse
+    ver = getattr(langfuse, '__version__', None) or getattr(getattr(langfuse, 'version', None), 'version', 'unknown')
+    print(f'[diag]   langfuse SDK version: {ver}')
+
+    lf = Langfuse(
+        public_key=os.environ.get('HERMES_LANGFUSE_PUBLIC_KEY') or os.environ.get('LANGFUSE_PUBLIC_KEY'),
+        secret_key=os.environ.get('HERMES_LANGFUSE_SECRET_KEY') or os.environ.get('LANGFUSE_SECRET_KEY'),
+        host=os.environ.get('HERMES_LANGFUSE_BASE_URL') or os.environ.get('LANGFUSE_HOST', 'https://cloud.langfuse.com'),
+    )
+
+    # Langfuse v4.x uses OpenTelemetry-based API; v2.x had .trace()
+    if hasattr(lf, 'trace'):
+        # v2.x path
+        trace = lf.trace(name='smartnpc-diag-test', metadata={'profile': os.environ.get('NPC_PROFILE', 'unknown'), 'source': 'entrypoint-diag'})
+        gen = trace.generation(name='test-generation', model='diag-test', input='hello', output='world')
+        gen.end()
+    else:
+        # v4.x path — use auth_check to verify connectivity
+        lf.auth_check()
+        print('[diag]   auth_check() passed — credentials valid')
+    lf.flush()
+    lf.shutdown()
+    print('[diag]   Langfuse SDK connectivity OK')
+except ImportError as e:
+    print(f'[diag]   ERROR: langfuse import failed: {e}', file=sys.stderr)
+except Exception as e:
+    print(f'[diag]   ERROR: langfuse test failed: {e}', file=sys.stderr)
+" 2>&1
 fi
 
 exec hermes -p "${NPC_PROFILE}" gateway run --accept-hooks

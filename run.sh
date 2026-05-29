@@ -30,7 +30,7 @@ fi
 : "${SMARTNPC_WS_URL:=ws://127.0.0.1:18745/ws}"
 : "${SMARTNPC_HERMES_KEY:=smartnpc-test-key}"
 : "${SMARTNPC_ACTIVE_PROFILES:=xiami,abigail,haley,harvey,penny,sebastian}"
-: "${HERMES_AGENT_MODEL:=deepseek-v4-flash}"
+: "${HERMES_AGENT_MODEL:=deepseek-v4-pro-external}"
 : "${SMARTNPC_HERMES_MODE:=docker}"
 : "${HERMES_EXE:=hermes}"
 

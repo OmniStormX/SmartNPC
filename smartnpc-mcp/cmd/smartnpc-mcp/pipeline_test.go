@@ -19,6 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/scheduler"
 	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/tools"
 )
@@ -91,11 +92,11 @@ func TestPipeline_ChatMessageReachesHermes(t *testing.T) {
 
 	// Bridge ws client, with the same makeRouter the production main() uses.
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, false))
 
 	// Register tools so the MCP server is realistic — they aren't
 	// exercised in this test but ensure RegisterAll didn't change shape.
-	tools.RegisterAll(mcpServer, br, nil, nil, logger)
+	_ = tools.RegisterAll(mcpServer, br, nil, nil, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -174,7 +175,7 @@ func TestPipeline_NonMatchingNPCDropped(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, false))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -223,7 +224,7 @@ func TestPipeline_RelayOff(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", nil, nil)) // ← relay disabled
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", nil, nil, nil, false)) // ← relay disabled
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -294,7 +295,7 @@ func TestPipeline_AudibleChatReceivedSynthesizesChatMessage(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, false))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -405,5 +406,134 @@ func TestPipeline_HermesConfigMultiProfile(t *testing.T) {
 	}
 	if got := xiamiHits.Load(); got != 0 {
 		t.Errorf("xiami gateway hits = %d, want 0 (cross-pollination!)", got)
+	}
+}
+
+// TestPipeline_GameTimeTickFiresScheduleTrigger verifies the full path:
+// game_time_tick event → scheduler.Tick → schedule_trigger → hermesrelay.
+func TestPipeline_GameTimeTickFiresScheduleTrigger(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// Fake Hermes Gateway — captures POSTs.
+	var mu sync.Mutex
+	var bodies []struct {
+		Input string
+		NPC   string
+	}
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req struct {
+			Input        string `json:"input"`
+			Conversation string `json:"conversation_id"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		mu.Lock()
+		bodies = append(bodies, struct {
+			Input string
+			NPC   string
+		}{Input: req.Input, NPC: req.Conversation})
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gw.Close()
+
+	// Build relay config pointing at fake gateway, NPC filter = XiaMi.
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	cfgContent := fmt.Sprintf(`profiles:
+  - npc_name: XiaMi
+    gateway_url: %s/v1/responses
+    api_key: test
+    conversation: xiami
+    model: test-model
+`, gw.URL)
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfgs, err := hermesrelay.LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	group, err := hermesrelay.NewGroup(cfgs, logger)
+	if err != nil {
+		t.Fatalf("new group: %v", err)
+	}
+
+	// Fake SMAPI mod ws server.
+	mod := bridge.NewTestServer(func(context.Context, string, json.RawMessage) (any, error) {
+		return map[string]any{"ok": true}, nil
+	})
+	defer mod.Close()
+
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
+
+	// Create scheduler and pre-populate a schedule for XiaMi.
+	sched := tools.RegisterAll(mcpServer, nil, nil, nil, logger)
+	sched.SetSchedule(scheduler.DaySchedule{
+		NPC:    "XiaMi",
+		Day:    15,
+		Season: "spring",
+		Year:   1,
+		Entries: []scheduler.Entry{
+			{GameHour: 9, Action: "npc_water_crops", Reason: "早起浇水"},
+		},
+	})
+
+	// Wire the router with the scheduler.
+	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, sched, false))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := br.Connect(ctx); err != nil {
+		t.Fatalf("bridge connect: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Push a game_time_tick event for hour 9.
+	if err := mod.PushEvent(bridge.EventGameTimeTick, map[string]any{
+		"hour": 9,
+	}); err != nil {
+		t.Fatalf("push event: %v", err)
+	}
+
+	// Wait for Hermes to receive the POST.
+	deadline := time.After(3 * time.Second)
+	for {
+		mu.Lock()
+		n := len(bodies)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("hermes gateway never received schedule_trigger POST")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) < 1 {
+		t.Fatal("no POST received")
+	}
+	// The schedule_trigger payload should reference the action.
+	found := false
+	for _, b := range bodies {
+		if strings.Contains(b.Input, "npc_water_crops") || strings.Contains(b.Input, "schedule_trigger") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected schedule_trigger content in POST bodies, got: %+v", bodies)
+	}
+
+	// Verify the schedule entry was marked fired (a second tick should not re-fire).
+	pending := sched.PendingEntries("XiaMi")
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending after tick, got %d", len(pending))
 	}
 }

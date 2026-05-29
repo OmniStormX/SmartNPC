@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/scheduler"
 )
 
 // RegisterAll wires every Stardew-specific tool group onto the given server.
@@ -34,11 +35,21 @@ import (
 //
 // logger is used for non-fatal notification delivery failures in the
 // inter-NPC message fan-out. When nil, slog.Default() is assumed.
-func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler, chatGuard *ChatSayGuard, logger *slog.Logger) {
+//
+// The returned *scheduler.Scheduler is the shared instance managing NPC
+// daily schedules. The caller should wire it into the event router so
+// game_time_tick events trigger sched.Tick(hour). Nil is never returned.
+func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler, chatGuard *ChatSayGuard, logger *slog.Logger) *scheduler.Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	sched := scheduler.New()
+
 	registerNpcMessage(s, logger, hermes)
+	// Schedule tools — NPC daily planning. Independent of mod bridge.
+	registerNpcSchedule(s, sched)
+
 	if br != nil {
 		registerMail(s, br)
 		registerChat(s, br, chatGuard)
@@ -47,5 +58,12 @@ func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler,
 		registerNpcMovement(s, br)
 		registerNpcBehavior(s, br)
 		registerPlayerQuery(s, br)
+		// Rich NPC behavior tools forward to the Mod via WebSocket.
+		// Mod side currently returns a stub bubble + ack; the wiring is
+		// real, only the in-game effect is a placeholder.
+		registerNpcWorldAction(s, br)
+		registerNpcSocialAction(s, br)
 	}
+
+	return sched
 }

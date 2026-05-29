@@ -238,6 +238,7 @@ func registerChat(s *mcp.Server, br *bridge.WSClient, guard *ChatSayGuard) {
 				}
 			}
 		}
+		logToolCall("chat_say", in)
 		raw, err := br.Call(ctx, bridge.ActionChatSay, in)
 		if err != nil {
 			return nil, ChatSayOutput{}, fmt.Errorf("chat_say: %w", err)

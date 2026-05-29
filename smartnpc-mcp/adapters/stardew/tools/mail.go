@@ -37,6 +37,7 @@ func registerMail(s *mcp.Server, br *bridge.WSClient) {
 		if in.Text == "" {
 			return nil, MailSendOutput{}, fmt.Errorf("text is required")
 		}
+		logToolCall("mail_send", in)
 		raw, err := br.Call(ctx, bridge.ActionMailSend, in)
 		if err != nil {
 			return nil, MailSendOutput{}, fmt.Errorf("mail_send: %w", err)

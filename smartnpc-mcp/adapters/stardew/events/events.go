@@ -64,13 +64,20 @@ type GroupCreate struct {
 	Participants []string `json:"participants"`
 }
 
-// DayStarted — a new in-game day began. Reserved; the mod does not emit
-// this yet. Target Hermes use: cron-style "start of day" reflection.
+// DayStarted — a new in-game day began. Emitted by the SMAPI mod at the
+// start of each game day. Triggers scheduler clear + NPC day planning.
 type DayStarted struct {
 	Day      int    `json:"day"`      // 1-28
 	Season   string `json:"season"`   // spring/summer/fall/winter
 	Year     int    `json:"year"`     // in-game year
 	DayOfWeek string `json:"day_of_week"`
+}
+
+// GameTimeTick — emitted every in-game hour (when time changes to XX:00).
+// Drives the NPC schedule dispatcher in the router.
+type GameTimeTick struct {
+	Hour int `json:"hour"` // 6-25 (SDV convention)
+	Time int `json:"time"` // raw SDV time value, e.g. 900 = 9:00am
 }
 
 // LocationChanged — a watched NPC or the player moved between maps.
@@ -113,6 +120,17 @@ type NpcBroadcast struct {
 	Kind      string          `json:"kind"` // event category, e.g. "alarm", "party_invite"
 	Data      json.RawMessage `json:"data,omitempty"`
 	Timestamp int64           `json:"timestamp"` // unix millis when broadcast
+}
+
+// ScheduleTrigger — synthetic event emitted by the game-time scheduler
+// when a planned activity's hour arrives. Delivered to the target NPC's
+// Hermes profile so the LLM can execute the planned action.
+type ScheduleTrigger struct {
+	NPC      string          `json:"npc"`              // target NPC
+	GameHour int             `json:"game_hour"`        // the hour that triggered
+	Action   string          `json:"action"`           // planned MCP tool name
+	Params   json.RawMessage `json:"params,omitempty"` // tool parameters
+	Reason   string          `json:"reason,omitempty"` // LLM's original reasoning
 }
 
 // DebugProactiveTrigger — operator-initiated forced trigger of the
@@ -158,7 +176,9 @@ func IsMod(name string) bool {
 	case bridge.EventChatMessage,
 		bridge.EventChatReceived,
 		bridge.EventNpcInteract,
-		bridge.EventGroupCreate:
+		bridge.EventGroupCreate,
+		bridge.EventDayStarted,
+		bridge.EventGameTimeTick:
 		return true
 	}
 	return false
@@ -170,8 +190,7 @@ func IsMod(name string) bool {
 // names (callers can choose to silently ignore reserved events).
 func IsReserved(name string) bool {
 	switch name {
-	case bridge.EventDayStarted,
-		bridge.EventLocationChanged,
+	case bridge.EventLocationChanged,
 		bridge.EventFriendshipChanged,
 		bridge.EventNpcPerceptionUpdate:
 		return true
@@ -180,10 +199,10 @@ func IsReserved(name string) bool {
 }
 
 // IsSynthetic reports whether the event name is emitted by smartnpc-mcp
-// itself (inter-NPC messaging, etc.).
+// itself (inter-NPC messaging, schedule triggers, etc.).
 func IsSynthetic(name string) bool {
 	switch name {
-	case bridge.EventNpcMessage, bridge.EventNpcBroadcast:
+	case bridge.EventNpcMessage, bridge.EventNpcBroadcast, bridge.EventScheduleTrigger:
 		return true
 	}
 	return false

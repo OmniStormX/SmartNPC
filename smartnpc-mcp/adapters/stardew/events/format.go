@@ -93,7 +93,17 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			if dow == "" {
 				dow = "?"
 			}
-			return fmt.Sprintf("A new day begins: %s %d (%s), year %d.",
+			return fmt.Sprintf(
+				"A new day begins: %s %d (%s), year %d.\n\n"+
+					"⚠️ MANDATORY: You MUST call `npc_plan_day` this turn to submit your "+
+					"daily schedule. Steps:\n"+
+					"  1. `game_get_time` — confirm day/season/year.\n"+
+					"  2. `game_get_weather` — check weather (skip outdoor work if rainy).\n"+
+					"  3. Think about what you would do today based on your personality, "+
+					"the weather, and the season.\n"+
+					"  4. Call `npc_plan_day` with 3-8 entries spread across hours 7-22.\n\n"+
+					"Do NOT call `chat_say` — the player has not spoken to you. "+
+					"Do NOT skip `npc_plan_day`; it is required every new day.",
 				capitalize(p.Season), p.Day, dow, p.Year)
 		}
 	case bridge.EventLocationChanged:
@@ -148,6 +158,25 @@ func FormatForHermes(name string, data json.RawMessage) string {
 		var p NpcBroadcast
 		if err := json.Unmarshal(data, &p); err == nil {
 			return fmt.Sprintf("NPC %s broadcast a %s event.", p.From, p.Kind)
+		}
+	case bridge.EventGameTimeTick:
+		var p GameTimeTick
+		if err := json.Unmarshal(data, &p); err == nil {
+			return fmt.Sprintf("The time is now %d:00 (game hour %d).", p.Hour, p.Hour)
+		}
+	case bridge.EventScheduleTrigger:
+		var p ScheduleTrigger
+		if err := json.Unmarshal(data, &p); err == nil {
+			hint := ""
+			if p.Reason != "" {
+				hint = fmt.Sprintf(" (reason: %s)", p.Reason)
+			}
+			return fmt.Sprintf(
+				"[schedule_trigger] It is now %d:00 — your planned activity is: %s%s.\n\n"+
+					"Execute this action now by calling the appropriate tool. "+
+					"If conditions have changed (weather, player nearby, etc.) "+
+					"you may adapt or skip, but explain briefly why.",
+				p.GameHour, p.Action, hint)
 		}
 	case bridge.EventDebugProactiveTrigger:
 		var p DebugProactiveTrigger

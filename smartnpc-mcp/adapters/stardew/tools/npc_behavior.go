@@ -140,6 +140,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcSummonOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_summon", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcSummon, in)
 		if err != nil {
 			return nil, NpcSummonOutput{}, fmt.Errorf("npc_summon: %w", err)
@@ -174,6 +175,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 		if in.Kind == "" {
 			in.Kind = "sparkle"
 		}
+		logToolCall("npc_emote", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcEmote, in)
 		if err != nil {
 			return nil, NpcEmoteOutput{}, fmt.Errorf("npc_emote: %w", err)
@@ -222,6 +224,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 		if in.Count > 5 {
 			in.Count = 5
 		}
+		logToolCall("npc_give_item", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcGiveItem, in)
 		if err != nil {
 			return nil, NpcGiveItemOutput{}, fmt.Errorf("npc_give_item: %w", err)
@@ -246,6 +249,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcFollowStartOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_follow_start", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcFollowStart, in)
 		if err != nil {
 			return nil, NpcFollowStartOutput{}, fmt.Errorf("npc_follow_start: %w", err)
@@ -269,6 +273,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcFollowStopOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_follow_stop", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcFollowStop, in)
 		if err != nil {
 			return nil, NpcFollowStopOutput{}, fmt.Errorf("npc_follow_stop: %w", err)
@@ -293,6 +298,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcLeadToOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_lead_to", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcLeadTo, in)
 		if err != nil {
 			return nil, NpcLeadToOutput{}, fmt.Errorf("npc_lead_to: %w", err)
@@ -316,6 +322,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcGetBehaviorOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_get_behavior", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcGetBehavior, in)
 		if err != nil {
 			return nil, NpcGetBehaviorOutput{}, fmt.Errorf("npc_get_behavior: %w", err)

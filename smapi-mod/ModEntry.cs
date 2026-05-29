@@ -44,6 +44,7 @@ namespace SmartNPC.Bridge
         private MovementHandler?  _movement;
         private FollowSystem?     _follow;
         private BehaviorHandler?  _behavior;
+        private StubActionHandler? _stub;
 
         private readonly ChatMessageStore _messageStore = new();
         private readonly UnreadTracker    _unread       = new();
@@ -63,6 +64,8 @@ namespace SmartNPC.Bridge
             helper.Events.GameLoop.UpdateTicked   += this.OnUpdateTicked;
             helper.Events.GameLoop.SaveLoaded     += this.OnSaveLoaded;
             helper.Events.GameLoop.Saving         += this.OnSaving;
+            helper.Events.GameLoop.DayStarted     += this.OnDayStarted;
+            helper.Events.GameLoop.TimeChanged    += this.OnTimeChanged;
             helper.Events.Display.RenderedHud     += this.OnRenderedHud;
             helper.Events.Input.ButtonsChanged    += this.OnButtonsChanged;
             helper.Events.Input.ButtonPressed     += this.OnButtonPressed;
@@ -86,6 +89,7 @@ namespace SmartNPC.Bridge
                 _movement = new MovementHandler(this.Monitor);
                 _follow   = new FollowSystem(this.Monitor);
                 _behavior = new BehaviorHandler(this.Monitor, _follow);
+                _stub     = new StubActionHandler(this.Monitor, this._config);
 
                 _router.Register("mail_send",            _mail.Handle);
                 _router.Register("chat_say",             _chat.Handle);
@@ -106,6 +110,35 @@ namespace SmartNPC.Bridge
                 _router.Register("npc_lead_to",          _behavior.HandleLeadTo);
                 _router.Register("npc_get_behavior",     _behavior.HandleGetBehavior);
 
+                // ── Stub actions (real-mod-side implementation TBD) ─────────
+                // World-action stubs.
+                string[] stubActions =
+                {
+                    "npc_wander",
+                    "npc_clear_debris",
+                    "npc_water_crops",
+                    "npc_harvest_crops",
+                    "npc_deposit_items",
+                    "npc_deliver_items",
+                    "npc_forage_collect",
+                    "npc_pet_animal",
+                    "npc_plant_seeds",
+                    "npc_till_soil",
+                    "npc_inspect_object",
+                    "npc_place_object",
+                    // Social-action stubs.
+                    "npc_approach_and_speak",
+                    "npc_express_emotion",
+                    "npc_shy_retreat",
+                    "npc_show_text_bubble",
+                    "npc_idle_activity",
+                    "npc_dance_happy",
+                    "npc_react_surprise",
+                    "npc_pace_anxiously",
+                };
+                foreach (string action in stubActions)
+                    _router.Register(action, _stub.MakeHandler(action));
+
                 string prefix = this._config.ListenPrefix();
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
                 _ws.Start();
@@ -119,6 +152,16 @@ namespace SmartNPC.Bridge
                 _chat.SetMessageStore(_messageStore);
                 _chat.SetUnreadTracker(_unread);
                 _chat.SetMessageNotifier(this.OnIncomingChatMessage);
+
+                // Same surfaces for the stub handler so DebugShowMessage can
+                // mirror stub fires into the chat panel — but quietly: no
+                // toast popup, just append to the contact's conversation
+                // thread (and refresh the panel if it's already open).
+                _stub.SetDebugSinks(_messageStore, _unread, (npcName, displayName, text, channel) =>
+                {
+                    if (Game1.activeClickableMenu is ChatPanel panel)
+                        panel.RefreshContacts();
+                });
 
                 _chatInput = new ChatInputCapture(this, this.ForwardPlayerMessage);
 
@@ -145,6 +188,7 @@ namespace SmartNPC.Bridge
             _movement?.PumpOnGameTick();
             _behavior?.PumpOnGameTick();
             _follow?.PumpOnGameTick();
+            _stub?.PumpOnGameTick();
             NpcDialoguePatch.PumpInteractions();
 
             // Tick toast lifetimes (~16 ms per tick at 60fps).
@@ -163,12 +207,13 @@ namespace SmartNPC.Bridge
 
             try
             {
-                var hist = this.Helper.Data.ReadSaveData<Dictionary<string, List<ChatMessage>>>(SaveKey_ChatHistory);
-                _messageStore.Restore(hist);
+                // Skip restoring chat history — start fresh each session.
+                // var hist = this.Helper.Data.ReadSaveData<Dictionary<string, List<ChatMessage>>>(SaveKey_ChatHistory);
+                // _messageStore.Restore(hist);
                 var un = this.Helper.Data.ReadSaveData<Dictionary<string, int>>(SaveKey_Unread);
                 _unread.Restore(un);
                 this.Monitor.Log(
-                    $"Restored chat history ({hist?.Count ?? 0} NPCs) + unread ({_unread.TotalUnread})",
+                    $"Chat history cleared on load; unread restored ({_unread.TotalUnread})",
                     LogLevel.Debug);
             }
             catch (Exception ex)
@@ -255,6 +300,53 @@ namespace SmartNPC.Bridge
         {
             if (!e.IsLocalPlayer) return;
             _follow?.OnPlayerWarped(e.NewLocation);
+        }
+
+        // ── Schedule-driving events ─────────────────────────────────────────
+
+        /// <summary>
+        /// Emits a `day_started` event at the beginning of each new game day.
+        /// Go-side scheduler clears all NPC schedules; Hermes profiles receive
+        /// this event and call npc_plan_day to generate a new daily plan.
+        /// </summary>
+        private void OnDayStarted(object? sender, DayStartedEventArgs e)
+        {
+            if (_ws is null) return;
+
+            var season = Game1.currentSeason;
+            var day    = Game1.dayOfMonth;
+            var year   = Game1.year;
+            var dow    = Game1.shortDayNameFromDayOfSeason(day);
+
+            _ = _ws.BroadcastEvent("day_started", new
+            {
+                day,
+                season,
+                year,
+                day_of_week = dow,
+            });
+            this.Monitor.Log($"[Schedule] day_started emitted: Y{year} {season} {day} ({dow})", LogLevel.Debug);
+        }
+
+        /// <summary>
+        /// Emits a `game_time_tick` event every in-game hour (when the time
+        /// changes to XX:00). Go-side scheduler uses this to fire due schedule
+        /// entries and send schedule_trigger events to NPC Hermes profiles.
+        /// </summary>
+        private void OnTimeChanged(object? sender, TimeChangedEventArgs e)
+        {
+            if (_ws is null) return;
+
+            // Only fire on the hour (e.g. 600, 700, ..., 2500).
+            if (e.NewTime % 100 != 0) return;
+
+            int hour = e.NewTime / 100;
+            _ = _ws.BroadcastEvent("game_time_tick", new
+            {
+                hour,
+                time = e.NewTime,
+            });
+            this.Monitor.Log($"[Schedule] game_time_tick emitted: hour={hour} (raw={e.NewTime})", LogLevel.Trace);
         }
 
         // ── UI helpers ──────────────────────────────────────────────────────

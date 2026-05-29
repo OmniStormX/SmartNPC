@@ -30,5 +30,15 @@ namespace SmartNPC.Bridge
         /// <see cref="System.Net.HttpListener"/>.
         /// </summary>
         public string ListenPrefix() => $"http://{this.Host}:{this.Port}/";
+
+        /// <summary>
+        /// When <c>true</c>, every stub-action invocation (any tool whose
+        /// Mod-side implementation isn't written yet) also pushes a debug
+        /// message into the player's chat panel — same surface as
+        /// <c>chat_say</c>, so you see <c>[stub:npc_water_crops] params=...</c>
+        /// in the conversation history alongside the head-bubble. Default
+        /// <c>false</c> — only the bubble is shown.
+        /// </summary>
+        public bool DebugShowMessage { get; set; } = false;
     }
 }

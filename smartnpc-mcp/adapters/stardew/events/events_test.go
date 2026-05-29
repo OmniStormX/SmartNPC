@@ -220,11 +220,17 @@ func TestIsModAndIsSynthetic(t *testing.T) {
 	if IsMod(bridge.EventNpcMessage) {
 		t.Errorf("npc_message should NOT be mod-sourced")
 	}
-	if IsMod(bridge.EventDayStarted) {
-		t.Errorf("day_started is reserved, should NOT be reported as currently emitted")
+	if !IsMod(bridge.EventDayStarted) {
+		t.Errorf("day_started is now emitted by mod, should be reported as mod-sourced")
+	}
+	if !IsMod(bridge.EventGameTimeTick) {
+		t.Errorf("game_time_tick is emitted by mod, should be reported as mod-sourced")
 	}
 	if !IsSynthetic(bridge.EventNpcBroadcast) {
 		t.Errorf("npc_broadcast should be synthetic")
+	}
+	if !IsSynthetic(bridge.EventScheduleTrigger) {
+		t.Errorf("schedule_trigger should be synthetic")
 	}
 	if IsSynthetic(bridge.EventChatReceived) {
 		t.Errorf("chat_received should NOT be synthetic")
@@ -232,8 +238,8 @@ func TestIsModAndIsSynthetic(t *testing.T) {
 }
 
 func TestIsReserved(t *testing.T) {
-	if !IsReserved(bridge.EventDayStarted) {
-		t.Errorf("day_started should be reserved")
+	if IsReserved(bridge.EventDayStarted) {
+		t.Errorf("day_started is no longer reserved — it's emitted by mod now")
 	}
 	if !IsReserved(bridge.EventFriendshipChanged) {
 		t.Errorf("friendship_changed should be reserved")

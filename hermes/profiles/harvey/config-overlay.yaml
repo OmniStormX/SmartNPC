@@ -34,10 +34,12 @@ mcp_servers:
       # core/private-chat: chat_say
       # read-on-demand: friendship_get, game_get_time, game_get_weather,
       #                 player_get_status, npc_get_position
+      # schedule: npc_plan_day, npc_get_schedule
+      # rich behaviors: world + social actions (stub mode)
       # optional modules: inter-NPC inbox/DM, proactive visit, signature gift
       #
       # Deliberately held back: admin/debug tools, broad environment dumps,
-      # free-form movement/follow/lead tools, mail, broadcast, static tables.
+      # mail, broadcast, static tables.
       include:
         - chat_say
         - friendship_get
@@ -51,6 +53,31 @@ mcp_servers:
         - npc_summon
         - npc_emote
         - npc_give_item
+        # schedule
+        - npc_plan_day
+        - npc_get_schedule
+        # world actions
+        - npc_wander
+        - npc_clear_debris
+        - npc_water_crops
+        - npc_harvest_crops
+        - npc_deposit_items
+        - npc_deliver_items
+        - npc_forage_collect
+        - npc_pet_animal
+        - npc_plant_seeds
+        - npc_till_soil
+        - npc_inspect_object
+        - npc_place_object
+        # social actions
+        - npc_approach_and_speak
+        - npc_express_emotion
+        - npc_shy_retreat
+        - npc_show_text_bubble
+        - npc_idle_activity
+        - npc_dance_happy
+        - npc_react_surprise
+        - npc_pace_anxiously
 
       resources: false
       prompts: false

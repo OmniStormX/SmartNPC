@@ -32,7 +32,7 @@ SMARTNPC_HERMES_KEY=smartnpc-test-key
 # LLM 供应商
 HERMES_AGENT_URL=https://api.deepseek.com/v1
 HERMES_AGENT_API_KEY=sk-xxx
-HERMES_AGENT_MODEL=deepseek-v4-flash
+HERMES_AGENT_MODEL=deepseek-v4-pro-external
 
 # Langfuse（可选，留空关闭）
 HERMES_LANGFUSE_PUBLIC_KEY=

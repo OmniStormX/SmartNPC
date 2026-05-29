@@ -90,6 +90,7 @@ func registerNpcPerception(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcGetNearbyOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_get_nearby", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcGetNearby, in)
 		if err != nil {
 			return nil, NpcGetNearbyOutput{}, fmt.Errorf("npc_get_nearby: %w", err)
@@ -114,6 +115,7 @@ func registerNpcPerception(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcGetEnvironmentOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_get_environment", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcGetEnvironment, in)
 		if err != nil {
 			return nil, NpcGetEnvironmentOutput{}, fmt.Errorf("npc_get_environment: %w", err)

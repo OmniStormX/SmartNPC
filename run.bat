@@ -87,6 +87,7 @@ rem ---- Per-run log file: <repo>\logs\mcp_YYYYMMDD_HHMMSS.log. ----
 rem Use PowerShell for the timestamp — wmic is removed on recent Win11 builds
 rem and silently produces a garbage filename when called via for /f.
 if not exist "%SMARTNPC_REPO%\logs" mkdir "%SMARTNPC_REPO%\logs"
+set "SMARTNPC_LOG_DIR=%SMARTNPC_REPO%\logs"
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set MCP_TS=%%I
 set "MCP_LOG=%SMARTNPC_REPO%\logs\mcp_%MCP_TS%.log"
 rem Per-run payload trace (full request/response body, JSON lines). Routed
@@ -208,18 +209,18 @@ rem Generates .env for Docker, syncs profile data, then builds/starts from the l
 echo [5/6] Starting Hermes Gateways via Docker Compose ...
 
 rem Generate deploy/hermes/.env from root config (single source of truth).
-echo SMARTNPC_MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp> "%SMARTNPC_REPO%\deploy\hermes\.env"
-echo SMARTNPC_HERMES_KEY=%SMARTNPC_HERMES_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
-if defined HERMES_AGENT_URL echo HERMES_AGENT_URL=%HERMES_AGENT_URL%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
-if defined HERMES_AGENT_API_KEY echo HERMES_AGENT_API_KEY=%HERMES_AGENT_API_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
-if defined HERMES_AGENT_MODEL echo HERMES_AGENT_MODEL=%HERMES_AGENT_MODEL%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
-if defined HERMES_LANGFUSE_PUBLIC_KEY echo HERMES_LANGFUSE_PUBLIC_KEY=%HERMES_LANGFUSE_PUBLIC_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
-if defined HERMES_LANGFUSE_SECRET_KEY echo HERMES_LANGFUSE_SECRET_KEY=%HERMES_LANGFUSE_SECRET_KEY%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
-if defined HERMES_LANGFUSE_BASE_URL echo HERMES_LANGFUSE_BASE_URL=%HERMES_LANGFUSE_BASE_URL%>> "%SMARTNPC_REPO%\deploy\hermes\.env"
+>"%SMARTNPC_REPO%\deploy\hermes\.env" echo SMARTNPC_MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp
+>>"%SMARTNPC_REPO%\deploy\hermes\.env" echo SMARTNPC_HERMES_KEY=%SMARTNPC_HERMES_KEY%
+if defined HERMES_AGENT_URL >>"%SMARTNPC_REPO%\deploy\hermes\.env" echo HERMES_AGENT_URL=%HERMES_AGENT_URL%
+if defined HERMES_AGENT_API_KEY >>"%SMARTNPC_REPO%\deploy\hermes\.env" echo HERMES_AGENT_API_KEY=%HERMES_AGENT_API_KEY%
+if defined HERMES_AGENT_MODEL >>"%SMARTNPC_REPO%\deploy\hermes\.env" echo HERMES_AGENT_MODEL=%HERMES_AGENT_MODEL%
+if defined HERMES_LANGFUSE_PUBLIC_KEY >>"%SMARTNPC_REPO%\deploy\hermes\.env" echo HERMES_LANGFUSE_PUBLIC_KEY=%HERMES_LANGFUSE_PUBLIC_KEY%
+if defined HERMES_LANGFUSE_SECRET_KEY >>"%SMARTNPC_REPO%\deploy\hermes\.env" echo HERMES_LANGFUSE_SECRET_KEY=%HERMES_LANGFUSE_SECRET_KEY%
+if defined HERMES_LANGFUSE_BASE_URL >>"%SMARTNPC_REPO%\deploy\hermes\.env" echo HERMES_LANGFUSE_BASE_URL=%HERMES_LANGFUSE_BASE_URL%
 echo      Generated deploy/hermes/.env (MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp)
 
 rem Sync profile data and start containers in WSL Docker from the local Dockerfile.
-wsl -d %WSL_DISTRO% bash -lc "cd %REPO_WSL%/deploy/hermes && bash scripts/sync-profiles.sh && docker compose build --pull && docker compose up -d"
+wsl -d %WSL_DISTRO% bash -lc "cd %REPO_WSL%/deploy/hermes && bash scripts/sync-profiles.sh && docker compose -f docker-compose.yml -f docker-compose.langfuse.yml build --pull && docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up -d"
 if errorlevel 1 goto hermes_fail
 
 echo      Waiting for selected gateways to become healthy (each up to ~%HERMES_BOOT_TIMEOUT%s)...

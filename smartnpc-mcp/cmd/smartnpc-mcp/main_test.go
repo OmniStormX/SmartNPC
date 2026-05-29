@@ -23,7 +23,7 @@ func TestHTTPTransport_PingRoundTrip(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name: "smartnpc-mcp-test", Version: "test",
 	}, nil)
-	tools.RegisterAll(server, nil, nil, nil, nil) // no bridge — only in-process tools (npc_message)
+	_ = tools.RegisterAll(server, nil, nil, nil, nil) // no bridge — only in-process tools (npc_message)
 	agentbridge.RegisterMeta(server)              // framework `ping` lives in core
 
 	handler := mcp.NewStreamableHTTPHandler(

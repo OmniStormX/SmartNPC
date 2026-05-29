@@ -220,6 +220,7 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger, hermes bridge.EventH
 		if in.From == in.To {
 			return nil, NpcSendMessageOutput{}, fmt.Errorf("from and to must differ")
 		}
+		logToolCall("npc_send_message", in)
 
 		msg := MailboxMessage{
 			ID:        uuid.NewString(),
@@ -259,6 +260,7 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger, hermes bridge.EventH
 		if strings.TrimSpace(in.Kind) == "" {
 			return nil, NpcBroadcastEventOutput{}, fmt.Errorf("kind is required")
 		}
+		logToolCall("npc_broadcast_event", in)
 
 		ts := time.Now().UnixMilli()
 		payload, _ := json.Marshal(struct {
@@ -290,6 +292,7 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger, hermes bridge.EventH
 		if strings.TrimSpace(in.NPC) == "" {
 			return nil, NpcInboxGetOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_inbox_get", in)
 		max := in.Max
 		if max < 0 {
 			max = 0
@@ -311,6 +314,7 @@ func registerNpcMessage(s *mcp.Server, logger *slog.Logger, hermes bridge.EventH
 		if strings.TrimSpace(in.NPC) == "" {
 			return nil, NpcInboxAckOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_inbox_ack", in)
 		removed := box.Ack(in.NPC, in.IDs)
 		return nil, NpcInboxAckOutput{OK: true, Removed: removed}, nil
 	})

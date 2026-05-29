@@ -24,10 +24,10 @@ SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ─�
 | 模块 | 职责 |
 |------|------|
 | `smapi-mod/` | SMAPI Mod，ws server 暴露游戏 API |
-| `smartnpc-mcp/` | Go MCP Server，ws↔MCP 桥接（stdio / HTTP），向 Hermes 转发游戏事件 |
+| `smartnpc-mcp/` | Go MCP Server + agent-bridge 框架；SDV 为首个 adapter |
 | `hermes/profiles/` | 6 个 NPC profile（SOUL + skills + cron） |
 
-> 旧的 `smartnpc-agent/` Go 编排器已于 M5 (Hermes-first) 完全移除。历史代码见 git tag 之前的 commit。
+> `smartnpc-mcp` 经 ADR-0004 重构后分为 `pkg/`（game-agnostic 框架）+ `adapters/stardew/`（SDV 适配层）。日常 SDV 开发继续用 `cmd/smartnpc-mcp`；通用部署用 `cmd/agent-bridge`（bridge.yaml 驱动）。
 
 ## Windows 环境
 
@@ -40,17 +40,27 @@ SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ─�
 ## 常用命令
 
 ```cmd
-C:\Users\synchen\go\bin\task.exe ci          # lint + test + build（完整 CI）
-C:\Users\synchen\go\bin\task.exe ci-fast     # lint + test
-C:\Users\synchen\go\bin\task.exe mcp:build   # 构建 mcp
-C:\Users\synchen\go\bin\task.exe mod:install # 编译+部署 mod 到游戏目录
-C:\Users\synchen\go\bin\task.exe tidy        # go mod tidy 全模块
-C:\Users\synchen\go\bin\task.exe --list      # 列出所有可用 task
+C:\Users\synchen\go\bin\task.exe ci              # profiles:verify + lint + test + build（完整 CI）
+C:\Users\synchen\go\bin\task.exe ci-fast         # profiles:verify + lint + test
+C:\Users\synchen\go\bin\task.exe mcp:build       # 构建 mcp
+C:\Users\synchen\go\bin\task.exe mcp:stop        # 杀掉本机运行中的 mcp 进程
+C:\Users\synchen\go\bin\task.exe mcp:health      # 探测 /healthz（确认 mcp 在线）
+C:\Users\synchen\go\bin\task.exe mod:install     # 编译+部署 mod 到游戏目录
+C:\Users\synchen\go\bin\task.exe tidy            # go mod tidy 全模块
+C:\Users\synchen\go\bin\task.exe profiles:render # 渲染 _master → 6 NPC profile
+C:\Users\synchen\go\bin\task.exe profiles:verify # 校验渲染产物（CI 会跑）
+C:\Users\synchen\go\bin\task.exe --list          # 列出所有可用 task
 ```
 
 **运行单个测试：**
 ```cmd
-cd D:\SmartNPC\smartnpc-mcp && go test -run TestPing ./internal/tools/...
+cd D:\SmartNPC\smartnpc-mcp && go test -run TestPing ./pkg/agentbridge/...
+cd D:\SmartNPC\smartnpc-mcp && go test -run TestChatSay ./adapters/stardew/tools/...
+```
+
+**Echo 模式（不接 LLM，验证游戏往返）：**
+```cmd
+C:\Users\synchen\go\bin\task.exe mcp:run-echo
 ```
 
 **启动 LLM 后端（WSL 终端）：**
@@ -79,13 +89,32 @@ bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
 **环境变量（`.env.example`）：** 复制 `.env.example` 为 `.env` 后编辑；Taskfile 的 `dotenv:` 自动加载。关键变量：
 - `SMARTNPC_WS_URL` — ws 地址（默认 `ws://127.0.0.1:18745/ws`）
 - `SMARTNPC_HTTP_PORT` — mcp HTTP 端口（默认 `3000`）
-- `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` — LLM 配置
+- `SMARTNPC_MCP_URL` — Hermes profile 连 mcp 的完整 URL（必须显式设，如 `http://127.0.0.1:3000/mcp`）
+- `SMARTNPC_HERMES_MODE` — `docker`（默认）或 `local`
+- `SMARTNPC_ACTIVE_PROFILES` — 启动哪些 NPC（默认全部 6 个，精简如 `xiami,abigail`）
 - `SMARTNPC_GAME_PATH` — SDV 安装目录（空则自动探测）
+
+**启动顺序约束：**
+1. 关闭游戏后再 `task mod:install`（DLL 可能被锁）
+2. MCP 先于 Hermes Gateway 启动（Hermes 启动时发现工具，晚启动会缓存到 0 tools）
+3. 同一 WebSocket 只能一个 MCP 实例占用
+
+**Git hooks（可选）：** `task hooks:enable` — commit 涉及 `smapi-mod/` 时自动 `task mod:install`
+
+**游戏内按键：**
+
+| 按键 | 功能 |
+|------|------|
+| `Tab` | 打开/关闭 SmartNPC 聊天面板 |
+| `F2` | 打开面板并聚焦联系人列表 |
+| `Ctrl+T` | 原版聊天输入（按距离路由给附近 NPC） |
+| `Esc` | 关闭聊天面板 |
+| `F3` | 调试面板 |
+| 点击 Agent NPC | 拦截原版对话，打开对应 NPC 聊天窗口 |
 
 ## 架构与模块边界
 
-**Go Workspace** — 根 `go.work` 联动：
-- `github.com/OmniStormX/SmartNPC`
+**Go Workspace** — 根 `go.work` 联动单模块 `./smartnpc-mcp`（module path `github.com/OmniStormX/SmartNPC`）
 
 **边界原则：**
 - C# 只放 SMAPI 胶水（事件、Harmony patch、ws 编解码）；业务逻辑在 Go
@@ -93,17 +122,43 @@ bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
 - LLM Provider 固定 OpenAI 兼容（Hermes Gateway 暴露 `/v1/responses`）；地址以 `.env` `OPENAI_BASE_URL` 为准
 - **Hermes-first 架构**：smartnpc-mcp 直连 Hermes Agent，NPC 人格/记忆/技能/决策全部由 Hermes profile 承载
 
-**关键目录：**
-- `smartnpc-mcp/internal/tools/` — MCP 工具实现，按 domain 一文件（chat / game_query / mail / npc_behavior / npc_movement / npc_perception / npc_message / player_query / meta）
-- `smartnpc-mcp/internal/bridge/` — ws 客户端 + mock
-- `smartnpc-mcp/internal/events/` — 游戏事件 typed structs（`ChatMessage` / `NpcInteract` 等）+ format 工具
-- `smartnpc-mcp/internal/hermesrelay/` — 游戏事件 → Hermes Gateway HTTP POST 转发层
+**agent-bridge 框架分层（ADR-0004）：**
+
+```
+smartnpc-mcp/
+├── pkg/                          ← 公共框架 API（game-agnostic）
+│   ├── agentbridge/              ← Server, EventSource, Backend, ToolGroup, registry
+│   ├── eventbus/                 ← 通用 Event{Kind, Source, Subject, Payload, Timestamp}
+│   ├── transport/                ← MCP transport（HTTP today）
+│   └── relay/
+│       ├── hermes/               ← Hermes Gateway Backend（转发 + 路由）
+│       └── echo/                 ← dev/smoke 回声 Backend
+├── adapters/stardew/             ← SDV 适配层（game-specific）
+│   ├── adapter.go                ← factory 注册 + EventSource 实现
+│   ├── bridge/                   ← ws 客户端 + mock + protocol DTO
+│   ├── events/                   ← SDV 事件 typed structs + Hermes prompt format
+│   └── tools/                    ← MCP 工具按 domain 一文件（chat / game_query / mail / npc_* / player_query）
+├── cmd/
+│   ├── smartnpc-mcp/             ← 日常 SDV 启动入口（run.bat 调用）
+│   └── agent-bridge/             ← 通用 CLI，bridge.yaml 驱动
+└── internal/log/                 ← 框架私有 logger
+```
+
+**关键目录（详细）：**
+- `smartnpc-mcp/pkg/agentbridge/` — 组合根 `Server`、`EventSource`/`Backend` 接口、`ToolGroup` 注册、`meta.go`（ping tool）
+- `smartnpc-mcp/pkg/relay/hermes/` — Hermes Gateway Backend：runtime-config 加载、事件路由、group 逻辑
+- `smartnpc-mcp/adapters/stardew/tools/` — MCP 工具实现（chat / game_query / mail / npc_behavior / npc_movement / npc_perception / npc_message / player_query）；`registry.go` → `RegisterAll`
+- `smartnpc-mcp/adapters/stardew/bridge/` — ws 客户端 + testserver mock
+- `smartnpc-mcp/adapters/stardew/events/` — 游戏事件 typed structs（`ChatMessage` / `NpcInteract` 等）+ format 工具
+- `hermes/npcs.yaml` — **NPC 元数据唯一真相源**（id / game_name / display_name / gateway_port / peer 关系）。增删 NPC 必须从这个文件开始，`render_profiles.sh` 和 `runtime-config.yaml` 都从它生成。
 - `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。
 - `hermes/profiles/<npc>/` — 单个 NPC profile。`SOUL.md` 手写保留，其余由 `_master/` 渲染生成。6 个 NPC：`xiami` / `abigail` / `haley` / `harvey` / `penny` / `sebastian`。
 - `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
 - `smapi-mod/NPC/` — 多 NPC 路由（`AudibleNPCResolver.cs` + `TurnQueue.cs`）
 - `smapi-mod/{Query,Perception,Movement,Mail,Chat,UI}/` — 按 domain 拆分的游戏侧 handler
 - `smapi-mod/assets/xiami/` — NPC sprite 资产 + 构建脚本
+- `scripts/` — Hermes 管理脚本：`render_profiles.sh`（渲染模板）、`start_hermes_profiles.sh`（启动指定 NPC gateway）、`detect_wsl_ips.sh`（自动探测 WSL/Windows IP）、`apply_hermes_tuning.sh`（调参）、`lib/npc_registry.sh`（从 `hermes/npcs.yaml` 读 NPC 列表的公共库）
+- `deploy/hermes/` — Docker Compose 部署方案（Dockerfile + docker-compose.yml + Langfuse 可选）
 
 ## Sprite 资产管线
 
@@ -129,6 +184,17 @@ XiaMi_spritesheet.png (64×416, 4列×13行, 每帧 16×32, RGBA 透明)
 - 已实现 actions：`chat_say` / `mail_send` / `game_*` / `friendship_get` / `npc_*` / `player_get_status`
 - 已实现 events：`chat_message` / `chat_received` / `npc_interact` / `group_create`（详见 `docs/events.md`）
 
+## Hermes 部署模式
+
+`.env` 中 `SMARTNPC_HERMES_MODE` 控制 Hermes 启动方式：
+
+| 模式 | 说明 |
+|------|------|
+| `docker`（默认） | `deploy/hermes/docker-compose.yml` 启动容器化 Hermes |
+| `local` | 直接调用 WSL 本地的 `hermes` CLI（需要在 PATH 或设 `HERMES_EXE`） |
+
+**`deploy/` 目录**包含 Docker Compose 编排、Dockerfile、profile 同步脚本、Langfuse 可选集成。日常本地开发用 `local` 模式更快；CI/远程部署走 `docker` 模式。
+
 ## 代码规范
 
 ### Go
@@ -138,18 +204,20 @@ XiaMi_spritesheet.png (64×416, 4列×13行, 每帧 16×32, RGBA 透明)
 - 错误：`fmt.Errorf("...: %w", err)`
 - 包注释和导出符号用英文；TODO 注明 milestone
 
-### MCP 工具
+### MCP 工具（`adapters/stardew/tools/`）
 
 - 命名：`<domain>_<verb>` 全小写下划线
 - 一个 domain 一个文件；`registry.go` → `RegisterAll` 统一注册
 - Input/Output struct 必须有 `json` + `jsonschema` tag；Output 首字段 `OK bool`
 - Handler 第一返回值传 `nil`，让 SDK 用 Output 填充
 - 新增工具必须同步 `docs/protocol.md`
+- 框架层通用工具（如 `ping`）放 `pkg/agentbridge/meta.go`，不放 adapter
 
 ### 测试纪律
 
 - 新增 Go package 必须有 `*_test.go`
-- 新增 MCP 工具必须配 `InMemoryTransport` 端到端测试
+- 新增 MCP 工具必须配 `InMemoryTransport` 端到端测试（参考 `adapters/stardew/tools/*_test.go`）
+- 框架层测试在 `pkg/agentbridge/*_test.go`、`pkg/relay/hermes/*_test.go`
 - 测试命名：`Test<Func>_<Scenario>`；表驱动 + `t.Run`
 - 禁止 sleep > 100ms；禁止真实 MCP 子进程或真实 ws 连接
 - **改完代码必须跑 `task ci`；失败不能说"完成了"；3 次修不好停下来问用户**
@@ -184,7 +252,7 @@ git tag v0.x.0 && git push origin v0.x.0
 
 禁止：盲猜（必须看日志）、改 workflow 掩盖、`[skip ci]`/`continue-on-error`
 
-> ⚠️ 注意：CI `ci.yml` 中 `GO_VERSION: '1.22'` 滞后于 `go.mod` 声明的 `go 1.25.0`，可能需要更新。
+> ⚠️ 注意：CI `ci.yml` 中 `env.GO_VERSION: '1.22'` 滞后于 `go.mod` 声明的 `go 1.25.0`。若需修复，只需改 `.github/workflows/ci.yml` 顶部 `GO_VERSION` 值。
 
 ## 当前里程碑
 

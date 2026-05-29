@@ -127,6 +127,7 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcMoveToOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_move_to", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcMoveTo, in)
 		if err != nil {
 			return nil, NpcMoveToOutput{}, fmt.Errorf("npc_move_to: %w", err)
@@ -156,6 +157,7 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 			return nil, NpcFaceDirectionOutput{}, fmt.Errorf("direction must be one of up/down/left/right, got %q", in.Direction)
 		}
 		in.Direction = dir
+		logToolCall("npc_face_direction", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcFaceDirection, in)
 		if err != nil {
 			return nil, NpcFaceDirectionOutput{}, fmt.Errorf("npc_face_direction: %w", err)
@@ -179,6 +181,7 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, NpcGetPositionOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("npc_get_position", in)
 		raw, err := br.Call(ctx, bridge.ActionNpcGetPosition, in)
 		if err != nil {
 			return nil, NpcGetPositionOutput{}, fmt.Errorf("npc_get_position: %w", err)
@@ -201,6 +204,7 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 			"Side-effect: READ. Static data — takes no parameters, always available " +
 			"even without a loaded save.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ NpcGetNamedLocationsInput) (*mcp.CallToolResult, NpcGetNamedLocationsOutput, error) {
+		logToolCall("npc_get_named_locations", nil)
 		out := NpcGetNamedLocationsOutput{
 			OK:        true,
 			Locations: append([]NamedLocationEntry(nil), defaultNamedLocations...),

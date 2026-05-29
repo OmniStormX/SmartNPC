@@ -1,0 +1,87 @@
+# SmartNPC Langfuse v2 — Self-hosted observability stack
+#
+# Usage (with the main hermes compose):
+#   docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up -d --build
+#
+# Langfuse Web UI: http://localhost:3100
+# First run: Sign up at the web UI to create an account, then create a project
+#   and generate API keys. Update deploy/hermes/.env with the keys.
+#
+# Inside Docker network, Hermes containers reach Langfuse at http://langfuse:3000
+
+services:
+  langfuse-db:
+    image: postgres:15
+    container_name: langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    networks:
+      - smartnpc-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: langfuse
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3100
+      NEXTAUTH_SECRET: smartnpc-langfuse-secret-key-change-me
+      SALT: smartnpc-langfuse-salt-change-me
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "3100:3000"
+    networks:
+      - smartnpc-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:3000/api/public/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # Override hermes services to depend on langfuse being healthy
+  hermes-xiami:
+    depends_on:
+      langfuse:
+        condition: service_started
+  hermes-abigail:
+    depends_on:
+      langfuse:
+        condition: service_started
+  hermes-haley:
+    depends_on:
+      langfuse:
+        condition: service_started
+  hermes-harvey:
+    depends_on:
+      langfuse:
+        condition: service_started
+  hermes-penny:
+    depends_on:
+      langfuse:
+        condition: service_started
+  hermes-sebastian:
+    depends_on:
+      langfuse:
+        condition: service_started
+
+volumes:
+  langfuse-db-data:
+
+networks:
+  smartnpc-net:
+    driver: bridge

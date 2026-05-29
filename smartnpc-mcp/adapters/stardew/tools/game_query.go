@@ -66,6 +66,7 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 			"the player asks \"what time is it\" / \"几点了\".\n\n" +
 			"Side-effect: READ. Takes no parameters. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GameGetTimeInput) (*mcp.CallToolResult, GameGetTimeOutput, error) {
+		logToolCall("game_get_time", in)
 		raw, err := br.Call(ctx, bridge.ActionGameGetTime, in)
 		if err != nil {
 			return nil, GameGetTimeOutput{}, fmt.Errorf("game_get_time: %w", err)
@@ -85,6 +86,7 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 			"gating outdoor activity suggestions, or when the player asks about the weather.\n\n" +
 			"Side-effect: READ. Takes no parameters. Requires a loaded save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GameGetWeatherInput) (*mcp.CallToolResult, GameGetWeatherOutput, error) {
+		logToolCall("game_get_weather", in)
 		raw, err := br.Call(ctx, bridge.ActionGameGetWeather, in)
 		if err != nil {
 			return nil, GameGetWeatherOutput{}, fmt.Errorf("game_get_weather: %w", err)
@@ -111,6 +113,7 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 		if in.NPC == "" {
 			return nil, FriendshipGetOutput{}, fmt.Errorf("npc is required")
 		}
+		logToolCall("friendship_get", in)
 		raw, err := br.Call(ctx, bridge.ActionFriendshipGet, in)
 		if err != nil {
 			return nil, FriendshipGetOutput{}, fmt.Errorf("friendship_get: %w", err)

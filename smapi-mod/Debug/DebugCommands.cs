@@ -23,6 +23,8 @@ namespace SmartNPC.Bridge
         private const string CmdTeleport   = "smartnpc_teleport";
         private const string CmdProactive  = "smartnpc_proactive";
         private const string CmdStatus     = "smartnpc_status";
+        private const string CmdTick       = "smartnpc_tick";
+        private const string CmdGoto       = "smartnpc_goto";
 
         private static readonly Random s_rng = new();
         private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(5) };
@@ -73,7 +75,28 @@ namespace SmartNPC.Bridge
                     $"  {CmdStatus} http://<host>:<port>       Override mcp HTTP base URL.",
                 callback: (_, args) => HandleStatus(args, log, ws));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}", LogLevel.Trace);
+            commands.Add(
+                name: CmdTick,
+                documentation:
+                    "Advance in-game time by N hours (default 1). Triggers the " +
+                    "full SDV time pipeline (NPC schedules, shop open/close, " +
+                    "lighting), and emits one game_time_tick event per hour to " +
+                    "the MCP bridge so NPC schedules fire as if real time " +
+                    "passed.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdTick}        Advance by 1 hour.\n" +
+                    $"  {CmdTick} <N>    Advance by N hours (1..12).",
+                callback: (_, args) => HandleTick(args, log));
+
+            commands.Add(
+                name: CmdGoto,
+                documentation:
+                    "Teleport the player to an NPC's current position (cross-map " +
+                    "warp if needed). Inverse of smartnpc_teleport.\n" +
+                    $"Usage: {CmdGoto} <NpcName>",
+                callback: (_, args) => HandleGoto(args, log));
+
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -415,6 +438,109 @@ namespace SmartNPC.Bridge
             long hours = minutes / 60;
             minutes %= 60;
             return $"{hours}h{minutes}m";
+        }
+
+        // ── smartnpc_tick ──────────────────────────────────────────────
+
+        // SDV's internal clock advances in 10-minute increments; one in-game
+        // hour = 6 ticks. Calling Game1.performTenMinuteClockUpdate() drives
+        // the same path as natural time progression — NPC schedule routes,
+        // shop closing logic, ambient lighting, and the SMAPI TimeChanged
+        // event that ModEntry.OnTimeChanged hooks to broadcast game_time_tick
+        // to mcp. So this command is end-to-end: tick → SDV state advances →
+        // SMAPI fires TimeChanged → ws emits game_time_tick → mcp scheduler
+        // fires schedule_trigger to the NPC's Hermes profile.
+        private static void HandleTick(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+
+            int hours = 1;
+            if (args.Length >= 1)
+            {
+                if (!int.TryParse(args[0], out hours) || hours < 1 || hours > 12)
+                {
+                    log.Log($"invalid hours: '{args[0]}' (must be int 1..12)", LogLevel.Error);
+                    return;
+                }
+            }
+
+            int before = Game1.timeOfDay;
+            int totalTenMinTicks = hours * 6;
+            for (int i = 0; i < totalTenMinTicks; i++)
+            {
+                Game1.performTenMinuteClockUpdate();
+            }
+            int after = Game1.timeOfDay;
+
+            log.Log(
+                $"[smartnpc_tick] advanced {hours}h: {before} -> {after} " +
+                $"(SMAPI TimeChanged + game_time_tick will fire on next game tick)",
+                LogLevel.Info);
+        }
+
+        // ── smartnpc_goto ──────────────────────────────────────────────
+
+        // Inverse of smartnpc_teleport: take the player TO the NPC. Useful
+        // when debugging proactive-visit / schedule-trigger behavior — you
+        // can spawn the NPC's plan, then jump straight to wherever they are
+        // without walking the map. Cross-map jumps go through Game1.warpFarmer
+        // so the destination map is loaded correctly.
+        private static void HandleGoto(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdGoto} <NpcName>", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            var dest = npc.currentLocation;
+            if (dest is null)
+            {
+                log.Log($"NPC '{name}' has no currentLocation (off-stage?)", LogLevel.Warn);
+                return;
+            }
+
+            int tileX = (int)(npc.Position.X / 64f);
+            int tileY = (int)(npc.Position.Y / 64f);
+
+            var player = Game1.player;
+            if (player.currentLocation != dest)
+            {
+                Game1.warpFarmer(dest.NameOrUniqueName, tileX, tileY, false);
+            }
+            else
+            {
+                player.Position = npc.Position;
+            }
+
+            // Face the NPC: invert the NPC's facing direction.
+            int facing = npc.FacingDirection switch
+            {
+                0 => 2, 2 => 0, 1 => 3, 3 => 1, _ => 2,
+            };
+            player.faceDirection(facing);
+
+            log.Log(
+                $"warped player to {name} at {dest.Name} ({tileX},{tileY}) facing={FacingName(facing)}",
+                LogLevel.Info);
         }
     }
 }

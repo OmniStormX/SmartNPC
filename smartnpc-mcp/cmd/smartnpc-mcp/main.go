@@ -31,6 +31,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/scheduler"
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/tools"
 	"github.com/OmniStormX/SmartNPC/internal/log"
 	"github.com/OmniStormX/SmartNPC/pkg/agentbridge"
@@ -170,25 +171,40 @@ func main() {
 	// the bridge router that resets it on player_group events.
 	chatGuard := tools.NewChatSayGuard()
 
-	// Wire the ws bridge first so we can attach event forwarders during
-	// tool registration.
+	// Wire the ws bridge. Construction order:
+	//   1. Create WSClient (no handler yet)
+	//   2. RegisterAll → returns dayScheduler (needs br for tool handlers)
+	//   3. makeRouter (needs br, dayScheduler, hermesHandler)
+	//   4. SetEventHandler + Connect
 	var br *bridge.WSClient
 	if *wsURL != "" {
-		// Construct first, then bind the handler — the handler needs to
-		// reference the client to issue chat_say in echo mode.
 		br = bridge.NewWSClient(bridge.WSClientOptions{URL: *wsURL, Logger: logger})
-		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, chatGuard))
+	}
+
+	dayScheduler := tools.RegisterAll(server, br, hermesHandler, chatGuard, logger)
+	// Populate agent NPC list from relay configs so npc_plan_day supports "*".
+	if len(hermesRelays) > 0 {
+		names := make([]string, 0, len(hermesRelays))
+		for _, r := range hermesRelays {
+			if n := r.Cfg().NPCName; n != "" {
+				names = append(names, n)
+			}
+		}
+		dayScheduler.SetAgentNPCs(names)
+		logger.Info("scheduler: agent NPCs registered", "npcs", names)
+	}
+	// Framework-level tools (ping) live in agentbridge so they remain
+	// available even if the SDV adapter is detached.
+	agentbridge.RegisterMeta(server)
+
+	if br != nil {
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, chatGuard, dayScheduler, *logLevel == "debug"))
 		if err := br.Connect(ctx); err != nil {
 			// Mod may not be running yet. The ws client retries in the
 			// background; meanwhile non-mod tools (ping) still work.
 			logger.Warn("initial ws connect failed; will retry in background", "err", err)
 		}
 	}
-
-	tools.RegisterAll(server, br, hermesHandler, chatGuard, logger)
-	// Framework-level tools (ping) live in agentbridge so they remain
-	// available even if the SDV adapter is detached.
-	agentbridge.RegisterMeta(server)
 
 	if *httpAddr != "" {
 		runHTTP(ctx, logger, server, *httpAddr, *httpAllowAnyOrigin, *mcpAPIKey,
@@ -261,11 +277,15 @@ func runHTTP(
 //   - group-chat speak-budget reset: every chat_received with
 //     source="player_group" calls ResetGroup on chatGuard so each NPC in
 //     that group gets a fresh chat_say budget for the new player turn.
+//   - game_time_tick handling: checks the daily scheduler and fires
+//     schedule_trigger events for each NPC with a due entry.
+//   - day_started handling: clears all NPC schedules for the new day.
 //
 // br may be nil during initial wiring; in that case echo-mode is a no-op.
 // relay may be nil; in that case the Hermes forwarding is skipped.
 // chatGuard may be nil; the reset hook becomes a no-op.
-func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay bridge.EventHandler, chatGuard *tools.ChatSayGuard) bridge.EventHandler {
+// sched may be nil; in that case schedule dispatch is skipped.
+func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay bridge.EventHandler, chatGuard *tools.ChatSayGuard, sched *scheduler.Scheduler, schedDebug bool) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
 
 	return func(ctx context.Context, name string, data json.RawMessage) {
@@ -277,6 +297,52 @@ func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, ec
 
 		// MCP clients always see the raw event stream.
 		forward(ctx, name, data)
+
+		// ── day_started: clear all NPC schedules ────────────────────────
+		if name == bridge.EventDayStarted && sched != nil {
+			sched.ClearAll()
+			logger.Info("scheduler: cleared all NPC schedules for new day")
+		}
+
+		// ── game_time_tick: check scheduler and fire triggers ───────────
+		if name == bridge.EventGameTimeTick && sched != nil {
+			var tick struct {
+				Hour int `json:"hour"`
+			}
+			if err := json.Unmarshal(data, &tick); err == nil && tick.Hour >= 6 {
+				fired := sched.Tick(tick.Hour)
+				for _, entry := range fired {
+					triggerData, err := json.Marshal(map[string]any{
+						"npc":       entry.NPC,
+						"game_hour": entry.GameHour,
+						"action":    entry.Action,
+						"params":    entry.Params,
+						"reason":    entry.Reason,
+					})
+					if err != nil {
+						logger.Warn("scheduler: marshal trigger failed", "npc", entry.NPC, "err", err)
+						continue
+					}
+					logger.Info("scheduler: firing schedule_trigger",
+						"npc", entry.NPC, "hour", entry.GameHour, "action", entry.Action)
+					// Forward to MCP clients for observability.
+					forward(ctx, bridge.EventScheduleTrigger, triggerData)
+
+					if schedDebug && br != nil {
+						// DEBUG mode: display action in game chat instead of calling LLM.
+						paramsJSON, _ := json.Marshal(entry.Params)
+						msg := fmt.Sprintf("[schedule] %s %s", entry.Action, string(paramsJSON))
+						_, _ = br.Call(ctx, bridge.ActionChatSay, map[string]any{
+							"npc":  entry.NPC,
+							"text": msg,
+						})
+					} else if relay != nil {
+						// Normal mode: wake the NPC's Hermes profile.
+						relay(ctx, bridge.EventScheduleTrigger, triggerData)
+					}
+				}
+			}
+		}
 
 		// Audible routing: when chat_received carries audible_npcs, the
 		// synthesized chat_message is the authoritative event for the

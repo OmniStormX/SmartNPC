@@ -35,11 +35,15 @@ const (
 	EventLocationChanged     = "location_changed"
 	EventFriendshipChanged   = "friendship_changed"
 	EventNpcPerceptionUpdate = "npc_perception_update" // reserved, not emitted yet
+	EventGameTimeTick        = "game_time_tick"        // reserved — emitted every game hour for scheduler
 
 	// Synthetic (mcp-originated, not from mod) — inter-NPC messaging fan-out.
 	// See internal/tools/npc_message.go.
 	EventNpcMessage          = "npc_message"
 	EventNpcBroadcast        = "npc_broadcast"
+
+	// Synthetic — game-time scheduler triggers a planned activity.
+	EventScheduleTrigger     = "schedule_trigger"
 
 	// Debug — fired by the SMAPI mod's `sn_proactive` console command.
 	// Carries `{npc: "<PascalCase>"}`. Format layer renders it as a
@@ -71,6 +75,30 @@ const (
 	ActionNpcLeadTo         = "npc_lead_to"
 	ActionNpcGetBehavior    = "npc_get_behavior"
 	ActionPlayerGetStatus   = "player_get_status"
+
+	// ── Rich NPC behaviors (world interaction) ──────────────────
+	ActionNpcWander        = "npc_wander"
+	ActionNpcClearDebris   = "npc_clear_debris"
+	ActionNpcWaterCrops    = "npc_water_crops"
+	ActionNpcHarvestCrops  = "npc_harvest_crops"
+	ActionNpcDepositItems  = "npc_deposit_items"
+	ActionNpcDeliverItems  = "npc_deliver_items"
+	ActionNpcForageCollect = "npc_forage_collect"
+	ActionNpcPetAnimal     = "npc_pet_animal"
+	ActionNpcPlantSeeds    = "npc_plant_seeds"
+	ActionNpcTillSoil      = "npc_till_soil"
+	ActionNpcInspectObject = "npc_inspect_object"
+	ActionNpcPlaceObject   = "npc_place_object"
+
+	// ── Rich NPC behaviors (social / performance) ───────────────
+	ActionNpcApproachAndSpeak = "npc_approach_and_speak"
+	ActionNpcExpressEmotion   = "npc_express_emotion"
+	ActionNpcShyRetreat       = "npc_shy_retreat"
+	ActionNpcShowTextBubble   = "npc_show_text_bubble"
+	ActionNpcIdleActivity     = "npc_idle_activity"
+	ActionNpcDanceHappy       = "npc_dance_happy"
+	ActionNpcReactSurprise    = "npc_react_surprise"
+	ActionNpcPaceAnxiously    = "npc_pace_anxiously"
 )
 
 // Request is a client → server RPC call.
