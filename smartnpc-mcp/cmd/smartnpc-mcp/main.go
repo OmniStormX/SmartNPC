@@ -35,7 +35,7 @@ import (
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/tools"
 	"github.com/OmniStormX/SmartNPC/internal/log"
 	"github.com/OmniStormX/SmartNPC/pkg/agentbridge"
-	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
+	hermesrelay "github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 	"github.com/OmniStormX/SmartNPC/pkg/transport"
 )
 
@@ -181,7 +181,7 @@ func main() {
 		br = bridge.NewWSClient(bridge.WSClientOptions{URL: *wsURL, Logger: logger})
 	}
 
-	dayScheduler := tools.RegisterAll(server, br, hermesHandler, chatGuard, logger)
+	dayScheduler := tools.RegisterAll(server, br, hermesHandler, chatGuard, logger, *logLevel == "debug")
 	// Populate agent NPC list from relay configs so npc_plan_day supports "*".
 	if len(hermesRelays) > 0 {
 		names := make([]string, 0, len(hermesRelays))
@@ -285,7 +285,17 @@ func runHTTP(
 // relay may be nil; in that case the Hermes forwarding is skipped.
 // chatGuard may be nil; the reset hook becomes a no-op.
 // sched may be nil; in that case schedule dispatch is skipped.
-func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, echo bool, speaker string, relay bridge.EventHandler, chatGuard *tools.ChatSayGuard, sched *scheduler.Scheduler, schedDebug bool) bridge.EventHandler {
+func makeRouter(
+	server *mcp.Server,
+	logger *slog.Logger,
+	br *bridge.WSClient,
+	echo bool,
+	speaker string,
+	relay bridge.EventHandler,
+	chatGuard *tools.ChatSayGuard,
+	sched *scheduler.Scheduler,
+	schedDebug bool,
+) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
 
 	return func(ctx context.Context, name string, data json.RawMessage) {
@@ -316,7 +326,6 @@ func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, ec
 						"npc":       entry.NPC,
 						"game_hour": entry.GameHour,
 						"action":    entry.Action,
-						"params":    entry.Params,
 						"reason":    entry.Reason,
 					})
 					if err != nil {
@@ -329,10 +338,24 @@ func makeRouter(server *mcp.Server, logger *slog.Logger, br *bridge.WSClient, ec
 					forward(ctx, bridge.EventScheduleTrigger, triggerData)
 
 					if schedDebug && br != nil {
-						// DEBUG mode: display action in game chat instead of calling LLM.
-						paramsJSON, _ := json.Marshal(entry.Params)
-						msg := fmt.Sprintf("[schedule] %s %s", entry.Action, string(paramsJSON))
-						_, _ = br.Call(ctx, bridge.ActionChatSay, map[string]any{
+						// DEBUG mode: display action + reason in game chat
+						// instead of waking the LLM. Parameters are no longer
+						// part of the schedule, so we surface the LLM's
+						// original reason instead — it's far more readable
+						// for at-a-glance debugging. We stamp FromNPC
+						// explicitly via CallAs so the mod can route this
+						// debug bubble to entry.NPC's chat-panel even
+						// though the call originates outside any MCP
+						// session (no agent registry hit).
+						msg := fmt.Sprintf("[schedule] %s", entry.Action)
+						if entry.Reason != "" {
+							msg = fmt.Sprintf("%s — %s", msg, entry.Reason)
+						}
+						_, _ = br.CallAs(ctx, entry.NPC, bridge.ActionChatSay, map[string]any{
+							"npc":  entry.NPC,
+							"text": msg,
+						})
+						_, _ = br.CallAs(ctx, entry.NPC, bridge.ActionNpcShowTextBubble, map[string]any{
 							"npc":  entry.NPC,
 							"text": msg,
 						})

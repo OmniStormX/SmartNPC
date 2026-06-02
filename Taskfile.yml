@@ -89,6 +89,23 @@ tasks:
       - cmd: bash scripts/test_profile_render.sh
         platforms: [windows]
 
+  net:check:
+    desc: Probe LLM endpoint + Langfuse cloud reachability for every WSL hermes profile (no game / mcp needed).
+    summary: |
+      Reads ~/.hermes/profiles/<npc>/.env on the WSL side and runs:
+        - tcp connect to HERMES_AGENT_URL host
+        - GET  <url>/models
+        - POST <url>/chat/completions   (4-token ping)
+        - GET  <LANGFUSE_HOST>/api/public/health (if keys set)
+      Pass profile names to limit scope:  task net:check -- xiami abigail
+      Exits non-zero if any chat/completions probe fails — safe to use
+      as a pre-flight in scripts.
+    cmds:
+      - cmd: wsl -d Ubuntu-22.04 bash /mnt/d/SmartNPC/scripts/test_api_connectivity.sh {{.CLI_ARGS}}
+        platforms: [windows]
+      - cmd: bash scripts/test_api_connectivity.sh {{.CLI_ARGS}}
+        platforms: [linux, darwin]
+
   # ── Git hooks (opt-in dev convenience) ──────────────────────────
 
   hooks:enable:

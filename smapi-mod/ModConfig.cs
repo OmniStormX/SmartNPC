@@ -32,13 +32,24 @@ namespace SmartNPC.Bridge
         public string ListenPrefix() => $"http://{this.Host}:{this.Port}/";
 
         /// <summary>
-        /// When <c>true</c>, every stub-action invocation (any tool whose
-        /// Mod-side implementation isn't written yet) also pushes a debug
-        /// message into the player's chat panel — same surface as
-        /// <c>chat_say</c>, so you see <c>[stub:npc_water_crops] params=...</c>
-        /// in the conversation history alongside the head-bubble. Default
-        /// <c>false</c> — only the bubble is shown.
+        /// When <c>true</c>, every inbound <c>request</c> frame received
+        /// from <c>smartnpc-mcp</c> over the ws bridge is mirrored into the
+        /// player's in-game chat panel as
+        /// <c>[mcp→mod] action=&lt;name&gt; id=&lt;id&gt; params=&lt;json&gt;</c>.
+        /// Useful for verifying which tools the LLM is firing and with
+        /// what arguments without tailing log files. Truncated to 240
+        /// chars per line. Default <c>false</c>.
         /// </summary>
-        public bool DebugShowMessage { get; set; } = false;
+        public bool DebugLogIncomingRequests { get; set; } = false;
+
+        /// <summary>
+        /// When <c>true</c>, NPC behavior actions (world + social) show a
+        /// text bubble above the NPC's head indicating what action was
+        /// triggered (e.g. "[wander] 去镇上逛逛"). Useful for debugging
+        /// schedule triggers and NPC AI decisions visually in-game.
+        /// When <c>false</c>, the handler runs but no bubble is displayed.
+        /// Default <c>true</c>.
+        /// </summary>
+        public bool DebugShowBubble { get; set; } = true;
     }
 }

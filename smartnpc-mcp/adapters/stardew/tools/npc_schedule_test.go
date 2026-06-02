@@ -18,7 +18,7 @@ func newScheduleClientServer(t *testing.T) (*mcp.ClientSession, context.Context,
 	sched := scheduler.New()
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "test"}, nil)
-	registerNpcSchedule(server, sched)
+	registerNpcSchedule(server, sched, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {

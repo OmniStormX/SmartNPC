@@ -44,7 +44,7 @@ namespace SmartNPC.Bridge
         private MovementHandler?  _movement;
         private FollowSystem?     _follow;
         private BehaviorHandler?  _behavior;
-        private StubActionHandler? _stub;
+        private NpcActionHandlerBase[]? _actionHandlers;
 
         private readonly ChatMessageStore _messageStore = new();
         private readonly UnreadTracker    _unread       = new();
@@ -89,7 +89,6 @@ namespace SmartNPC.Bridge
                 _movement = new MovementHandler(this.Monitor);
                 _follow   = new FollowSystem(this.Monitor);
                 _behavior = new BehaviorHandler(this.Monitor, _follow);
-                _stub     = new StubActionHandler(this.Monitor, this._config);
 
                 _router.Register("mail_send",            _mail.Handle);
                 _router.Register("chat_say",             _chat.Handle);
@@ -110,37 +109,52 @@ namespace SmartNPC.Bridge
                 _router.Register("npc_lead_to",          _behavior.HandleLeadTo);
                 _router.Register("npc_get_behavior",     _behavior.HandleGetBehavior);
 
-                // ── Stub actions (real-mod-side implementation TBD) ─────────
-                // World-action stubs.
-                string[] stubActions =
+                // ── Behavior actions (per-action handler, bubble + TODO real logic)
+                // Each action has its own handler class (subclass of
+                // NpcActionHandlerBase). Current default: show head bubble.
+                // Implement real game logic by overriding Execute in each.
+                Func<bool> showBubble = () => this._config.DebugShowBubble;
+                var actionHandlers = new NpcActionHandlerBase[]
                 {
-                    "npc_wander",
-                    "npc_clear_debris",
-                    "npc_water_crops",
-                    "npc_harvest_crops",
-                    "npc_deposit_items",
-                    "npc_deliver_items",
-                    "npc_forage_collect",
-                    "npc_pet_animal",
-                    "npc_plant_seeds",
-                    "npc_till_soil",
-                    "npc_inspect_object",
-                    "npc_place_object",
-                    // Social-action stubs.
-                    "npc_approach_and_speak",
-                    "npc_express_emotion",
-                    "npc_shy_retreat",
-                    "npc_show_text_bubble",
-                    "npc_idle_activity",
-                    "npc_dance_happy",
-                    "npc_react_surprise",
-                    "npc_pace_anxiously",
+                    // World actions.
+                    new WanderHandler(this.Monitor, showBubble),
+                    new ClearDebrisHandler(this.Monitor, showBubble),
+                    new WaterCropsHandler(this.Monitor, showBubble),
+                    new HarvestCropsHandler(this.Monitor, showBubble),
+                    new DepositItemsHandler(this.Monitor, showBubble),
+                    new DeliverItemsHandler(this.Monitor, showBubble),
+                    new ForageCollectHandler(this.Monitor, showBubble),
+                    new PetAnimalHandler(this.Monitor, showBubble),
+                    new PlantSeedsHandler(this.Monitor, showBubble),
+                    new TillSoilHandler(this.Monitor, showBubble),
+                    new InspectObjectHandler(this.Monitor, showBubble),
+                    new PlaceObjectHandler(this.Monitor, showBubble),
+                    // Social actions.
+                    new ApproachAndSpeakHandler(this.Monitor, showBubble),
+                    new ExpressEmotionHandler(this.Monitor, showBubble),
+                    new ShyRetreatHandler(this.Monitor, showBubble),
+                    new ShowTextBubbleHandler(this.Monitor, showBubble),
+                    new IdleActivityHandler(this.Monitor, showBubble),
+                    new DanceHappyHandler(this.Monitor, showBubble),
+                    new ReactSurpriseHandler(this.Monitor, showBubble),
+                    new PaceAnxiouslyHandler(this.Monitor, showBubble),
                 };
-                foreach (string action in stubActions)
-                    _router.Register(action, _stub.MakeHandler(action));
+                _actionHandlers = actionHandlers;
+                foreach (var h in actionHandlers)
+                    _router.Register(h.ActionNamePublic, h.Handle);
 
                 string prefix = this._config.ListenPrefix();
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
+                // Optional: mirror every inbound mcp request into the
+                // custom chat panel for live debugging. Each request is
+                // appended as a bubble in its target NPC's conversation
+                // (or the synthetic "__system__" channel for tools that
+                // don't address an NPC, like mail_send / game_get_*).
+                // Polled per request so toggling config.json + SMAPI
+                // hot-reload takes effect without restarting ws.
+                _ws.EnableRequestDebug(
+                    enabled: () => this._config.DebugLogIncomingRequests,
+                    sink: this.HandleDebugRequest);
                 _ws.Start();
 
                 // Wire up patches and UI.
@@ -152,16 +166,6 @@ namespace SmartNPC.Bridge
                 _chat.SetMessageStore(_messageStore);
                 _chat.SetUnreadTracker(_unread);
                 _chat.SetMessageNotifier(this.OnIncomingChatMessage);
-
-                // Same surfaces for the stub handler so DebugShowMessage can
-                // mirror stub fires into the chat panel — but quietly: no
-                // toast popup, just append to the contact's conversation
-                // thread (and refresh the panel if it's already open).
-                _stub.SetDebugSinks(_messageStore, _unread, (npcName, displayName, text, channel) =>
-                {
-                    if (Game1.activeClickableMenu is ChatPanel panel)
-                        panel.RefreshContacts();
-                });
 
                 _chatInput = new ChatInputCapture(this, this.ForwardPlayerMessage);
 
@@ -182,13 +186,16 @@ namespace SmartNPC.Bridge
 
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
+            _ws?.PumpOnGameTick();
             _mail?.PumpOnGameTick();
             _chat?.PumpOnGameTick();
             _perception?.PumpOnGameTick();
             _movement?.PumpOnGameTick();
             _behavior?.PumpOnGameTick();
             _follow?.PumpOnGameTick();
-            _stub?.PumpOnGameTick();
+            if (_actionHandlers != null)
+                foreach (var h in _actionHandlers)
+                    h.PumpOnGameTick();
             NpcDialoguePatch.PumpInteractions();
 
             // Tick toast lifetimes (~16 ms per tick at 60fps).
@@ -404,6 +411,69 @@ namespace SmartNPC.Bridge
                 return;
             }
             _toast?.Push(npcName, displayName, text);
+        }
+
+        /// <summary>
+        /// Sink for inbound mcp request mirroring (DebugLogIncomingRequests).
+        /// Runs on the SDV game thread (drained from <see cref="WebSocketServer.PumpOnGameTick"/>).
+        ///
+        /// Routing: only requests addressed to a specific NPC are surfaced
+        /// — they land in that NPC's conversation as a `[action] params`
+        /// bubble. NPC-agnostic tools (game_get_time / game_get_weather /
+        /// mail_send / friendship_get / player_get_status / …) are
+        /// deliberately dropped: those are query helpers, not debug
+        /// signals worth UI real estate.
+        ///
+        /// Stores the bubble, bumps unread when the panel isn't focused
+        /// stores the bubble, bumps unread when the panel isn't focused
+        /// on this conversation, refreshes the panel if it's already
+        /// open. No toast (these are dev signals, not player-facing
+        /// chatter).
+        /// </summary>
+        private void HandleDebugRequest(WebSocketServer.DebugRequestEvent evt)
+        {
+            if (string.IsNullOrEmpty(evt.NpcName))
+            {
+                // Reaching here means smartnpc-mcp dispatched a request
+                // without stamping `from_npc`, AND the params didn't carry
+                // an `npc` field either. By design the bridge guarantees
+                // every tool call originates from a registered Hermes
+                // profile, so this is either:
+                //   - a profile that forgot to call agent_register_self
+                //     before its first tool invocation
+                //   - an operator-side fan-out site that should be using
+                //     WSClient.CallAs instead of Call
+                //   - the legacy --echo-mode chat_say (intentionally
+                //     unattributed; safe to drop)
+                // Warn so the misconfigured profile / call site is visible
+                // in the SMAPI log; don't try to invent a fallback channel.
+                this.Monitor.Log(
+                    $"[debug-req] dropped (no from_npc and no params.npc) action={evt.Action} id={evt.Id}",
+                    LogLevel.Warn);
+                return;
+            }
+
+            string channel = evt.NpcName;
+            NPC? npc = Game1.getCharacterFromName(channel);
+            string speaker = npc?.displayName ?? channel;
+
+            string text = string.IsNullOrEmpty(evt.ParamsJson)
+                ? $"[{evt.Action}]"
+                : $"[{evt.Action}] {evt.ParamsJson}";
+
+            _messageStore.Add(channel, speaker, text, isPlayer: false);
+
+            bool isActiveConversation =
+                ChatPanel.IsOpen && string.Equals(ChatPanel.ActiveNpc, channel, System.StringComparison.Ordinal);
+            if (!isActiveConversation)
+                _unread.IncrementUnread(channel);
+
+            if (Game1.activeClickableMenu is ChatPanel panel)
+                panel.RefreshContacts();
+
+            this.Monitor.Log(
+                $"[debug-req] sink → channel={channel} speaker={speaker} active={isActiveConversation} text={text}",
+                LogLevel.Info);
         }
 
         /// <summary>Called from the Harmony postfix on ChatBox.receiveChatMessage.</summary>

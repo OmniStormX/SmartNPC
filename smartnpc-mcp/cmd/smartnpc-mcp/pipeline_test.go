@@ -96,7 +96,7 @@ func TestPipeline_ChatMessageReachesHermes(t *testing.T) {
 
 	// Register tools so the MCP server is realistic — they aren't
 	// exercised in this test but ensure RegisterAll didn't change shape.
-	_ = tools.RegisterAll(mcpServer, br, nil, nil, logger)
+	_ = tools.RegisterAll(mcpServer, br, nil, nil, logger, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -468,7 +468,7 @@ func TestPipeline_GameTimeTickFiresScheduleTrigger(t *testing.T) {
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 
 	// Create scheduler and pre-populate a schedule for XiaMi.
-	sched := tools.RegisterAll(mcpServer, nil, nil, nil, logger)
+	sched := tools.RegisterAll(mcpServer, nil, nil, nil, logger, false)
 	sched.SetSchedule(scheduler.DaySchedule{
 		NPC:    "XiaMi",
 		Day:    15,

@@ -36,6 +36,7 @@ SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ─�
 - Task 路径：`C:\Users\synchen\go\bin\task.exe`
 - WDAC：不要预设拦截，实测 `bin\xxx.exe --version`；截至 2026-04-30 不再拦截
 - 编码：UTF-8 无 BOM；写中文文件后自检 `python -c "open(r'PATH','rb').read().decode('utf-8')"`
+- .NET：`global.json` 钉 SDK 8.0.0（C# Dev Kit 需要 ≥8），mod 实际 target `net6.0`
 
 ## 常用命令
 
@@ -49,6 +50,9 @@ C:\Users\synchen\go\bin\task.exe mod:install     # 编译+部署 mod 到游戏�
 C:\Users\synchen\go\bin\task.exe tidy            # go mod tidy 全模块
 C:\Users\synchen\go\bin\task.exe profiles:render # 渲染 _master → 6 NPC profile
 C:\Users\synchen\go\bin\task.exe profiles:verify # 校验渲染产物（CI 会跑）
+C:\Users\synchen\go\bin\task.exe net:check       # 探测 LLM + Langfuse 连通性（WSL 侧，不需游戏/mcp）
+C:\Users\synchen\go\bin\task.exe hooks:enable    # 启用 git hooks（commit smapi-mod/ 时自动 mod:install）
+C:\Users\synchen\go\bin\task.exe hooks:status    # 查看 hooks 是否启用
 C:\Users\synchen\go\bin\task.exe --list          # 列出所有可用 task
 ```
 
@@ -58,7 +62,7 @@ cd D:\SmartNPC\smartnpc-mcp && go test -run TestPing ./pkg/agentbridge/...
 cd D:\SmartNPC\smartnpc-mcp && go test -run TestChatSay ./adapters/stardew/tools/...
 ```
 
-**Echo 模式（不接 LLM，验证游戏往返）：**
+**Echo 模式（不接 LLM，验证游戏往返）：** 请求直接回声返回，用于验证 ws 连接 + MCP 工具注册是否正常，无需 Hermes/LLM 在线。
 ```cmd
 C:\Users\synchen\go\bin\task.exe mcp:run-echo
 ```
@@ -86,7 +90,7 @@ bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
 
 **Taskfile 约定：** 所有构建/测试/lint 统一 `task <name>`；子项目用 `task <ns>:<task>`；禁止裸 `go build`/`dotnet build`
 
-**环境变量（`.env.example`）：** 复制 `.env.example` 为 `.env` 后编辑；Taskfile 的 `dotenv:` 自动加载。关键变量：
+**环境变量（`.env.example`）：** 复制 `.env.example` 为 `.env` 后编辑；Taskfile 的 `dotenv:` 自动加载。变量按优先级分 4 档：`[必看]`（必须确认）、`[按机器]`（非默认时设）、`[自动]`（有合理 fallback）、`[排障]`（出问题才开）。关键变量：
 - `SMARTNPC_WS_URL` — ws 地址（默认 `ws://127.0.0.1:18745/ws`）
 - `SMARTNPC_HTTP_PORT` — mcp HTTP 端口（默认 `3000`）
 - `SMARTNPC_MCP_URL` — Hermes profile 连 mcp 的完整 URL（必须显式设，如 `http://127.0.0.1:3000/mcp`）
@@ -99,7 +103,7 @@ bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
 2. MCP 先于 Hermes Gateway 启动（Hermes 启动时发现工具，晚启动会缓存到 0 tools）
 3. 同一 WebSocket 只能一个 MCP 实例占用
 
-**Git hooks（可选）：** `task hooks:enable` — commit 涉及 `smapi-mod/` 时自动 `task mod:install`
+**Git hooks（可选）：** `task hooks:enable` — commit 涉及 `smapi-mod/` 时自动 `task mod:install`；`task hooks:disable` 关闭
 
 **游戏内按键：**
 
@@ -192,6 +196,8 @@ XiaMi_spritesheet.png (64×416, 4列×13行, 每帧 16×32, RGBA 透明)
 |------|------|
 | `docker`（默认） | `deploy/hermes/docker-compose.yml` 启动容器化 Hermes |
 | `local` | 直接调用 WSL 本地的 `hermes` CLI（需要在 PATH 或设 `HERMES_EXE`） |
+
+**NPC Gateway 端口**（源自 `hermes/npcs.yaml`）：xiami=8642, abigail=8643, haley=8644, harvey=8645, penny=8646, sebastian=8647
 
 **`deploy/` 目录**包含 Docker Compose 编排、Dockerfile、profile 同步脚本、Langfuse 可选集成。日常本地开发用 `local` 模式更快；CI/远程部署走 `docker` 模式。
 

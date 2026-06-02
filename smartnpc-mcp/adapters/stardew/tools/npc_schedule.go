@@ -7,17 +7,23 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/scheduler"
 )
 
 // ── npc_plan_day ──────────────────────────────────────────────────
 
 // NpcPlanDayInputEntry is one slot in the day plan.
+//
+// Intentionally NO params field: the schedule only commits to the time
+// and which tool to invoke. Concrete tool parameters are decided when
+// the entry fires (see schedule_trigger handling), so the LLM can react
+// to live game state — weather, player location, inventory, etc. — that
+// would not be known at plan time.
 type NpcPlanDayInputEntry struct {
-	GameHour int            `json:"game_hour"         jsonschema:"6-25 (SDV 6am to 2am displayed as 26:00)"`
-	Action   string         `json:"action"            jsonschema:"MCP tool name to invoke at this hour, e.g. npc_water_crops"`
-	Params   map[string]any `json:"params,omitempty"  jsonschema:"action-specific parameters object"`
-	Reason   string         `json:"reason,omitempty"  jsonschema:"brief reason for this activity (for debugging)"`
+	GameHour int    `json:"game_hour"         jsonschema:"6-25 (SDV 6am to 2am displayed as 26:00)"`
+	Action   string `json:"action"            jsonschema:"MCP tool name to invoke at this hour, e.g. npc_water_crops. Do NOT include parameters here; choose them when the entry fires."`
+	Reason   string `json:"reason,omitempty"  jsonschema:"brief reason for this activity (for debugging)"`
 }
 
 // NpcPlanDayInput is the input to npc_plan_day.
@@ -46,10 +52,9 @@ type NpcGetScheduleInput struct {
 
 // NpcGetScheduleOutputEntry is one pending entry.
 type NpcGetScheduleOutputEntry struct {
-	GameHour int            `json:"game_hour"        jsonschema:"scheduled hour"`
-	Action   string         `json:"action"           jsonschema:"tool to invoke"`
-	Params   map[string]any `json:"params,omitempty" jsonschema:"parameters"`
-	Reason   string         `json:"reason,omitempty" jsonschema:"reasoning"`
+	GameHour int    `json:"game_hour"        jsonschema:"scheduled hour"`
+	Action   string `json:"action"           jsonschema:"tool to invoke"`
+	Reason   string `json:"reason,omitempty" jsonschema:"reasoning"`
 }
 
 // NpcGetScheduleOutput returns the pending (unfired) entries.
@@ -66,7 +71,7 @@ type NpcGetScheduleOutput struct {
 // sched is the shared Scheduler instance; if nil, a new one is created
 // (useful for tests). The same scheduler must be wired into the event
 // router so game_time_tick can call sched.Tick().
-func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler) {
+func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler, br *bridge.WSClient, debug bool) {
 	if sched == nil {
 		sched = scheduler.New()
 	}
@@ -75,19 +80,23 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler) {
 		Name: "npc_plan_day",
 		Description: "Submit a daily schedule for this NPC. Called once per game day " +
 			"(typically on day_started) after reviewing weather, season, memory, and " +
-			"recent events. The schedule is a list of (game_hour, action) entries.\n\n" +
+			"recent events. The schedule is a list of (game_hour, action) entries — " +
+			"only the TIME and the TOOL NAME are committed; parameters are decided " +
+			"later when the action fires.\n\n" +
 			"When to call: at the START of each new game day — before doing anything " +
 			"else. This is your plan for the day. You can have 1-20 entries spread " +
 			"across hours 6-25.\n\n" +
-			"Execution: when the scheduled hour arrives, the system dispatches the " +
-			"action automatically — it will NOT wake you again to confirm. In debug " +
-			"mode (--log-level debug), actions are displayed in the game chat panel " +
-			"as '[schedule] action params' instead of being executed.\n\n" +
+			"Execution: when the scheduled hour arrives, you (the NPC's LLM) will be " +
+			"woken with a `schedule_trigger` event carrying the action name and your " +
+			"original reason. You then call the tool with concrete parameters chosen " +
+			"based on live game state (location, inventory, weather, who's nearby, " +
+			"etc.). In debug mode (--log-level debug), the action name is just shown " +
+			"in the game chat panel as '[schedule] action — reason'.\n\n" +
 			"Constraints:\n" +
 			"- game_hour range: 6 (6am) to 25 (1am next day, SDV convention)\n" +
 			"- action must be a valid MCP tool name from your available tools\n" +
 			"- max 20 entries per day; duplicate hours are allowed (both fire)\n" +
-			"- params is the exact JSON you'd pass to that tool (minus the `npc` field)\n" +
+			"- DO NOT pass tool parameters here — choose them at fire time\n" +
 			"- calling again replaces the previous schedule entirely\n\n" +
 			"Tips for good schedules:\n" +
 			"- Space entries 2-3 hours apart to feel natural\n" +
@@ -125,7 +134,6 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler) {
 			entries = append(entries, scheduler.Entry{
 				GameHour: e.GameHour,
 				Action:   e.Action,
-				Params:   e.Params,
 				Reason:   e.Reason,
 			})
 		}
@@ -163,6 +171,21 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler) {
 		slog.Info("npc_plan_day result",
 			"npc", out.NPC, "accepted", out.Accepted, "targets", len(targets), "message", out.Message)
 
+		// Debug mode: push concise summary to each target NPC's chat panel + head bubble.
+		if debug && br != nil {
+			for _, npc := range targets {
+				msg := fmt.Sprintf("[plan] stored %d entries, day %d %s", len(entries), in.Day, in.Season)
+				go br.CallAs(context.Background(), npc, bridge.ActionChatSay, map[string]any{
+					"npc":  npc,
+					"text": msg,
+				})
+				go br.CallAs(context.Background(), npc, bridge.ActionNpcShowTextBubble, map[string]any{
+					"npc":  npc,
+					"text": msg,
+				})
+			}
+		}
+
 		return nil, out, nil
 	})
 
@@ -185,7 +208,6 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler) {
 			outEntries = append(outEntries, NpcGetScheduleOutputEntry{
 				GameHour: e.GameHour,
 				Action:   e.Action,
-				Params:   e.Params,
 				Reason:   e.Reason,
 			})
 		}

@@ -39,7 +39,7 @@ import (
 // The returned *scheduler.Scheduler is the shared instance managing NPC
 // daily schedules. The caller should wire it into the event router so
 // game_time_tick events trigger sched.Tick(hour). Nil is never returned.
-func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler, chatGuard *ChatSayGuard, logger *slog.Logger) *scheduler.Scheduler {
+func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler, chatGuard *ChatSayGuard, logger *slog.Logger, schedDebug bool) *scheduler.Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -48,9 +48,13 @@ func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler,
 
 	registerNpcMessage(s, logger, hermes)
 	// Schedule tools — NPC daily planning. Independent of mod bridge.
-	registerNpcSchedule(s, sched)
+	registerNpcSchedule(s, sched, br, schedDebug)
 
 	if br != nil {
+		// agent_register_self installs first so profiles see it at the top
+		// of ListTools and the SOUL/policy can reference it as the very
+		// first call to make on startup.
+		registerAgent(s, br)
 		registerMail(s, br)
 		registerChat(s, br, chatGuard)
 		registerGameQuery(s, br)
