@@ -27,6 +27,7 @@ namespace SmartNPC.Bridge
         private readonly Func<bool> _showBubble;
         private readonly ConcurrentQueue<Action> _pending = new();
 
+        // 配置 showbubble 配置
         protected NpcActionHandlerBase(IMonitor log, Func<bool>? showBubble = null)
         {
             Log = log;
