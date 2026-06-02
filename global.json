@@ -1,0 +1,8 @@
+{
+  "_comment": "Pin the .NET SDK used to build/restore this repo. C# Dev Kit's project-system server requires .NET >= 8 to launch (the previous .NET 6 SDK was too old and produced 'A compatible .NET SDK was not found.' in vscode). The mod itself still targets net6.0 via TargetFramework in StardewMCPBridge.csproj; this only governs which SDK orchestrates the build.",
+  "sdk": {
+    "version": "8.0.0",
+    "rollForward": "latestMajor",
+    "allowPrerelease": false
+  }
+}

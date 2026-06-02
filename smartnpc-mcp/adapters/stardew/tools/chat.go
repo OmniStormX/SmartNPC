@@ -196,7 +196,7 @@ func registerChat(s *mcp.Server, br *bridge.WSClient, guard *ChatSayGuard) {
 			"Stop signal: every chat_say result (delivered or no-op) carries `TURN_END` in `hint`. " +
 			"When you see `TURN_END`, you MUST stop generating tool calls and stop generating text " +
 			"for this turn. Hermes will wake you on the next inbound event.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ChatSayInput) (*mcp.CallToolResult, ChatSayOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in ChatSayInput) (*mcp.CallToolResult, ChatSayOutput, error) {
 		if in.Speaker == "" || in.Text == "" {
 			return nil, ChatSayOutput{}, fmt.Errorf("speaker and text are required")
 		}
@@ -239,7 +239,7 @@ func registerChat(s *mcp.Server, br *bridge.WSClient, guard *ChatSayGuard) {
 			}
 		}
 		logToolCall("chat_say", in)
-		raw, err := br.Call(ctx, bridge.ActionChatSay, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionChatSay, in)
 		if err != nil {
 			return nil, ChatSayOutput{}, fmt.Errorf("chat_say: %w", err)
 		}

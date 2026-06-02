@@ -54,6 +54,39 @@ type WSClient struct {
 	conn    *websocket.Conn
 	pending map[string]chan *Response
 	closed  bool
+
+	// Agent registry: maps an MCP server-session id (string returned by
+	// mcp.ServerSession.ID()) to the NPC profile name that session belongs
+	// to. Populated by the agent_register_self tool. Read on every Call to
+	// stamp the outbound Request.FromNPC field.
+	agentMu sync.RWMutex
+	agents  map[string]string // sessionID → npcName
+}
+
+// callCtxKey is the unexported context key used to propagate the originating
+// MCP session ID into Call. Tool handlers should call WithCallSession before
+// invoking br.Call so the resulting ws Request carries the right from_npc.
+type callCtxKey struct{}
+
+// WithCallSession returns a child context tagged with the given MCP server
+// session ID. Tool handlers wrap their incoming context with this before
+// calling br.Call so the ws Request frame can be stamped with the
+// originating NPC profile.
+//
+// sessionID may be empty (e.g. unit tests using a single in-memory transport
+// without a registered agent); in that case Call falls back to params.npc
+// or skips the from_npc tag entirely.
+func WithCallSession(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, callCtxKey{}, sessionID)
+}
+
+// SessionFromContext returns the session ID previously stored by
+// WithCallSession, or "" if none.
+func SessionFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(callCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // NewWSClient creates an unconnected client. Call Connect to establish.
@@ -77,7 +110,61 @@ func NewWSClient(opts WSClientOptions) *WSClient {
 		opts:    opts,
 		log:     opts.Logger,
 		pending: make(map[string]chan *Response),
+		agents:  make(map[string]string),
 	}
+}
+
+// soloSessionKey is the registry key used when the underlying MCP transport
+// does not allocate per-session ids — namely stdio (single client by
+// definition) and the in-memory transport used in tests. The HTTP
+// streamable transport always issues a non-empty Mcp-Session-Id, so this
+// fallback never collides with multi-client production usage.
+const soloSessionKey = "__solo_session__"
+
+// RegisterAgent records that the MCP session identified by sessionID is
+// driven by the given NPC profile. Called by the agent_register_self tool.
+// Re-registering with a different name overwrites the previous mapping.
+//
+// An empty sessionID is mapped to a synthetic single-session key so that
+// stdio / InMemoryTransport (which don't issue session ids) still get a
+// working binding. An empty npcName removes the mapping (de-registration);
+// useful in tests.
+func (c *WSClient) RegisterAgent(sessionID, npcName string) bool {
+	key := sessionID
+	if key == "" {
+		key = soloSessionKey
+	}
+	c.agentMu.Lock()
+	defer c.agentMu.Unlock()
+	if npcName == "" {
+		delete(c.agents, key)
+		return true
+	}
+	c.agents[key] = npcName
+	return true
+}
+
+// AgentForSession returns the NPC name registered for the given session ID,
+// or "" if the session has not yet called agent_register_self.
+//
+// Empty sessionID resolves through the synthetic soloSessionKey so stdio /
+// InMemoryTransport callers see the same binding they registered (see
+// RegisterAgent for the rationale).
+func (c *WSClient) AgentForSession(sessionID string) string {
+	key := sessionID
+	if key == "" {
+		key = soloSessionKey
+	}
+	c.agentMu.RLock()
+	defer c.agentMu.RUnlock()
+	return c.agents[key]
+}
+
+// AgentForContext is the convenience wrapper used by tool handlers: it
+// extracts the session ID from ctx (set by WithCallSession) and looks it up
+// in the agent registry. Returns "" if either step fails.
+func (c *WSClient) AgentForContext(ctx context.Context) string {
+	return c.AgentForSession(SessionFromContext(ctx))
 }
 
 // Connect dials the server and starts the read loop. The loop will
@@ -118,6 +205,12 @@ func (c *WSClient) SetEventHandler(h EventHandler) {
 // Call sends a request and blocks until the server responds, the per-call
 // timeout fires, or ctx is cancelled.
 //
+// The outbound ws Request frame's FromNPC field is auto-populated from the
+// per-session agent registry when ctx carries a session id (set by
+// WithCallSession in tool handlers). Operator-side callers that already
+// know the originating NPC (e.g. scheduler debug fan-out) should use
+// CallAs to stamp FromNPC explicitly.
+//
 // On a non-OK response, Call returns an error wrapping the server-supplied
 // code and message.
 //
@@ -125,6 +218,22 @@ func (c *WSClient) SetEventHandler(h EventHandler) {
 // Hermes round-trip latency to specific tool calls when reading mcp.log
 // alongside hermesrelay's elapsed_ms summary.
 func (c *WSClient) Call(ctx context.Context, action string, params any) (json.RawMessage, error) {
+	return c.callInternal(ctx, c.AgentForContext(ctx), action, params)
+}
+
+// CallAs is identical to Call but stamps the outbound ws Request's FromNPC
+// field with the given npcName, bypassing the per-session agent registry.
+// Use when the caller has out-of-band knowledge of which NPC a tool call
+// belongs to — currently the scheduler-debug schedule_trigger fan-out and
+// the echo-mode chat_say are the only two such sites.
+//
+// An empty npcName is equivalent to Call (FromNPC unset, mod falls back to
+// params.npc if any).
+func (c *WSClient) CallAs(ctx context.Context, npcName, action string, params any) (json.RawMessage, error) {
+	return c.callInternal(ctx, npcName, action, params)
+}
+
+func (c *WSClient) callInternal(ctx context.Context, fromNPC, action string, params any) (json.RawMessage, error) {
 	id := uuid.NewString()
 	ch := make(chan *Response, 1)
 
@@ -147,7 +256,13 @@ func (c *WSClient) Call(ctx context.Context, action string, params any) (json.Ra
 		c.mu.Unlock()
 	}()
 
-	req := Request{Type: TypeRequest, ID: id, Action: action, Params: params}
+	req := Request{
+		Type:    TypeRequest,
+		ID:      id,
+		Action:  action,
+		Params:  params,
+		FromNPC: fromNPC,
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

@@ -86,12 +86,12 @@ func registerNpcPerception(s *mcp.Server, br *bridge.WSClient) {
 			"earshot before simulating inter-NPC dialogue.\n\n" +
 			"Side-effect: READ. Cached ~1 Hz on the mod side; custom `radius` triggers " +
 			"an on-demand scan. Requires a loaded save.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetNearbyInput) (*mcp.CallToolResult, NpcGetNearbyOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcGetNearbyInput) (*mcp.CallToolResult, NpcGetNearbyOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetNearbyOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_get_nearby", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcGetNearby, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcGetNearby, in)
 		if err != nil {
 			return nil, NpcGetNearbyOutput{}, fmt.Errorf("npc_get_nearby: %w", err)
 		}
@@ -111,12 +111,12 @@ func registerNpcPerception(s *mcp.Server, br *bridge.WSClient) {
 			"\"the crops look ready\") when you want one round-trip instead of calling " +
 			"`game_get_time` + `game_get_weather` + `npc_get_position` separately.\n\n" +
 			"Side-effect: READ. Requires a loaded save.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetEnvironmentInput) (*mcp.CallToolResult, NpcGetEnvironmentOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcGetEnvironmentInput) (*mcp.CallToolResult, NpcGetEnvironmentOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetEnvironmentOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_get_environment", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcGetEnvironment, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcGetEnvironment, in)
 		if err != nil {
 			return nil, NpcGetEnvironmentOutput{}, fmt.Errorf("npc_get_environment: %w", err)
 		}

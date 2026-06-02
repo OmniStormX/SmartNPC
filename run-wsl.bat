@@ -28,7 +28,7 @@ if not defined SMARTNPC_GAME_PATH    set "SMARTNPC_GAME_PATH=D:\Stardew Valley"
 if not defined SMARTNPC_HTTP_PORT    set "SMARTNPC_HTTP_PORT=3000"
 if not defined SMARTNPC_WS_URL       set "SMARTNPC_WS_URL=ws://127.0.0.1:18745/ws"
 if not defined SMARTNPC_HERMES_KEY   set "SMARTNPC_HERMES_KEY=smartnpc-test-key"
-if not defined SMARTNPC_ACTIVE_PROFILES set "SMARTNPC_ACTIVE_PROFILES=xiami,abigail"
+if not defined SMARTNPC_ACTIVE_PROFILES set "SMARTNPC_ACTIVE_PROFILES=xiami,abigail,haley,harvey,penny,sebastian"
 if not defined HERMES_BOOT_TIMEOUT   set "HERMES_BOOT_TIMEOUT=90"
 
 rem ---- WSL path of the repo ----

@@ -136,12 +136,12 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			"naming a specific landmark — the mod picks the arrival tile.\n\n" +
 			"Side-effect: WRITE (high-impact — visibly teleports + moves a character). " +
 			"Use only on explicit request. Errors: `unknown_npc`.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcSummonInput) (*mcp.CallToolResult, NpcSummonOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcSummonInput) (*mcp.CallToolResult, NpcSummonOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcSummonOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_summon", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcSummon, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcSummon, in)
 		if err != nil {
 			return nil, NpcSummonOutput{}, fmt.Errorf("npc_summon: %w", err)
 		}
@@ -168,7 +168,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			"values fall back to `sparkle` and the server logs a warning.\n\n" +
 			"Side-effect: WRITE (visual only — cosmetic, no game-state mutation). " +
 			"Errors: `unknown_npc`, `mod_not_ready` (no save loaded).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcEmoteInput) (*mcp.CallToolResult, NpcEmoteOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcEmoteInput) (*mcp.CallToolResult, NpcEmoteOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcEmoteOutput{}, fmt.Errorf("npc is required")
 		}
@@ -176,7 +176,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			in.Kind = "sparkle"
 		}
 		logToolCall("npc_emote", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcEmote, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcEmote, in)
 		if err != nil {
 			return nil, NpcEmoteOutput{}, fmt.Errorf("npc_emote: %w", err)
 		}
@@ -211,7 +211,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			"Errors: `unknown_npc`, `unknown_item` (qualified id not recognized by " +
 			"SDV's ItemRegistry), `inventory_full` (no slot available), " +
 			"`mod_not_ready`.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGiveItemInput) (*mcp.CallToolResult, NpcGiveItemOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcGiveItemInput) (*mcp.CallToolResult, NpcGiveItemOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGiveItemOutput{}, fmt.Errorf("npc is required")
 		}
@@ -225,7 +225,7 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			in.Count = 5
 		}
 		logToolCall("npc_give_item", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcGiveItem, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcGiveItem, in)
 		if err != nil {
 			return nil, NpcGiveItemOutput{}, fmt.Errorf("npc_give_item: %w", err)
 		}
@@ -245,12 +245,12 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			"tutorial escorts where the NPC tags along.\n\n" +
 			"Side-effect: WRITE (ongoing — runs until `npc_follow_stop` or new behavior). " +
 			"Errors: `unknown_npc`.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcFollowStartInput) (*mcp.CallToolResult, NpcFollowStartOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcFollowStartInput) (*mcp.CallToolResult, NpcFollowStartOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcFollowStartOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_follow_start", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcFollowStart, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcFollowStart, in)
 		if err != nil {
 			return nil, NpcFollowStartOutput{}, fmt.Errorf("npc_follow_start: %w", err)
 		}
@@ -269,12 +269,12 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			"\"我要一个人待会\". Also before triggering a scene that needs the NPC " +
 			"stationary.\n\n" +
 			"Side-effect: WRITE (cancels ongoing follow). Errors: `unknown_npc`.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcFollowStopInput) (*mcp.CallToolResult, NpcFollowStopOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcFollowStopInput) (*mcp.CallToolResult, NpcFollowStopOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcFollowStopOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_follow_stop", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcFollowStop, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcFollowStop, in)
 		if err != nil {
 			return nil, NpcFollowStopOutput{}, fmt.Errorf("npc_follow_stop: %w", err)
 		}
@@ -294,12 +294,12 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			"Choose this over `npc_move_to` when the player is expected to follow the NPC.\n\n" +
 			"Side-effect: WRITE (ongoing — coordinates with player position). Errors: " +
 			"`unknown_npc`, `unknown_map`, `pathfind_error`.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcLeadToInput) (*mcp.CallToolResult, NpcLeadToOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcLeadToInput) (*mcp.CallToolResult, NpcLeadToOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcLeadToOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_lead_to", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcLeadTo, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcLeadTo, in)
 		if err != nil {
 			return nil, NpcLeadToOutput{}, fmt.Errorf("npc_lead_to: %w", err)
 		}
@@ -318,12 +318,12 @@ func registerNpcBehavior(s *mcp.Server, br *bridge.WSClient) {
 			"issuing a new one, or describe the NPC's state in dialogue (\"我已经在跟着你了\" / " +
 			"\"I'm right behind you\").\n\n" +
 			"Side-effect: READ. Requires a loaded save.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetBehaviorInput) (*mcp.CallToolResult, NpcGetBehaviorOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcGetBehaviorInput) (*mcp.CallToolResult, NpcGetBehaviorOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetBehaviorOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_get_behavior", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcGetBehavior, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcGetBehavior, in)
 		if err != nil {
 			return nil, NpcGetBehaviorOutput{}, fmt.Errorf("npc_get_behavior: %w", err)
 		}

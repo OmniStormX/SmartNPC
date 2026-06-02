@@ -131,9 +131,13 @@ var _ = bridge.ActionNpcApproachAndSpeak // ensure import is used
 // callBridgeSocial mirrors callBridge in npc_world_action.go but is kept
 // separate so each file is self-contained. Forwards a stub-tool call to
 // the Mod via WebSocket and unmarshals the response into out.
-func callBridgeSocial[Out any](ctx context.Context, br *bridge.WSClient, action string, in any, label string) (Out, error) {
+//
+// req is required so the underlying ws Request frame can be stamped with
+// the originating NPC profile via callCtx (see npc_world_action.go's
+// callBridge for the rationale).
+func callBridgeSocial[Out any](ctx context.Context, req *mcp.CallToolRequest, br *bridge.WSClient, action string, in any, label string) (Out, error) {
 	var out Out
-	raw, err := br.Call(ctx, action, in)
+	raw, err := br.Call(callCtx(ctx, req), action, in)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", label, err)
 	}
@@ -152,12 +156,12 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: NPC wants to initiate conversation proactively - greeting, " +
 			"delivering news, or reacting to something they noticed.\n\n" +
 			"Side-effect: WRITE (moves NPC, shows emote, optionally sends chat).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcApproachAndSpeakInput) (*mcp.CallToolResult, NpcApproachAndSpeakOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcApproachAndSpeakInput) (*mcp.CallToolResult, NpcApproachAndSpeakOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcApproachAndSpeakOutput{}, errNpcRequired
 		}
 		logToolCall("npc_approach_and_speak", in)
-		out, err := callBridgeSocial[NpcApproachAndSpeakOutput](ctx, br, bridge.ActionNpcApproachAndSpeak, in, "npc_approach_and_speak")
+		out, err := callBridgeSocial[NpcApproachAndSpeakOutput](ctx, req, br, bridge.ActionNpcApproachAndSpeak, in, "npc_approach_and_speak")
 		return nil, out, err
 	})
 
@@ -169,12 +173,12 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 			"receiving a gift, shy when complimented, angry when insulted.\n\n" +
 			"Valid emotions: happy, shy, angry, thinking, sad.\n\n" +
 			"Side-effect: WRITE (visual only - no game-state mutation).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcExpressEmotionInput) (*mcp.CallToolResult, NpcExpressEmotionOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcExpressEmotionInput) (*mcp.CallToolResult, NpcExpressEmotionOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcExpressEmotionOutput{}, errNpcRequired
 		}
 		logToolCall("npc_express_emotion", in)
-		out, err := callBridgeSocial[NpcExpressEmotionOutput](ctx, br, bridge.ActionNpcExpressEmotion, in, "npc_express_emotion")
+		out, err := callBridgeSocial[NpcExpressEmotionOutput](ctx, req, br, bridge.ActionNpcExpressEmotion, in, "npc_express_emotion")
 		return nil, out, err
 	})
 
@@ -184,12 +188,12 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 			"a shy/embarrassed animation (shake + heart bubble).\n\n" +
 			"When to call: NPC is flustered by a compliment, confession, or teasing.\n\n" +
 			"Side-effect: WRITE (moves NPC one tile, visual animation).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcShyRetreatInput) (*mcp.CallToolResult, NpcShyRetreatOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcShyRetreatInput) (*mcp.CallToolResult, NpcShyRetreatOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcShyRetreatOutput{}, errNpcRequired
 		}
 		logToolCall("npc_shy_retreat", in)
-		out, err := callBridgeSocial[NpcShyRetreatOutput](ctx, br, bridge.ActionNpcShyRetreat, in, "npc_shy_retreat")
+		out, err := callBridgeSocial[NpcShyRetreatOutput](ctx, req, br, bridge.ActionNpcShyRetreat, in, "npc_shy_retreat")
 		return nil, out, err
 	})
 
@@ -200,7 +204,7 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: NPC wants to express something brief without using the chat " +
 			"panel - internal monologue visible to nearby player.\n\n" +
 			"Side-effect: WRITE (visual only, disappears after ~2s).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcShowTextBubbleInput) (*mcp.CallToolResult, NpcShowTextBubbleOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcShowTextBubbleInput) (*mcp.CallToolResult, NpcShowTextBubbleOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcShowTextBubbleOutput{}, errNpcRequired
 		}
@@ -208,7 +212,7 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 			return nil, NpcShowTextBubbleOutput{}, errTextRequired
 		}
 		logToolCall("npc_show_text_bubble", in)
-		out, err := callBridgeSocial[NpcShowTextBubbleOutput](ctx, br, bridge.ActionNpcShowTextBubble, in, "npc_show_text_bubble")
+		out, err := callBridgeSocial[NpcShowTextBubbleOutput](ctx, req, br, bridge.ActionNpcShowTextBubble, in, "npc_show_text_bubble")
 		return nil, out, err
 	})
 
@@ -221,7 +225,7 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 			"Activities: farm (hoe/water gesture), rest (sit/lean), look_around (glance sides).\n" +
 			"Modes: once (play one cycle), loop (repeat until interrupted).\n\n" +
 			"Side-effect: WRITE (visual only).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcIdleActivityInput) (*mcp.CallToolResult, NpcIdleActivityOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcIdleActivityInput) (*mcp.CallToolResult, NpcIdleActivityOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcIdleActivityOutput{}, errNpcRequired
 		}
@@ -229,7 +233,7 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 			in.Mode = "once"
 		}
 		logToolCall("npc_idle_activity", in)
-		out, err := callBridgeSocial[NpcIdleActivityOutput](ctx, br, bridge.ActionNpcIdleActivity, in, "npc_idle_activity")
+		out, err := callBridgeSocial[NpcIdleActivityOutput](ctx, req, br, bridge.ActionNpcIdleActivity, in, "npc_idle_activity")
 		return nil, out, err
 	})
 
@@ -238,12 +242,12 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 		Description: "NPC performs a happy celebration: jumps, cheers, spins, shows heart bubble.\n\n" +
 			"When to call: good news, friendship milestone, quest completion, harvest success.\n\n" +
 			"Side-effect: WRITE (visual only - jump + animation + emote).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcDanceHappyInput) (*mcp.CallToolResult, NpcDanceHappyOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcDanceHappyInput) (*mcp.CallToolResult, NpcDanceHappyOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcDanceHappyOutput{}, errNpcRequired
 		}
 		logToolCall("npc_dance_happy", in)
-		out, err := callBridgeSocial[NpcDanceHappyOutput](ctx, br, bridge.ActionNpcDanceHappy, in, "npc_dance_happy")
+		out, err := callBridgeSocial[NpcDanceHappyOutput](ctx, req, br, bridge.ActionNpcDanceHappy, in, "npc_dance_happy")
 		return nil, out, err
 	})
 
@@ -252,12 +256,12 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 		Description: "NPC jumps and shows a surprised reaction (! bubble + startled frame).\n\n" +
 			"When to call: player suddenly appears, unexpected gift, surprising news.\n\n" +
 			"Side-effect: WRITE (visual only - jump + emote).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcReactSurpriseInput) (*mcp.CallToolResult, NpcReactSurpriseOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcReactSurpriseInput) (*mcp.CallToolResult, NpcReactSurpriseOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcReactSurpriseOutput{}, errNpcRequired
 		}
 		logToolCall("npc_react_surprise", in)
-		out, err := callBridgeSocial[NpcReactSurpriseOutput](ctx, br, bridge.ActionNpcReactSurprise, in, "npc_react_surprise")
+		out, err := callBridgeSocial[NpcReactSurpriseOutput](ctx, req, br, bridge.ActionNpcReactSurprise, in, "npc_react_surprise")
 		return nil, out, err
 	})
 
@@ -266,12 +270,12 @@ func registerNpcSocialAction(s *mcp.Server, br *bridge.WSClient) {
 		Description: "NPC paces left and right nervously, occasionally showing a ? bubble.\n\n" +
 			"When to call: NPC is waiting, worried, conflicted, or indecisive.\n\n" +
 			"Side-effect: WRITE (visual movement - stays within 2 tiles of origin).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcPaceAnxiouslyInput) (*mcp.CallToolResult, NpcPaceAnxiouslyOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcPaceAnxiouslyInput) (*mcp.CallToolResult, NpcPaceAnxiouslyOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcPaceAnxiouslyOutput{}, errNpcRequired
 		}
 		logToolCall("npc_pace_anxiously", in)
-		out, err := callBridgeSocial[NpcPaceAnxiouslyOutput](ctx, br, bridge.ActionNpcPaceAnxiously, in, "npc_pace_anxiously")
+		out, err := callBridgeSocial[NpcPaceAnxiouslyOutput](ctx, req, br, bridge.ActionNpcPaceAnxiously, in, "npc_pace_anxiously")
 		return nil, out, err
 	})
 }

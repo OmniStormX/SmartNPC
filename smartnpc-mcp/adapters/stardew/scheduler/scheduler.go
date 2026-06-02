@@ -16,13 +16,19 @@ import (
 )
 
 // Entry is one slot in an NPC's daily schedule.
+//
+// A schedule entry intentionally records ONLY the tool name and the
+// reasoning. Concrete tool parameters (location, duration, message
+// content, item id, etc.) are deferred to the moment the entry fires:
+// the LLM will pick them then based on live game state instead of
+// committing to numbers ahead of time. This both shrinks plan-time
+// prompts and lets reactions stay context-aware.
 type Entry struct {
-	GameHour int            `json:"game_hour"`         // 6-25 (SDV time: 6am to 2am next day shown as 25/26)
-	Action   string         `json:"action"`            // MCP tool name, e.g. "npc_water_crops"
-	Params   map[string]any `json:"params,omitempty"`  // action-specific parameters (passed to tool)
-	Reason   string         `json:"reason,omitempty"`  // LLM's reasoning (for debugging / display)
-	Fired    bool           `json:"fired"`             // set true once dispatched
-	FiredAt  time.Time      `json:"fired_at,omitempty"`
+	GameHour int       `json:"game_hour"`         // 6-25 (SDV time: 6am to 2am next day shown as 25/26)
+	Action   string    `json:"action"`            // MCP tool name, e.g. "npc_water_crops"
+	Reason   string    `json:"reason,omitempty"`  // LLM's reasoning (for debugging / display)
+	Fired    bool      `json:"fired"`             // set true once dispatched
+	FiredAt  time.Time `json:"fired_at,omitempty"`
 }
 
 // DaySchedule holds one NPC's plan for one game day.
@@ -36,11 +42,10 @@ type DaySchedule struct {
 
 // FiredEntry is returned by Tick when a schedule entry's hour arrives.
 type FiredEntry struct {
-	NPC      string         `json:"npc"`
-	GameHour int            `json:"game_hour"`
-	Action   string         `json:"action"`
-	Params   map[string]any `json:"params,omitempty"`
-	Reason   string         `json:"reason,omitempty"`
+	NPC      string `json:"npc"`
+	GameHour int    `json:"game_hour"`
+	Action   string `json:"action"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // Scheduler manages daily schedules for all NPCs. Thread-safe.
@@ -139,7 +144,6 @@ func (s *Scheduler) Tick(gameHour int) []FiredEntry {
 				NPC:      npc,
 				GameHour: e.GameHour,
 				Action:   e.Action,
-				Params:   e.Params,
 				Reason:   e.Reason,
 			})
 		}

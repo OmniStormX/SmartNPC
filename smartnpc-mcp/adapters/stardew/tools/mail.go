@@ -33,12 +33,12 @@ func registerMail(s *mcp.Server, br *bridge.WSClient) {
 			"Constraints: plain UTF-8 text, one line, short. No markdown.\n\n" +
 			"Side-effect: WRITE — visible to the player. Requires the SMAPI mod with a " +
 			"save loaded; otherwise returns `mod_not_ready`.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in MailSendInput) (*mcp.CallToolResult, MailSendOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in MailSendInput) (*mcp.CallToolResult, MailSendOutput, error) {
 		if in.Text == "" {
 			return nil, MailSendOutput{}, fmt.Errorf("text is required")
 		}
 		logToolCall("mail_send", in)
-		raw, err := br.Call(ctx, bridge.ActionMailSend, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionMailSend, in)
 		if err != nil {
 			return nil, MailSendOutput{}, fmt.Errorf("mail_send: %w", err)
 		}

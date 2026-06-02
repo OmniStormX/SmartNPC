@@ -54,12 +54,34 @@ for profile in "${PROFILES[@]}"; do
     fi
 
     echo "[start_hermes_profiles] starting $profile on :$port"
-    # Detach into background. Logs go to ~/.hermes/profiles/<name>/logs/
-    # (hermes handles that itself); stderr is discarded here.
-    nohup hermes -p "$profile" gateway run --accept-hooks \
-        > "/tmp/hermes-${profile}.log" 2>&1 &
-    pid=$!
-    echo "$profile $pid $port" >> "$PIDFILE"
+    # Inject this profile's own .env into the child process. The
+    # hermes-agent observability/langfuse plugin reads keys from
+    # os.environ, NOT from the profile's bootstrap config — so we MUST
+    # export them in the parent shell before fork. Each NPC has its own
+    # Langfuse project, so this happens per-profile in a subshell to keep
+    # the launcher's own env clean.
+    profile_env="$HOME/.hermes/profiles/$profile/.env"
+    log_dir="$HOME/.hermes/profiles/$profile/logs"
+    mkdir -p "$log_dir"
+    log_file="$log_dir/gateway.log"
+
+    if [[ ! -f "$profile_env" ]]; then
+        echo "[start_hermes_profiles] WARN: $profile_env missing; Langfuse trace will be silent" >&2
+    fi
+
+    # setsid detaches the child from this shell's session so it survives
+    # `bash -c` exit (`nohup ... &` alone is not enough in WSL).
+    (
+        set -a
+        # shellcheck disable=SC1090
+        [[ -f "$profile_env" ]] && source "$profile_env"
+        set +a
+        setsid hermes -p "$profile" gateway run --accept-hooks \
+            > "$log_file" 2>&1 < /dev/null &
+        echo $! > "/tmp/hermes-${profile}.pid"
+    )
+    pid="$(cat "/tmp/hermes-${profile}.pid" 2>/dev/null || echo)"
+    echo "$profile ${pid:-unknown} $port" >> "$PIDFILE"
 
     # Wait for health.
     deadline=$(( $(date +%s) + TIMEOUT ))

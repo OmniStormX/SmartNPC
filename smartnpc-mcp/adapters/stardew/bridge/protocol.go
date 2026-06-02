@@ -102,11 +102,18 @@ const (
 )
 
 // Request is a client → server RPC call.
+//
+// FromNPC carries the originating NPC profile when the request is issued by
+// a registered agent (via WSClient.CallAs / agent_register_self). The mod
+// uses it to route inbound debug mirrors to the correct chat-panel
+// conversation; absent / empty FromNPC means the caller is operating
+// outside any agent context (e.g. operator console, tests).
 type Request struct {
-	Type   string      `json:"type"`             // "request"
-	ID     string      `json:"id"`               // uuid
-	Action string      `json:"action"`           // see ActionName constants
-	Params interface{} `json:"params,omitempty"` // action-specific
+	Type    string      `json:"type"`               // "request"
+	ID      string      `json:"id"`                 // uuid
+	Action  string      `json:"action"`             // see ActionName constants
+	Params  interface{} `json:"params,omitempty"`   // action-specific
+	FromNPC string      `json:"from_npc,omitempty"` // originating NPC profile, if any
 }
 
 // Response is a server → client reply correlated with a Request by ID.

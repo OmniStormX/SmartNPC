@@ -125,12 +125,15 @@ type NpcBroadcast struct {
 // ScheduleTrigger — synthetic event emitted by the game-time scheduler
 // when a planned activity's hour arrives. Delivered to the target NPC's
 // Hermes profile so the LLM can execute the planned action.
+//
+// The trigger intentionally carries no tool parameters: the LLM decides
+// concrete params at fire time based on live game state (where it is,
+// who's nearby, weather, inventory, etc.).
 type ScheduleTrigger struct {
-	NPC      string          `json:"npc"`              // target NPC
-	GameHour int             `json:"game_hour"`        // the hour that triggered
-	Action   string          `json:"action"`           // planned MCP tool name
-	Params   json.RawMessage `json:"params,omitempty"` // tool parameters
-	Reason   string          `json:"reason,omitempty"` // LLM's original reasoning
+	NPC      string `json:"npc"`              // target NPC
+	GameHour int    `json:"game_hour"`        // the hour that triggered
+	Action   string `json:"action"`           // planned MCP tool name
+	Reason   string `json:"reason,omitempty"` // LLM's original reasoning
 }
 
 // DebugProactiveTrigger — operator-initiated forced trigger of the

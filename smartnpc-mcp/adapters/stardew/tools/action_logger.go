@@ -97,11 +97,6 @@ func logSchedule(npc string, day int, season string, year int, entries []schedul
 	for i, e := range entries {
 		line := fmt.Sprintf("  [%2d] %02d:00  %-28s  %s\n", i+1, e.GameHour, e.Action, e.Reason)
 		f.WriteString(line)
-		if len(e.Params) > 0 {
-			if raw, err := json.Marshal(e.Params); err == nil {
-				fmt.Fprintf(f, "       params: %s\n", string(raw))
-			}
-		}
 	}
 	f.WriteString("──────────────────────────────────────────────\n")
 	f.Sync()

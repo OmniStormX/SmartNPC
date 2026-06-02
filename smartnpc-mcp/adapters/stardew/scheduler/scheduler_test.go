@@ -145,25 +145,6 @@ func TestScheduler_PendingEntries(t *testing.T) {
 	}
 }
 
-func TestScheduler_EntryParams(t *testing.T) {
-	s := New()
-	params := map[string]any{"radius": float64(5), "max_count": float64(10)}
-	s.SetSchedule(DaySchedule{
-		NPC: "XiaMi",
-		Entries: []Entry{
-			{GameHour: 7, Action: "npc_water_crops", Params: params},
-		},
-	})
-
-	fired := s.Tick(7)
-	if len(fired) != 1 {
-		t.Fatal("expected 1 fired")
-	}
-	if fired[0].Params["radius"] != float64(5) || fired[0].Params["max_count"] != float64(10) {
-		t.Errorf("params mismatch: %+v", fired[0].Params)
-	}
-}
-
 func TestScheduler_AllNPCs(t *testing.T) {
 	s := New()
 	s.SetSchedule(DaySchedule{NPC: "XiaMi"})

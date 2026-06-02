@@ -82,11 +82,15 @@ namespace SmartNPC.Bridge
                     "full SDV time pipeline (NPC schedules, shop open/close, " +
                     "lighting), and emits one game_time_tick event per hour to " +
                     "the MCP bridge so NPC schedules fire as if real time " +
-                    "passed.\n" +
+                    "passed. After the time advance, also broadcasts a final " +
+                    "game_time_tick at the new current hour so any pending " +
+                    "schedule entry (planned_hour <= now && !fired) is reviewed " +
+                    "and dispatched immediately, even if the tick stopped on a " +
+                    "non-integer hour.\n" +
                     $"Usage:\n" +
                     $"  {CmdTick}        Advance by 1 hour.\n" +
                     $"  {CmdTick} <N>    Advance by N hours (1..12).",
-                callback: (_, args) => HandleTick(args, log));
+                callback: (_, args) => HandleTick(args, log, ws));
 
             commands.Add(
                 name: CmdGoto,
@@ -450,7 +454,7 @@ namespace SmartNPC.Bridge
         // to mcp. So this command is end-to-end: tick → SDV state advances →
         // SMAPI fires TimeChanged → ws emits game_time_tick → mcp scheduler
         // fires schedule_trigger to the NPC's Hermes profile.
-        private static void HandleTick(string[] args, IMonitor log)
+        private static void HandleTick(string[] args, IMonitor log, WebSocketServer ws)
         {
             if (!Context.IsWorldReady)
             {
@@ -476,9 +480,37 @@ namespace SmartNPC.Bridge
             }
             int after = Game1.timeOfDay;
 
+            // Force an immediate schedule review on mcp side. SDV's
+            // performTenMinuteClockUpdate does fire SMAPI TimeChanged for
+            // each in-game integer hour we cross, and ModEntry.OnTimeChanged
+            // already broadcasts game_time_tick for those — but only when
+            // NewTime % 100 == 0. If `hours` advanced past several hours
+            // those hourly ticks are still emitted, so for a normal
+            // "advance 1h+" call this is just a redundant safety net. The
+            // real value: after the loop we ALSO send one game_time_tick
+            // for the *current* hour, so any entry whose planned hour is
+            // now <= current (but somehow !Fired — say an earlier failed
+            // dispatch, or schedule submitted mid-day) is picked up
+            // immediately instead of having to wait for the next natural
+            // integer-hour rollover.
+            int currentHour = after / 100;
+            try
+            {
+                _ = ws.BroadcastEvent("game_time_tick", new
+                {
+                    hour = currentHour,
+                    time = after,
+                    forced = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                log.Log($"[smartnpc_tick] forced schedule review broadcast failed: {ex.Message}", LogLevel.Warn);
+            }
+
             log.Log(
                 $"[smartnpc_tick] advanced {hours}h: {before} -> {after} " +
-                $"(SMAPI TimeChanged + game_time_tick will fire on next game tick)",
+                $"(emitted SMAPI TimeChanged per hour + forced game_time_tick at hour={currentHour} for immediate schedule review)",
                 LogLevel.Info);
         }
 

@@ -24,13 +24,24 @@ Every frame is a JSON object with a `type` field. Three values:
   "type": "request",
   "id": "01931c09-a40e-73f8-b3df-7b29b0e8c2e8",
   "action": "chat_say",
-  "params": { "...": "..." }
+  "params": { "...": "..." },
+  "from_npc": "Abigail"
 }
 ```
 
 - `id`: unique string (UUIDv4 recommended). Echoed back in the response.
 - `action`: one of the actions listed below.
 - `params`: action-specific object; may be omitted when empty.
+- `from_npc` (optional): the originating Hermes-profile NPC name. Stamped
+  by `smartnpc-mcp` on every tool call once the calling MCP session has
+  bound itself via the `agent_register_self` tool, or by the operator-side
+  `WSClient.CallAs` for synthetic frames (scheduler debug fan-out, etc.).
+  The mod uses it for routing each tool call's debug mirror to the correct
+  in-game chat-panel conversation — even for NPC-agnostic queries
+  (`game_get_time`, `game_get_weather`, `mail_send`, `friendship_get`,
+  `player_get_status`, …) whose own `params` carry no NPC field. May be
+  empty for legacy / never-registered callers; the mod logs a warning and
+  drops the debug mirror in that case.
 
 ## `response`
 

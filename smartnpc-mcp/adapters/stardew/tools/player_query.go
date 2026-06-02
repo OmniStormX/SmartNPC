@@ -38,9 +38,9 @@ func registerPlayerQuery(s *mcp.Server, br *bridge.WSClient) {
 			"initiation) so you do not interrupt the player mid-cutscene or mid-menu. " +
 			"If `busy` is true, defer or drop the action.\n\n" +
 			"Side-effect: READ. Takes no parameters. Requires a loaded save.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in PlayerGetStatusInput) (*mcp.CallToolResult, PlayerGetStatusOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in PlayerGetStatusInput) (*mcp.CallToolResult, PlayerGetStatusOutput, error) {
 		logToolCall("player_get_status", in)
-		raw, err := br.Call(ctx, bridge.ActionPlayerGetStatus, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionPlayerGetStatus, in)
 		if err != nil {
 			return nil, PlayerGetStatusOutput{}, fmt.Errorf("player_get_status: %w", err)
 		}

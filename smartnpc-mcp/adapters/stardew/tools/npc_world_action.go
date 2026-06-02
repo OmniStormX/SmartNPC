@@ -199,9 +199,15 @@ var _ = bridge.ActionNpcWander // ensure import is used
 // callBridge forwards a stub-tool call to the Mod via WebSocket and
 // unmarshals the response into out. Centralized so all 12 world-action
 // stubs share the same forwarding plumbing.
-func callBridge[Out any](ctx context.Context, br *bridge.WSClient, action string, in any, label string) (Out, error) {
+//
+// The MCP CallToolRequest is required so the underlying ws Request frame
+// can be stamped with the originating NPC profile (see callCtx +
+// WSClient.AgentForContext) — without it, NPC-agnostic debug routing on
+// the mod side cannot attribute tool calls back to a specific Hermes
+// profile.
+func callBridge[Out any](ctx context.Context, req *mcp.CallToolRequest, br *bridge.WSClient, action string, in any, label string) (Out, error) {
 	var out Out
-	raw, err := br.Call(ctx, action, in)
+	raw, err := br.Call(callCtx(ctx, req), action, in)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", label, err)
 	}
@@ -220,12 +226,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: NPC is idle and you want natural roaming behavior — e.g. " +
 			"during downtime, after finishing a task, or to simulate casual exploration.\n\n" +
 			"Side-effect: WRITE (moves character). Ongoing for duration_ticks.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcWanderInput) (*mcp.CallToolResult, NpcWanderOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcWanderInput) (*mcp.CallToolResult, NpcWanderOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcWanderOutput{}, errNpcRequired
 		}
 		logToolCall("npc_wander", in)
-		out, err := callBridge[NpcWanderOutput](ctx, br, bridge.ActionNpcWander, in, "npc_wander")
+		out, err := callBridge[NpcWanderOutput](ctx, req, br, bridge.ActionNpcWander, in, "npc_wander")
 		return nil, out, err
 	})
 
@@ -236,12 +242,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"or when the player asks for help cleaning.\n\n" +
 			"Constraints: radius max 10, max_count max 10. Only works on Farm-type maps.\n\n" +
 			"Side-effect: WRITE (removes objects from the world).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcClearDebrisInput) (*mcp.CallToolResult, NpcClearDebrisOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcClearDebrisInput) (*mcp.CallToolResult, NpcClearDebrisOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcClearDebrisOutput{}, errNpcRequired
 		}
 		logToolCall("npc_clear_debris", in)
-		out, err := callBridge[NpcClearDebrisOutput](ctx, br, bridge.ActionNpcClearDebris, in, "npc_clear_debris")
+		out, err := callBridge[NpcClearDebrisOutput](ctx, req, br, bridge.ActionNpcClearDebris, in, "npc_clear_debris")
 		return nil, out, err
 	})
 
@@ -251,12 +257,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: morning farm routine, or player explicitly asks NPC to water.\n\n" +
 			"Constraints: radius max 10, max_count max 20.\n\n" +
 			"Side-effect: WRITE (modifies HoeDirt state).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcWaterCropsInput) (*mcp.CallToolResult, NpcWaterCropsOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcWaterCropsInput) (*mcp.CallToolResult, NpcWaterCropsOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcWaterCropsOutput{}, errNpcRequired
 		}
 		logToolCall("npc_water_crops", in)
-		out, err := callBridge[NpcWaterCropsOutput](ctx, br, bridge.ActionNpcWaterCrops, in, "npc_water_crops")
+		out, err := callBridge[NpcWaterCropsOutput](ctx, req, br, bridge.ActionNpcWaterCrops, in, "npc_water_crops")
 		return nil, out, err
 	})
 
@@ -267,12 +273,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"Constraints: radius max 10, max_count max 10. Harvested items go to NPC backpack; " +
 			"use npc_deposit_items or npc_deliver_items to transfer.\n\n" +
 			"Side-effect: WRITE (removes crops, adds to NPC inventory).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcHarvestCropsInput) (*mcp.CallToolResult, NpcHarvestCropsOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcHarvestCropsInput) (*mcp.CallToolResult, NpcHarvestCropsOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcHarvestCropsOutput{}, errNpcRequired
 		}
 		logToolCall("npc_harvest_crops", in)
-		out, err := callBridge[NpcHarvestCropsOutput](ctx, br, bridge.ActionNpcHarvestCrops, in, "npc_harvest_crops")
+		out, err := callBridge[NpcHarvestCropsOutput](ctx, req, br, bridge.ActionNpcHarvestCrops, in, "npc_harvest_crops")
 		return nil, out, err
 	})
 
@@ -281,12 +287,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 		Description: "NPC walks to a chest and deposits all carried items.\n\n" +
 			"When to call: after harvesting/foraging, NPC puts items away.\n\n" +
 			"Side-effect: WRITE (modifies chest contents, clears NPC backpack).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcDepositItemsInput) (*mcp.CallToolResult, NpcDepositItemsOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcDepositItemsInput) (*mcp.CallToolResult, NpcDepositItemsOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcDepositItemsOutput{}, errNpcRequired
 		}
 		logToolCall("npc_deposit_items", in)
-		out, err := callBridge[NpcDepositItemsOutput](ctx, br, bridge.ActionNpcDepositItems, in, "npc_deposit_items")
+		out, err := callBridge[NpcDepositItemsOutput](ctx, req, br, bridge.ActionNpcDepositItems, in, "npc_deposit_items")
 		return nil, out, err
 	})
 
@@ -296,12 +302,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: NPC finished collecting and wants to give items to player directly.\n\n" +
 			"Side-effect: WRITE (adds items to player inventory, clears NPC backpack). " +
 			"May partially fail if player inventory is full.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcDeliverItemsInput) (*mcp.CallToolResult, NpcDeliverItemsOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcDeliverItemsInput) (*mcp.CallToolResult, NpcDeliverItemsOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcDeliverItemsOutput{}, errNpcRequired
 		}
 		logToolCall("npc_deliver_items", in)
-		out, err := callBridge[NpcDeliverItemsOutput](ctx, br, bridge.ActionNpcDeliverItems, in, "npc_deliver_items")
+		out, err := callBridge[NpcDeliverItemsOutput](ctx, req, br, bridge.ActionNpcDeliverItems, in, "npc_deliver_items")
 		return nil, out, err
 	})
 
@@ -311,12 +317,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: NPC decides to gather berries, shells, mushrooms during a walk.\n\n" +
 			"Constraints: radius max 15, max_count max 10.\n\n" +
 			"Side-effect: WRITE (removes spawn objects, adds to NPC backpack).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcForageCollectInput) (*mcp.CallToolResult, NpcForageCollectOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcForageCollectInput) (*mcp.CallToolResult, NpcForageCollectOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcForageCollectOutput{}, errNpcRequired
 		}
 		logToolCall("npc_forage_collect", in)
-		out, err := callBridge[NpcForageCollectOutput](ctx, br, bridge.ActionNpcForageCollect, in, "npc_forage_collect")
+		out, err := callBridge[NpcForageCollectOutput](ctx, req, br, bridge.ActionNpcForageCollect, in, "npc_forage_collect")
 		return nil, out, err
 	})
 
@@ -325,12 +331,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 		Description: "NPC pets a farm animal (increases friendship, sets wasPet).\n\n" +
 			"When to call: morning animal care routine, or NPC wants to interact with animals.\n\n" +
 			"Side-effect: WRITE (modifies animal friendship state).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcPetAnimalInput) (*mcp.CallToolResult, NpcPetAnimalOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcPetAnimalInput) (*mcp.CallToolResult, NpcPetAnimalOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcPetAnimalOutput{}, errNpcRequired
 		}
 		logToolCall("npc_pet_animal", in)
-		out, err := callBridge[NpcPetAnimalOutput](ctx, br, bridge.ActionNpcPetAnimal, in, "npc_pet_animal")
+		out, err := callBridge[NpcPetAnimalOutput](ctx, req, br, bridge.ActionNpcPetAnimal, in, "npc_pet_animal")
 		return nil, out, err
 	})
 
@@ -341,7 +347,7 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"Constraints: seed_id must be a valid SDV seed item; radius max 10, max_count max 10. " +
 			"Only plants on Farm-type maps in the correct season.\n\n" +
 			"Side-effect: WRITE (creates crops on HoeDirt).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcPlantSeedsInput) (*mcp.CallToolResult, NpcPlantSeedsOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcPlantSeedsInput) (*mcp.CallToolResult, NpcPlantSeedsOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcPlantSeedsOutput{}, errNpcRequired
 		}
@@ -349,7 +355,7 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			return nil, NpcPlantSeedsOutput{}, errSeedIDRequired
 		}
 		logToolCall("npc_plant_seeds", in)
-		out, err := callBridge[NpcPlantSeedsOutput](ctx, br, bridge.ActionNpcPlantSeeds, in, "npc_plant_seeds")
+		out, err := callBridge[NpcPlantSeedsOutput](ctx, req, br, bridge.ActionNpcPlantSeeds, in, "npc_plant_seeds")
 		return nil, out, err
 	})
 
@@ -359,12 +365,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: preparing farmland before planting.\n\n" +
 			"Constraints: radius max 8, max_count max 15. Only on Farm-type maps.\n\n" +
 			"Side-effect: WRITE (creates terrain features).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcTillSoilInput) (*mcp.CallToolResult, NpcTillSoilOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcTillSoilInput) (*mcp.CallToolResult, NpcTillSoilOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcTillSoilOutput{}, errNpcRequired
 		}
 		logToolCall("npc_till_soil", in)
-		out, err := callBridge[NpcTillSoilOutput](ctx, br, bridge.ActionNpcTillSoil, in, "npc_till_soil")
+		out, err := callBridge[NpcTillSoilOutput](ctx, req, br, bridge.ActionNpcTillSoil, in, "npc_till_soil")
 		return nil, out, err
 	})
 
@@ -375,12 +381,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: NPC wants to observe surroundings before acting — e.g. " +
 			"checking crop readiness, identifying an object, or investigating a noise.\n\n" +
 			"Side-effect: READ (no world mutation, but NPC visibly walks to target).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcInspectObjectInput) (*mcp.CallToolResult, NpcInspectObjectOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcInspectObjectInput) (*mcp.CallToolResult, NpcInspectObjectOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcInspectObjectOutput{}, errNpcRequired
 		}
 		logToolCall("npc_inspect_object", in)
-		out, err := callBridge[NpcInspectObjectOutput](ctx, br, bridge.ActionNpcInspectObject, in, "npc_inspect_object")
+		out, err := callBridge[NpcInspectObjectOutput](ctx, req, br, bridge.ActionNpcInspectObject, in, "npc_inspect_object")
 		return nil, out, err
 	})
 
@@ -391,7 +397,7 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"Constraints: target tile must be empty and on a valid map. item_id must be " +
 			"a placeable SDV object. Use with extreme caution.\n\n" +
 			"Side-effect: WRITE (adds object to world, removes from NPC backpack).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcPlaceObjectInput) (*mcp.CallToolResult, NpcPlaceObjectOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcPlaceObjectInput) (*mcp.CallToolResult, NpcPlaceObjectOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcPlaceObjectOutput{}, errNpcRequired
 		}
@@ -399,7 +405,7 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			return nil, NpcPlaceObjectOutput{}, errItemIDRequired
 		}
 		logToolCall("npc_place_object", in)
-		out, err := callBridge[NpcPlaceObjectOutput](ctx, br, bridge.ActionNpcPlaceObject, in, "npc_place_object")
+		out, err := callBridge[NpcPlaceObjectOutput](ctx, req, br, bridge.ActionNpcPlaceObject, in, "npc_place_object")
 		return nil, out, err
 	})
 }

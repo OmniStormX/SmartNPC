@@ -27,6 +27,12 @@ type TestServer struct {
 	*httptest.Server
 	OnRequest TestActionHandler
 
+	// OnRawRequest, if non-nil, is invoked with the fully-decoded Request
+	// (including FromNPC) before OnRequest fires. Used by tests that need
+	// to assert on protocol fields invisible to OnRequest's flattened
+	// (action, params) signature — e.g. the from_npc routing fix.
+	OnRawRequest func(req Request)
+
 	mu     sync.Mutex
 	conn   *websocket.Conn
 	closed bool
@@ -109,6 +115,10 @@ func (s *TestServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Type != TypeRequest {
 			continue
+		}
+
+		if s.OnRawRequest != nil {
+			s.OnRawRequest(req)
 		}
 
 		var paramsRaw json.RawMessage

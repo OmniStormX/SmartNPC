@@ -7,12 +7,23 @@ using System.Text.Json.Serialization;
 namespace SmartNPC.Bridge
 {
     /// <summary>Inbound request from the MCP client.</summary>
+    /// <remarks>
+    /// <see cref="FromNpc"/> carries the originating Hermes-profile NPC name
+    /// (stamped by smartnpc-mcp's WSClient.Call when the calling MCP session
+    /// has registered itself via the <c>agent_register_self</c> tool, or by
+    /// CallAs for operator-side fan-out). Used by the debug-mirror feature
+    /// to route every inbound tool call to the correct NPC's chat-panel
+    /// conversation, even for NPC-agnostic queries (game_get_time,
+    /// game_get_weather, mail_send, …) whose own params carry no NPC field.
+    /// May be empty for legacy / operator callers.
+    /// </remarks>
     internal sealed class Request
     {
-        [JsonPropertyName("type")]   public string? Type   { get; set; }  // "request"
-        [JsonPropertyName("id")]     public string? Id     { get; set; }
-        [JsonPropertyName("action")] public string? Action { get; set; }
-        [JsonPropertyName("params")] public JsonElement Params { get; set; }
+        [JsonPropertyName("type")]     public string? Type    { get; set; }  // "request"
+        [JsonPropertyName("id")]       public string? Id      { get; set; }
+        [JsonPropertyName("action")]   public string? Action  { get; set; }
+        [JsonPropertyName("params")]   public JsonElement Params { get; set; }
+        [JsonPropertyName("from_npc")] public string? FromNpc { get; set; }
     }
 
     /// <summary>Outbound response to a request.</summary>

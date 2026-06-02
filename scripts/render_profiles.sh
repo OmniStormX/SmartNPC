@@ -69,9 +69,14 @@ for DIR in "${SMARTNPC_NPCS[@]}"; do
   rm -rf "$TARGET/skills"
   cp -r "$MASTER/skills" "$TARGET/skills"
 
-  # Copy .env (LLM + Langfuse credentials; one per NPC).
-  if [[ -f "$MASTER/.env" ]]; then
+  # Seed .env from master ONLY when the NPC has none yet. Each NPC owns
+  # its own Langfuse keys (one project per character), so re-rendering must
+  # NOT overwrite an existing per-NPC .env. Edit hermes/profiles/<npc>/.env
+  # directly to change a NPC's keys; _master/.env stays as a placeholder
+  # template for newly-cloned profiles.
+  if [[ -f "$MASTER/.env" && ! -f "$TARGET/.env" ]]; then
     cp "$MASTER/.env" "$TARGET/.env"
+    echo "seeded: $DIR/.env from _master (placeholder values — fill in real keys)"
   fi
 
   # Copy scalar templates. Do NOT touch SOUL.md.

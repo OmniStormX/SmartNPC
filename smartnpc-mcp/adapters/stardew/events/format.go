@@ -172,11 +172,16 @@ func FormatForHermes(name string, data json.RawMessage) string {
 				hint = fmt.Sprintf(" (reason: %s)", p.Reason)
 			}
 			return fmt.Sprintf(
-				"[schedule_trigger] It is now %d:00 — your planned activity is: %s%s.\n\n"+
-					"Execute this action now by calling the appropriate tool. "+
-					"If conditions have changed (weather, player nearby, etc.) "+
-					"you may adapt or skip, but explain briefly why.",
-				p.GameHour, p.Action, hint)
+				"[schedule_trigger] It is now %d:00 — your planned activity is: `%s`%s.\n\n"+
+					"Call `%s` NOW with concrete arguments you choose based on live "+
+					"game state — your current location, what's nearby, weather, "+
+					"inventory, who else is around, etc. The schedule only commits "+
+					"to *which* tool, not its parameters; that's your call here.\n\n"+
+					"If conditions have changed (rain on a watering chore, the "+
+					"player is mid-conversation, you're not where you'd need to "+
+					"be) you may adapt the parameters, swap to a related tool, "+
+					"or skip — but briefly note why in your reasoning.",
+				p.GameHour, p.Action, hint, p.Action)
 		}
 	case bridge.EventDebugProactiveTrigger:
 		var p DebugProactiveTrigger

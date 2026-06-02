@@ -123,12 +123,12 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 			"write that visibly moves the character across the map.\n\n" +
 			"Side-effect: WRITE — moves a character. Requires a loaded save. Errors: " +
 			"`unknown_npc`, `unknown_map`, `pathfind_error`.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcMoveToInput) (*mcp.CallToolResult, NpcMoveToOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcMoveToInput) (*mcp.CallToolResult, NpcMoveToOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcMoveToOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_move_to", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcMoveTo, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcMoveTo, in)
 		if err != nil {
 			return nil, NpcMoveToOutput{}, fmt.Errorf("npc_move_to: %w", err)
 		}
@@ -148,7 +148,7 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 			"an object mentioned in dialogue, turn away when sulking.\n\n" +
 			"Side-effect: WRITE (low-impact visual). Safe during idle or movement. " +
 			"Errors: `invalid_params` if direction is not one of up/down/left/right.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcFaceDirectionInput) (*mcp.CallToolResult, NpcFaceDirectionOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcFaceDirectionInput) (*mcp.CallToolResult, NpcFaceDirectionOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcFaceDirectionOutput{}, fmt.Errorf("npc is required")
 		}
@@ -158,7 +158,7 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 		}
 		in.Direction = dir
 		logToolCall("npc_face_direction", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcFaceDirection, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcFaceDirection, in)
 		if err != nil {
 			return nil, NpcFaceDirectionOutput{}, fmt.Errorf("npc_face_direction: %w", err)
 		}
@@ -177,12 +177,12 @@ func registerNpcMovement(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: verify that a prior `npc_move_to` or `npc_summon` actually " +
 			"arrived, or compute distance to the player before triggering a scene.\n\n" +
 			"Side-effect: READ. Requires a loaded save.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in NpcGetPositionInput) (*mcp.CallToolResult, NpcGetPositionOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcGetPositionInput) (*mcp.CallToolResult, NpcGetPositionOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcGetPositionOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("npc_get_position", in)
-		raw, err := br.Call(ctx, bridge.ActionNpcGetPosition, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionNpcGetPosition, in)
 		if err != nil {
 			return nil, NpcGetPositionOutput{}, fmt.Errorf("npc_get_position: %w", err)
 		}

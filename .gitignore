@@ -18,6 +18,7 @@ dist/
 # Env / secrets
 .env
 .env.local
+langfuseAPI.md
 *.local
 
 # Hermes rendered profile artifacts (generated from _master/ at startup)

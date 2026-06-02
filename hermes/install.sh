@@ -64,6 +64,78 @@ if [[ -z "$HOST_IP" ]]; then
 fi
 echo "[detect] host IP = $HOST_IP (used only if __HOST_IP__ placeholder remains in overlay)"
 
+# ── Repo-root .env override for HERMES_AGENT_* ─────────────────────────────
+# The shared LLM endpoint / key / model live in the repo-root .env (the
+# single source of truth). Per-NPC .env files keep their own copies for
+# convenience but those have repeatedly drifted to placeholder values
+# after various render / write operations. We therefore re-inject the
+# repo-root values over the per-NPC files at sync time so a
+# `task net:check` failure can't be caused by a stale `sk-REPLACE_ME`
+# anymore.
+ROOT_ENV="$(cd "$SCRIPT_DIR/.." && pwd)/.env"
+declare -a ROOT_ENV_OVERRIDES=()
+if [[ -f "$ROOT_ENV" ]]; then
+    for key in HERMES_AGENT_URL HERMES_AGENT_API_KEY HERMES_AGENT_MODEL; do
+        # Read raw line; strip trailing CR (Windows-edited .env files have
+        # CRLF endings, which would otherwise corrupt URLs and key values
+        # written to per-NPC .env files inside WSL).
+        line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ROOT_ENV" | tail -n1 | tr -d '\r' || true)"
+        if [[ -n "$line" ]]; then
+            value="$(printf '%s' "$line" | sed -E "s/^[[:space:]]*(export[[:space:]]+)?${key}=//; s/^['\"]//; s/['\"]\$//")"
+            ROOT_ENV_OVERRIDES+=("$key=$value")
+        fi
+    done
+    if [[ ${#ROOT_ENV_OVERRIDES[@]} -gt 0 ]]; then
+        echo "[detect] repo-root .env will override ${#ROOT_ENV_OVERRIDES[@]} per-NPC HERMES_AGENT_* line(s)"
+    fi
+else
+    echo "[detect] no repo-root .env; per-NPC values will be used as-is"
+fi
+
+# Apply ROOT_ENV_OVERRIDES to a target .env in place. Each override is
+# a `KEY=VALUE` string. If KEY exists, replace the entire line; if not,
+# append. Uses awk so values may safely contain sed metacharacters.
+apply_root_env_overrides() {
+    local file="$1"
+    [[ ${#ROOT_ENV_OVERRIDES[@]} -eq 0 ]] && return 0
+    [[ -f "$file" ]] || return 0
+    local tmp; tmp="$(mktemp)"
+    awk -v overrides="$(printf '%s\n' "${ROOT_ENV_OVERRIDES[@]}")" '
+        BEGIN {
+            n = split(overrides, lines, "\n")
+            for (i = 1; i <= n; i++) {
+                if (length(lines[i]) == 0) continue
+                eq = index(lines[i], "=")
+                k = substr(lines[i], 1, eq - 1)
+                v = substr(lines[i], eq + 1)
+                kv[k] = v
+                seen[k] = 0
+            }
+        }
+        {
+            line = $0
+            stripped = line
+            sub(/^[[:space:]]*(export[[:space:]]+)?/, "", stripped)
+            eq = index(stripped, "=")
+            if (eq > 0) {
+                k = substr(stripped, 1, eq - 1)
+                if (k in kv) {
+                    print k "=" kv[k]
+                    seen[k] = 1
+                    next
+                }
+            }
+            print line
+        }
+        END {
+            for (k in kv) {
+                if (!seen[k]) print k "=" kv[k]
+            }
+        }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+}
+
 for profile_dir in "$REPO_PROFILES"/*/; do
     profile="$(basename "$profile_dir")"
     if [[ "$profile" == "_master" ]]; then
@@ -78,10 +150,14 @@ for profile_dir in "$REPO_PROFILES"/*/; do
         echo "[sync] $profile/SOUL.md"
     fi
 
-    # Copy .env (LLM + Langfuse credentials)
+    # Copy .env (LLM + Langfuse credentials), then apply repo-root .env
+    # overrides for HERMES_AGENT_* (LLM endpoint / key / model). Per-NPC
+    # values for everything else (Langfuse keys, MCP URL, etc.) are kept
+    # untouched.
     if [[ -f "$profile_dir/.env" ]]; then
         cp "$profile_dir/.env" "$target/.env"
-        echo "[sync] $profile/.env"
+        apply_root_env_overrides "$target/.env"
+        echo "[sync] $profile/.env (with repo-root HERMES_AGENT_* overrides)"
     fi
 
     # Merge skills/ (recursive copy; preserves existing Hermes skills)

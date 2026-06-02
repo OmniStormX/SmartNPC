@@ -65,9 +65,9 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 			"vs \"good evening\"), before suggesting bedtime / late-night activity, or when " +
 			"the player asks \"what time is it\" / \"几点了\".\n\n" +
 			"Side-effect: READ. Takes no parameters. Requires a loaded save.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GameGetTimeInput) (*mcp.CallToolResult, GameGetTimeOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GameGetTimeInput) (*mcp.CallToolResult, GameGetTimeOutput, error) {
 		logToolCall("game_get_time", in)
-		raw, err := br.Call(ctx, bridge.ActionGameGetTime, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionGameGetTime, in)
 		if err != nil {
 			return nil, GameGetTimeOutput{}, fmt.Errorf("game_get_time: %w", err)
 		}
@@ -85,9 +85,9 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 			"When to call: for weather-aware small talk (\"brought an umbrella?\"), before " +
 			"gating outdoor activity suggestions, or when the player asks about the weather.\n\n" +
 			"Side-effect: READ. Takes no parameters. Requires a loaded save.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GameGetWeatherInput) (*mcp.CallToolResult, GameGetWeatherOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in GameGetWeatherInput) (*mcp.CallToolResult, GameGetWeatherOutput, error) {
 		logToolCall("game_get_weather", in)
-		raw, err := br.Call(ctx, bridge.ActionGameGetWeather, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionGameGetWeather, in)
 		if err != nil {
 			return nil, GameGetWeatherOutput{}, fmt.Errorf("game_get_weather: %w", err)
 		}
@@ -109,12 +109,12 @@ func registerGameQuery(s *mcp.Server, br *bridge.WSClient) {
 			"(0-2: polite distance, 3-6: friendly, 7+: intimate).\n\n" +
 			"Side-effect: READ. Requires a loaded save. Returns `invalid_params` if `npc` " +
 			"is empty, `npc_not_found` if the name does not resolve.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in FriendshipGetInput) (*mcp.CallToolResult, FriendshipGetOutput, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in FriendshipGetInput) (*mcp.CallToolResult, FriendshipGetOutput, error) {
 		if in.NPC == "" {
 			return nil, FriendshipGetOutput{}, fmt.Errorf("npc is required")
 		}
 		logToolCall("friendship_get", in)
-		raw, err := br.Call(ctx, bridge.ActionFriendshipGet, in)
+		raw, err := br.Call(callCtx(ctx, req), bridge.ActionFriendshipGet, in)
 		if err != nil {
 			return nil, FriendshipGetOutput{}, fmt.Errorf("friendship_get: %w", err)
 		}
