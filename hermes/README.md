@@ -7,13 +7,15 @@ hermes/
 ├── README.md                 ← 本文件
 ├── install.sh                ← 同步到 ~/.hermes/profiles/ 的脚本（WSL bash）
 └── profiles/
-    └── xiami/
-        ├── SOUL.md           ← 人格 + 说话风格 + 好感度档位 + 工具使用原则
-        ├── config-overlay.yaml ← mcp_servers + API_SERVER_* 配置（合并到 config.yaml）
-        └── skills/
-            └── smartnpc/
-                └── game-tool-policy/
-                    └── SKILL.md   ← 工具使用细则（Hermes 原生 skill 格式）
+    ├── _master/
+    │   ├── config-overlay.yaml
+    │   ├── critical-policy.md
+    │   └── skills/smartnpc/  ← 共享 Hermes 原生 skill 模板
+    └── <npc>/
+        ├── SOUL.md           ← 手写人格 + 说话风格 + 好感度档位
+        ├── config-overlay.yaml
+        ├── critical-policy.md
+        └── skills/smartnpc/  ← 从 _master 渲染，勿直接编辑
 ```
 
 **重要：**`config.yaml` 不进仓库。Hermes 在 `hermes -p <name> run` 时自动生成带默认值的完整 config.yaml（包含 LLM provider、个人密钥等机器相关内容）。我们只签入与 SmartNPC 相关的覆盖层。
@@ -70,9 +72,9 @@ wsl -d Ubuntu-22.04 bash /mnt/d/SmartNPC/hermes/install.sh
 
 脚本会：
 
-1. 把 `hermes/profiles/xiami/SOUL.md` 覆盖到 `~/.hermes/profiles/xiami/SOUL.md`
-2. 把 `hermes/profiles/xiami/skills/smartnpc/` 合并到 `~/.hermes/profiles/xiami/skills/smartnpc/`（不覆盖 Hermes 内置 skill）
-3. 检测 WSL 默认网关（= Windows 主机 IP），把 `config-overlay.yaml` 里的 `__HOST_IP__` 占位符替换掉，追加到 `~/.hermes/profiles/xiami/config.yaml`。包含 `mcp_servers` 块（连 smartnpc-mcp）和 `API_SERVER_*` 块（开 REST gateway，让 hermesrelay 能 POST 事件进来）。
+1. 把每个 `hermes/profiles/<npc>/SOUL.md` 覆盖到对应 `~/.hermes/profiles/<npc>/SOUL.md`
+2. 把每个 `hermes/profiles/<npc>/skills/smartnpc/` 合并到对应 profile（不覆盖 Hermes 内置 skill）
+3. 把 `config-overlay.yaml` 追加到对应 `config.yaml`。包含 `mcp_servers` 块（连 smartnpc-mcp）和 `API_SERVER_*` 块（开 REST gateway，让 hermesrelay 能 POST 事件进来）。
 
 如果 `config.yaml` 里已经有 `mcp_servers:` 或 `API_SERVER_ENABLED:`，脚本**不会**覆盖；会提示手动合并（避免误删其他 MCP server / 端口冲突）。
 
@@ -114,13 +116,15 @@ curl -sS http://127.0.0.1:8642/health    # Hermes gateway 健康
 
 ## 更新 profile
 
-改了 `hermes/profiles/xiami/SOUL.md` 或 skill 后：
+改了 `hermes/profiles/<npc>/SOUL.md`、`hermes/profiles/_master/` 或 `hermes/npcs.yaml` 后：
 
 ```bash
+bash scripts/render_profiles.sh
+task profiles:verify
 bash /mnt/d/SmartNPC/hermes/install.sh
 ```
 
-`config.yaml` 级别的改动（比如想 exclude 某工具）改 `mcp-servers.yaml` 然后手动同步到 `~/.hermes/.../config.yaml`。
+`config.yaml` 级别的共享改动改 `hermes/profiles/_master/config-overlay.yaml`，然后重新 render。不要直接编辑非 `_master` 下的 `skills/`、`config-overlay.yaml` 或 `critical-policy.md`。
 
 ---
 
@@ -134,9 +138,10 @@ bash /mnt/d/SmartNPC/hermes/install.sh
 
 ## 新增 NPC
 
-1. 在 `hermes/profiles/<new-npc>/` 下放 `SOUL.md` + `mcp-servers.yaml`（可复用 xiami 的 mcp-servers.yaml，每个 NPC 一般都连同一个 smartnpc_game）
-2. 可选：拷 `skills/smartnpc/smartnpc-game-tool-policy/` 过来或单独写
-3. 重跑 `install.sh`
-4. 启 `hermes -p <new-npc> gateway run --accept-hooks`（多 profile 并存时注意改 `API_SERVER_PORT` 避免端口冲突）
+1. 在 `hermes/npcs.yaml` 添加 NPC metadata（id、game_name、display_name、gateway_port、peers）。
+2. 新建 `hermes/profiles/<new-npc>/SOUL.md`。
+3. 运行 `bash scripts/render_profiles.sh` 和 `task profiles:verify`。
+4. 重跑 `install.sh`。
+5. 启 `hermes -p <new-npc> gateway run --accept-hooks`。
 
 多 NPC 路由由 SMAPI mod 的 `AudibleNPCResolver`（Phase 4, M5.12）决定。

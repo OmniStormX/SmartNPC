@@ -15,17 +15,14 @@ Use when the event says the player walked up and opened a conversation.
 
 ## Fast flow
 
-1. Usually call `friendship_get` with your own internal NPC name to choose tone.
-2. Optionally call `game_get_time` if the greeting depends on time.
+1. Call `friendship_get` with your own internal NPC name to pick the right
+   tone (warm for high hearts, neutral for mid, cool for low). This is the
+   one case where reading a stat without the player asking is correct — the
+   greeting's emotional color depends on the relationship level.
+2. Optionally call `game_get_time` if the greeting depends on time of day.
 3. Call exactly one `chat_say` with `speaker` set to your own internal NPC name.
 
 Skip weather/status unless the event or context makes it relevant.
-
-## Do not
-
-- do not move, follow, lead, or summon
-- do not message other NPCs
-- do not output plain text after `chat_say`
 
 ## Fallback
 

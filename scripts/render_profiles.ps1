@@ -77,8 +77,8 @@ foreach ($npc in $npcs) {
     $envSrc = Join-Path $Master ".env"
     if (Test-Path $envSrc) { Copy-Item -Force $envSrc (Join-Path $target ".env") }
 
-    # Copy config-overlay.yaml and cron-recipes.md
-    foreach ($f in @("config-overlay.yaml", "cron-recipes.md")) {
+    # Copy scalar templates. Do NOT touch SOUL.md.
+    foreach ($f in @("config-overlay.yaml", "cron-recipes.md", "critical-policy.md")) {
         $src = Join-Path $Master $f
         if (Test-Path $src) { Copy-Item -Force $src (Join-Path $target $f) }
     }

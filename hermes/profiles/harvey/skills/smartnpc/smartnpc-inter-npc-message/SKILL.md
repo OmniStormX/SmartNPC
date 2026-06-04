@@ -21,7 +21,7 @@ Use `npc_send_message` instead of inventing another NPC's words or actions.
 | ask another NPC to act | `npc_send_message(to=<NPC>, kind="behavioral", text=<request>, reply_expected=true)` |
 | tell another NPC something | `npc_send_message(to=<NPC>, kind="query", text=<message>, reply_expected=true)` |
 
-Then tell the player briefly: `我去问问。` Do not fabricate the peer's answer.
+Then tell the player briefly in character that you'll ask. Do not fabricate the peer's answer.
 
 ## B. You receive `npc_message`
 
@@ -43,11 +43,9 @@ Mandatory flow:
 - One reply per inbox item.
 - Ack handled items even if you stayed silent.
 
-## Optional audibility check
+## Audibility check
 
-Before speaking out loud for an inter-NPC event, use:
-
-- `npc_get_position(npc="Harvey")`
-- `player_get_status`
-
-Speak only if same map and player is not busy. Otherwise reply silently through `npc_send_message` and optionally write memory.
+Before speaking out loud for an inter-NPC event, verify the player can hear:
+call `npc_get_position(npc="Harvey")` and `player_get_status`. Speak
+only if same map and player is not busy. Otherwise reply silently through
+`npc_send_message` and optionally write memory.

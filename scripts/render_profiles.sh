@@ -26,7 +26,7 @@
 # after a render, because xiami is itself rendered from _master/.
 #
 # Do NOT edit rendered per-NPC files (skills/, config-overlay.yaml,
-# cron-recipes.md) directly — they are regenerated on every render. Edit
+# cron-recipes.md, critical-policy.md) directly — they are regenerated on every render. Edit
 # hermes/profiles/_master/ instead, then re-run this script.
 #
 # See ADR-0003 (docs/adr/0003-npc-name-placeholder-cloning.md) and
@@ -82,10 +82,11 @@ for DIR in "${SMARTNPC_NPCS[@]}"; do
   # Copy scalar templates. Do NOT touch SOUL.md.
   cp "$MASTER/config-overlay.yaml" "$TARGET/config-overlay.yaml"
   cp "$MASTER/cron-recipes.md" "$TARGET/cron-recipes.md"
+  cp "$MASTER/critical-policy.md" "$TARGET/critical-policy.md"
 
   # Gather every rendered file for this NPC. Using \( ... \) so -o binds
   # correctly; -print terminates so xargs sees a single list.
-  mapfile -t FILES < <(find "$TARGET/skills" "$TARGET/config-overlay.yaml" "$TARGET/cron-recipes.md" \
+  mapfile -t FILES < <(find "$TARGET/skills" "$TARGET/config-overlay.yaml" "$TARGET/cron-recipes.md" "$TARGET/critical-policy.md" \
     -type f \( -name '*.md' -o -name '*.yaml' \) -print)
 
   # Use | as sed delimiter (paths and values can contain /).

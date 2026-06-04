@@ -14,6 +14,9 @@ metadata:
 
 Use only in the proactive-visit cron/session.
 
+This skill overrides the core policy's "only act when player asks" rule:
+`npc_summon` is explicitly authorized here without a player request.
+
 ## Decision flow
 
 1. Cooldown: check memory for `proactive-visit: last=<ISO>`. If newer than 60 real minutes, stop silently.
@@ -28,7 +31,6 @@ Use only in the proactive-visit cron/session.
 
 ## Do not
 
-- do not use group chat
-- do not send peer messages
-- do not start follow/lead/move chains
+- do not start follow/lead/move chains (summon + emote + one chat_say only)
 - do not write `last=` before `chat_say` succeeds
+- group chat and peer messages are never used during visits

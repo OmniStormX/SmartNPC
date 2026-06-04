@@ -26,6 +26,8 @@ langfuseAPI.md
 hermes/profiles/*/config-overlay.yaml
 hermes/profiles/*/cron-recipes.md
 hermes/profiles/*/skills/
+!hermes/profiles/_master/skills/
+!hermes/profiles/_master/skills/**
 hermes/profiles/*/.env
 
 # C# build outputs

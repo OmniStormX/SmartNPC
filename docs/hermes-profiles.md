@@ -94,7 +94,7 @@ ladder, the absolute "never do X" list. Owned by you, the author.
 | 灵魂层次 / Soul layers | Surface persona vs hidden depth — drives reaction shape |
 | 好感度对应语气 | Per-heart-tier example openers (parsed by `friendship-behavior`) |
 | 绝对禁止 / Taboos | Never break character, never reveal LLM-ness, ... |
-| 工具使用原则 | Soft index into `skills/smartnpc/smartnpc-game-tool-policy` |
+| 工具使用原则 | Soft index into the thin core router `skills/smartnpc/smartnpc-game-tool-policy` and optional SmartNPC skills |
 | 人设背景 | Internal lore the NPC holds but doesn't volunteer |
 
 **Do not** put time-varying state in SOUL.md. The day's events,

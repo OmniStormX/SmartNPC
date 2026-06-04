@@ -31,7 +31,7 @@ mcp_servers:
       # Minimal, module-oriented tool menu. Keep this small: every visible
       # tool schema enters the prompt and affects latency.
       #
-      # core/private-chat: chat_say
+      # core/private-chat: agent_register_self, chat_say
       # read-on-demand: friendship_get, game_get_time, game_get_weather,
       #                 player_get_status, npc_get_position
       # schedule: npc_plan_day, npc_get_schedule
@@ -41,6 +41,7 @@ mcp_servers:
       # Deliberately held back: admin/debug tools, broad environment dumps,
       # mail, broadcast, static tables.
       include:
+        - agent_register_self
         - chat_say
         - friendship_get
         - game_get_time

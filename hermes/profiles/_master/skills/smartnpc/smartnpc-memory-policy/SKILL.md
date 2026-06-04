@@ -17,16 +17,15 @@ Each NPC profile has isolated memory under `~/.hermes/profiles/{{NPC_DIR}}/`.
 
 Good memory:
 
-- player preferences or personal facts
-- promises and pending favors
+- player preferences, personal facts, or shared experiences
+- promises, pending favors, or debts
 - relationship turning points
 - delayed inter-NPC replies worth surfacing later
 - recurring schedule/habit facts
 
-Do not save:
+Skip:
 
-- raw current dialogue
-- raw tool output, hearts, coordinates, timestamps
+- raw dialogue, tool output, coordinates, or timestamps
 - temporary reasoning or plans
 - facts the player asked you to forget
 - guesses about other NPCs

@@ -6,6 +6,7 @@
 #   - SOUL.md
 #   - .env
 #   - skills/           (merged, not replaced — Hermes's built-in skills are preserved)
+#   - critical-policy.md
 #   - config-overlay.yaml merged into ~/.hermes/profiles/<name>/config.yaml
 #
 # Usage (from inside WSL, with this repo mounted at /mnt/d/SmartNPC):
@@ -21,6 +22,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_PROFILES="$SCRIPT_DIR/profiles"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 TARGET_BASE="$HERMES_HOME/profiles"
@@ -37,6 +39,10 @@ if [[ ! -d "$HERMES_HOME" ]]; then
 fi
 
 mkdir -p "$TARGET_BASE"
+
+# Materialize generated profile files from _master before syncing. This keeps
+# ignored rendered skill copies current in clean clones.
+bash "$REPO_ROOT/scripts/render_profiles.sh"
 
 declare -a synced=()
 declare -a pending_merge=()
@@ -165,6 +171,12 @@ for profile_dir in "$REPO_PROFILES"/*/; do
         mkdir -p "$target/skills"
         cp -r "$profile_dir/skills/"* "$target/skills/"
         echo "[sync] $profile/skills/ (merged)"
+    fi
+
+    # Copy always-loaded critical policy used by the relay instructions field.
+    if [[ -f "$profile_dir/critical-policy.md" ]]; then
+        cp "$profile_dir/critical-policy.md" "$target/critical-policy.md"
+        echo "[sync] $profile/critical-policy.md"
     fi
 
     # Merge config-overlay.yaml into config.yaml

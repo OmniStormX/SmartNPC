@@ -96,7 +96,7 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			return fmt.Sprintf(
 				"⚡ SYSTEM: This is a day_started turn. Text-only output will be "+
 					"silently IGNORED — you MUST use tool calls. If unsure of the "+
-					"procedure, call `skill_view` to load `smartnpc-game-tool-policy` and read §6.\n\n"+
+					"procedure, call `skill_view` to load `smartnpc-day-plan-policy`.\n\n"+
 					"A new day begins: %s %d (%s), year %d.\n\n"+
 					"⚠️ MANDATORY — call these tools IN ORDER:\n"+
 					"  1. `game_get_time` — confirm day/season/year.\n"+
@@ -186,6 +186,8 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			}
 			return fmt.Sprintf(
 				"[schedule_trigger] It is now %d:00 — your planned activity is: `%s`%s.\n\n"+
+					"If unsure of the procedure, call `skill_view` to load "+
+					"`smartnpc-schedule-action-policy`.\n\n"+
 					"Call `%s` NOW with concrete arguments you choose based on live "+
 					"game state — your current location, what's nearby, weather, "+
 					"inventory, who else is around, etc. The schedule only commits "+

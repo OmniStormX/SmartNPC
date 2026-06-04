@@ -180,6 +180,49 @@ func TestFormatForHermes_ChatReceivedGroupEmptyID(t *testing.T) {
 	}
 }
 
+func TestFormatForHermes_DayStartedReferencesDayPlanSkill(t *testing.T) {
+	payload := DayStarted{Day: 5, Season: "spring", Year: 1, DayOfWeek: "Mon"}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	got := FormatForHermes(bridge.EventDayStarted, raw)
+	wantSubs := []string{
+		"smartnpc-day-plan-policy",
+		"npc_plan_day",
+		"Do NOT call `chat_say`",
+	}
+	for _, want := range wantSubs {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FormatForHermes(day_started) = %q; want contains %q", got, want)
+		}
+	}
+	if strings.Contains(got, "smartnpc-game-tool-policy") {
+		t.Fatalf("day_started should reference the dedicated day-plan skill, got %q", got)
+	}
+}
+
+func TestFormatForHermes_ScheduleTriggerReferencesScheduleActionSkill(t *testing.T) {
+	payload := ScheduleTrigger{NPC: "XiaMi", GameHour: 9, Action: "npc_wander", Reason: "morning walk"}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	got := FormatForHermes(bridge.EventScheduleTrigger, raw)
+	wantSubs := []string{
+		"smartnpc-schedule-action-policy",
+		"npc_wander",
+		"concrete arguments",
+	}
+	for _, want := range wantSubs {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FormatForHermes(schedule_trigger) = %q; want contains %q", got, want)
+		}
+	}
+}
+
 func TestFormatForHermes_ChatReceivedPrivateLegacy(t *testing.T) {
 	// Regression guard: source=player (or empty) must keep the original
 	// "Someone in the chat says: ..." rendering without leaking group hints.

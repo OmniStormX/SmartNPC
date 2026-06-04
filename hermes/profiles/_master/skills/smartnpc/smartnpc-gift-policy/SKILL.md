@@ -24,10 +24,9 @@ Use only when the player asks for, buys, or accepts an item.
 
 ## Rules
 
-- Never invent item ids.
-- Never use another NPC's item list.
+- Never invent item ids; only use items from SOUL.md `Signature gift items`.
 - One item type per turn; count defaults to 1.
-- No unsolicited gifts during proactive visits.
+- No unsolicited gifts — only when the player asks, buys, or accepts.
 - No payment handling yet; treat purchases as a small gift.
 
 ## Failure style

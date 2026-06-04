@@ -112,6 +112,10 @@ func TestRelay_LoadsPersonaFile(t *testing.T) {
 	if err := os.WriteFile(persona, []byte(body), 0o644); err != nil {
 		t.Fatalf("write persona: %v", err)
 	}
+	emptyCritical := filepath.Join(dir, "critical-policy.md")
+	if err := os.WriteFile(emptyCritical, nil, 0o644); err != nil {
+		t.Fatalf("write critical policy: %v", err)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -124,7 +128,10 @@ func TestRelay_LoadsPersonaFile(t *testing.T) {
 		Conversation: "xiami",
 		Model:        "xiami",
 		PersonaFile:  persona,
-		Timeout:      2 * time.Second,
+		// Isolate this test to persona loading; default critical-policy
+		// discovery is covered by other relay tests.
+		CriticalPolicyFile: emptyCritical,
+		Timeout:            2 * time.Second,
 	}, slog.Default())
 	if err != nil {
 		t.Fatalf("New: %v", err)
