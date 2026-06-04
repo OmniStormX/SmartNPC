@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/events"
@@ -40,6 +42,12 @@ type Config struct {
 	// are sent as the request's `instructions` field on every turn.
 	PersonaFile string
 
+	// CriticalPolicyFile is an optional path to a markdown file containing
+	// critical runtime rules that MUST survive context compression. Its
+	// contents are prepended to `instructions` on every POST so they are
+	// always present in the system prompt regardless of conversation trimming.
+	CriticalPolicyFile string
+
 	// Timeout for the POST. Defaults to 120s if zero — long enough to cover
 	// a cold-cache GPT-class response with full persona attached.
 	Timeout time.Duration
@@ -65,10 +73,14 @@ type Config struct {
 
 // Relay forwards events to a Hermes Gateway. Safe for concurrent use.
 type Relay struct {
-	cfg     Config
-	persona string
-	http    *http.Client
-	logger  *slog.Logger
+	cfg              Config
+	baseConversation string // original conversation from config (never mutates)
+	conversation     string // current active conversation (rotated on day_started)
+	mu               sync.RWMutex
+	persona          string
+	criticalRules    string // loaded from CriticalPolicyFile, sent with every POST
+	http             *http.Client
+	logger           *slog.Logger
 }
 
 // New constructs a Relay. PersonaFile, if given, is loaded once and cached.
@@ -89,9 +101,11 @@ func New(cfg Config, logger *slog.Logger) (*Relay, error) {
 		logger = slog.Default()
 	}
 	r := &Relay{
-		cfg:    cfg,
-		http:   &http.Client{Timeout: cfg.Timeout},
-		logger: logger,
+		cfg:              cfg,
+		baseConversation: cfg.Conversation,
+		conversation:     cfg.Conversation,
+		http:             &http.Client{Timeout: cfg.Timeout},
+		logger:           logger,
 	}
 	// When DebugPayload is on but no dedicated PayloadLogger was supplied,
 	// fall back to the main logger so the records aren't silently dropped.
@@ -104,6 +118,23 @@ func New(cfg Config, logger *slog.Logger) (*Relay, error) {
 			return nil, fmt.Errorf("hermesrelay: read persona file %q: %w", cfg.PersonaFile, err)
 		}
 		r.persona = string(b)
+	}
+	// Critical policy is loaded from a well-known path if not explicitly set.
+	// It is sent as part of `instructions` on every POST so compression
+	// cannot truncate it. Default: hermes/profiles/_master/critical-policy.md
+	if cfg.CriticalPolicyFile == "" {
+		cfg.CriticalPolicyFile = resolveCriticalPolicyFile()
+	}
+	if cfg.CriticalPolicyFile != "" {
+		b, err := os.ReadFile(cfg.CriticalPolicyFile)
+		if err != nil {
+			logger.Warn("hermesrelay: critical policy not loaded",
+				"path", cfg.CriticalPolicyFile, "err", err)
+		} else {
+			r.criticalRules = string(b)
+			logger.Info("hermesrelay: critical policy loaded",
+				"path", cfg.CriticalPolicyFile, "len", len(r.criticalRules))
+		}
 	}
 	return r, nil
 }
@@ -119,9 +150,49 @@ func (r *Relay) HandleEvent(_ context.Context, name string, data json.RawMessage
 	// mcp. Compare with the upcoming "hermesrelay forwarded event" elapsed_ms
 	// to see how much time mcp itself spends before/after the Hermes call.
 	r.logger.Info("hermesrelay event received",
-		"event", name, "conversation", r.cfg.Conversation)
+		"event", name, "conversation", r.getConversation())
 	input := events.FormatForHermes(name, data)
+	LogRelayRequest(r.cfg.NPCName, name, len(input), len(r.persona)+len(r.criticalRules))
 	go r.post(input, name)
+}
+
+// resolveCriticalPolicyFile auto-discovers the critical policy file relative
+// to the executable. Returns empty string when discovery fails.
+func resolveCriticalPolicyFile() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	// From smartnpc-mcp/bin/ or smartnpc-mcp/cmd/smartnpc-mcp/, walk up
+	// to the repo root and then into hermes/profiles/_master/.
+	dir := filepath.Dir(exe)
+	for i := 0; i < 4; i++ {
+		candidate := filepath.Join(dir, "hermes", "profiles", "_master", "critical-policy.md")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
+// RotateSession replaces the active conversation ID with
+// "<baseConversation>-<suffix>". This effectively starts a fresh Hermes
+// session while keeping the same gateway/model/persona config. Thread-safe.
+func (r *Relay) RotateSession(suffix string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.conversation = r.baseConversation + "-" + suffix
+	r.logger.Info("hermesrelay session rotated",
+		"npc", r.cfg.NPCName,
+		"conversation", r.conversation)
+}
+
+// getConversation returns the current conversation ID under read lock.
+func (r *Relay) getConversation() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.conversation
 }
 
 // ShouldRoute reports whether this event matches the relay's NPC filter.
@@ -172,13 +243,27 @@ type usageResponse struct {
 }
 
 func (r *Relay) post(input, eventName string) {
+	// Snapshot the current conversation under lock so a concurrent
+	// RotateSession doesn't race with the in-flight POST.
+	conv := r.getConversation()
+
+	// Build instructions: critical rules (always-loaded, survive compression)
+	// prepended before persona (NPC personality from SOUL.md).
+	instructions := r.criticalRules
+	if r.persona != "" {
+		if instructions != "" {
+			instructions += "\n\n---\n\n"
+		}
+		instructions += r.persona
+	}
+
 	// Conversation memory is fully owned by Hermes (Store=true by default).
 	// mcp sends only the current event; no client-side history window.
 	body, err := json.Marshal(request{
 		Model:        r.cfg.Model,
 		Input:        input,
-		Conversation: r.cfg.Conversation,
-		Instructions: r.persona,
+		Conversation: conv,
+		Instructions: instructions,
 		Store:        r.cfg.Store,
 	})
 	if err != nil {
@@ -189,10 +274,10 @@ func (r *Relay) post(input, eventName string) {
 	if r.cfg.DebugPayload {
 		r.cfg.PayloadLogger.Debug("hermesrelay outbound payload",
 			"event", eventName,
-			"conversation", r.cfg.Conversation,
+			"conversation", conv,
 			"model", r.cfg.Model,
 			"input", input,
-			"instructions_len", len(r.persona),
+			"instructions_len", len(instructions),
 			"body_bytes", len(body),
 			"body", string(body),
 		)
@@ -218,6 +303,7 @@ func (r *Relay) post(input, eventName string) {
 	if err != nil {
 		r.logger.Warn("hermesrelay POST failed",
 			"event", eventName, "url", url, "elapsed_ms", elapsed.Milliseconds(), "err", err)
+		LogRelayError(r.cfg.NPCName, eventName, 0, elapsed, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -226,6 +312,7 @@ func (r *Relay) post(input, eventName string) {
 		r.logger.Warn("hermesrelay non-2xx",
 			"event", eventName, "status", resp.StatusCode,
 			"elapsed_ms", elapsed.Milliseconds(), "body", string(b))
+		LogRelayError(r.cfg.NPCName, eventName, resp.StatusCode, elapsed, string(b))
 		return
 	}
 
@@ -245,18 +332,20 @@ func (r *Relay) post(input, eventName string) {
 	r.logger.Info("hermesrelay forwarded event",
 		"event", eventName,
 		"status", resp.StatusCode,
-		"conversation", r.cfg.Conversation,
+		"conversation", conv,
 		"elapsed_ms", elapsed.Milliseconds(),
 		"input_tokens", u.Usage.InputTokens,
 		"cached_tokens", u.Usage.InputTokensDetails.CachedTokens,
 		"cache_ratio", cacheRatio,
 		"output_tokens", u.Usage.OutputTokens,
 	)
+	LogRelayResponse(r.cfg.NPCName, eventName, resp.StatusCode, elapsed,
+		u.Usage.InputTokens, u.Usage.InputTokensDetails.CachedTokens, u.Usage.OutputTokens)
 
 	if r.cfg.DebugPayload {
 		r.cfg.PayloadLogger.Debug("hermesrelay inbound response",
 			"event", eventName,
-			"conversation", r.cfg.Conversation,
+			"conversation", conv,
 			"status", resp.StatusCode,
 			"elapsed_ms", elapsed.Milliseconds(),
 			"body_bytes", len(respBody),

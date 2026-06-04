@@ -207,8 +207,8 @@ namespace SmartNPC.Bridge
                     new Vector2(bubble.X + BubblePadding, bubble.Y + BubblePadding),
                     textColor);
 
-                // Timestamp (game-time formatted).
-                string ts = FormatTime(msg.Time);
+                // Timestamp (in-game time when the message was created).
+                string ts = FormatGameTime(msg.GameTime);
                 b.DrawString(Game1.tinyFont, ts,
                     new Vector2(timeX, bubbleY + 2), Color.Gray);
 
@@ -254,21 +254,12 @@ namespace SmartNPC.Bridge
             b.Draw(Game1.fadeToBlackRect, new Rectangle(rect.Right - 2, rect.Y, 2, rect.Height), color);
         }
 
-        private static string FormatTime(DateTime t)
+        /// <summary>Format an in-game time-of-day integer (e.g. 1430 → "14:30").</summary>
+        private static string FormatGameTime(int gameTime)
         {
-            // Prefer in-game time when world is loaded; otherwise wall clock.
-            try
-            {
-                if (Context.IsWorldReady)
-                {
-                    int gameTime = Game1.timeOfDay; // e.g. 1430 = 14:30
-                    int hh = gameTime / 100;
-                    int mm = gameTime % 100;
-                    return $"{hh:D2}:{mm:D2}";
-                }
-            }
-            catch { /* fall through */ }
-            return t.ToString("HH:mm");
+            int hh = gameTime / 100;
+            int mm = gameTime % 100;
+            return $"{hh:D2}:{mm:D2}";
         }
 
         public bool ReceiveLeftClick(int x, int y)

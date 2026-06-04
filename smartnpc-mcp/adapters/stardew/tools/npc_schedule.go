@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -98,6 +99,9 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler, br *bridge.W
 			"- max 20 entries per day; duplicate hours are allowed (both fire)\n" +
 			"- DO NOT pass tool parameters here — choose them at fire time\n" +
 			"- calling again replaces the previous schedule entirely\n\n" +
+			"IMPORTANT: Call this EXACTLY ONCE per game day — when you receive a " +
+			"day_started event. If you already planned today, do NOT call again. " +
+			"Use npc_get_schedule to check your existing plan.\n\n" +
 			"Tips for good schedules:\n" +
 			"- Space entries 2-3 hours apart to feel natural\n" +
 			"- Include at least one social action (approach_and_speak, express_emotion)\n" +
@@ -149,7 +153,13 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler, br *bridge.W
 			targets = []string{in.NPC}
 		}
 
+		duplicates := make([]string, 0, len(targets))
 		for _, npc := range targets {
+			if sched.AlreadyPlannedToday(npc, in.Day, in.Season) {
+				duplicates = append(duplicates, npc)
+				slog.Warn("npc_plan_day: duplicate call for same day",
+					"npc", npc, "day", in.Day, "season", in.Season)
+			}
 			sched.SetSchedule(scheduler.DaySchedule{
 				NPC:     npc,
 				Day:     in.Day,
@@ -162,11 +172,18 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler, br *bridge.W
 
 		logToolCall("npc_plan_day", in)
 
+		msg := fmt.Sprintf("schedule stored: %d entries for %d NPC(s), day %d %s", len(entries), len(targets), in.Day, in.Season)
+		if len(duplicates) > 0 {
+			msg += fmt.Sprintf("\n\n⚠️ WARNING: You already submitted a schedule today for: %s. "+
+				"The old plan has been replaced with this new one. "+
+				"Do NOT call npc_plan_day again today — use npc_get_schedule to check your existing plan.",
+				strings.Join(duplicates, ", "))
+		}
 		out := NpcPlanDayOutput{
 			OK:       true,
 			NPC:      in.NPC,
 			Accepted: len(entries),
-			Message:  fmt.Sprintf("schedule stored: %d entries for %d NPC(s), day %d %s", len(entries), len(targets), in.Day, in.Season),
+			Message:  msg,
 		}
 		slog.Info("npc_plan_day result",
 			"npc", out.NPC, "accepted", out.Accepted, "targets", len(targets), "message", out.Message)

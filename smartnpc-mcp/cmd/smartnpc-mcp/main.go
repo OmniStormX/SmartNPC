@@ -44,6 +44,11 @@ var version = "0.1.0-dev"
 func main() {
 	startTime := time.Now()
 
+	// On Windows, switch the console output codepage to UTF-8 so non-ASCII
+	// bytes (em-dash, CJK from LLM-produced text) render correctly on stderr
+	// instead of mojibake under the default GBK / cp936. No-op elsewhere.
+	log.EnableUTF8Console()
+
 	var (
 		showVersion = flag.Bool("version", false, "print version and exit")
 		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
@@ -198,7 +203,7 @@ func main() {
 	agentbridge.RegisterMeta(server)
 
 	if br != nil {
-		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, chatGuard, dayScheduler, *logLevel == "debug"))
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, hermesRelays, chatGuard, dayScheduler, *logLevel == "debug"))
 		if err := br.Connect(ctx); err != nil {
 			// Mod may not be running yet. The ws client retries in the
 			// background; meanwhile non-mod tools (ping) still work.
@@ -285,6 +290,21 @@ func runHTTP(
 // relay may be nil; in that case the Hermes forwarding is skipped.
 // chatGuard may be nil; the reset hook becomes a no-op.
 // sched may be nil; in that case schedule dispatch is skipped.
+// schedTriggerMsg carries everything a per-NPC worker needs to process one
+// schedule_trigger event.
+type schedTriggerMsg struct {
+	ctx         context.Context
+	npc         string
+	triggerData json.RawMessage
+	action      string
+	reason      string
+}
+
+// npcWorkerQueueSize is the buffer depth of each per-NPC trigger channel.
+// Generous enough to absorb a burst of triggers from a single tick without
+// blocking the event loop.
+const npcWorkerQueueSize = 16
+
 func makeRouter(
 	server *mcp.Server,
 	logger *slog.Logger,
@@ -292,13 +312,41 @@ func makeRouter(
 	echo bool,
 	speaker string,
 	relay bridge.EventHandler,
+	relays []*hermesrelay.Relay,
 	chatGuard *tools.ChatSayGuard,
 	sched *scheduler.Scheduler,
 	schedDebug bool,
 ) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
 
+	// When day_started fires, the mod also emits a game_time_tick for
+	// the same hour (typically 6). Suppress the relay for that tick so
+	// the LLM receives a single day_started turn and calls npc_plan_day
+	// before being interrupted by a concurrent tick turn.
+	var suppressTickRelayUntil time.Time
+
+	// ── Per-NPC persistent worker goroutines ────────────────────────────
+	// One goroutine per known agent NPC, each consuming from its own
+	// buffered channel. This guarantees:
+	//   - Bounded goroutine count (no fire-and-forget explosion)
+	//   - Per-NPC serial execution (no race on ws calls for same NPC)
+	//   - Backpressure via channel buffer (drops with warning on overflow)
+	npcQueues := make(map[string]chan schedTriggerMsg)
+	if sched != nil {
+		for _, npc := range sched.AgentNPCs() {
+			ch := make(chan schedTriggerMsg, npcWorkerQueueSize)
+			npcQueues[npc] = ch
+			go npcTriggerWorker(ch, logger, br, relay, schedDebug)
+		}
+		if len(npcQueues) > 0 {
+			logger.Info("scheduler: per-NPC trigger workers started", "count", len(npcQueues))
+		}
+	}
+
 	return func(ctx context.Context, name string, data json.RawMessage) {
+		// Persistent event trace → logs/mcp/events.log
+		tools.LogEvent(name, data)
+
 		// Refresh chat_say budgets before the relay fires so the recipient
 		// NPC's wake-up starts clean. MaybeResetGuard handles both the
 		// group reset (on player_group input) and the private reset (any
@@ -308,19 +356,50 @@ func makeRouter(
 		// MCP clients always see the raw event stream.
 		forward(ctx, name, data)
 
-		// ── day_started: clear all NPC schedules ────────────────────────
-		if name == bridge.EventDayStarted && sched != nil {
-			sched.ClearAll()
-			logger.Info("scheduler: cleared all NPC schedules for new day")
+		// ── day_started: clear all NPC schedules + rotate session ──────
+		if name == bridge.EventDayStarted {
+			// Rotate Hermes conversation so each game day starts a fresh
+			// session. Parse the event to build a meaningful suffix.
+			if len(relays) > 0 {
+				var ds struct {
+					Day    int    `json:"day"`
+					Season string `json:"season"`
+					Year   int    `json:"year"`
+				}
+				if err := json.Unmarshal(data, &ds); err == nil && ds.Season != "" {
+					suffix := fmt.Sprintf("%s-d%d-y%d", ds.Season, ds.Day, ds.Year)
+					for _, r := range relays {
+						r.RotateSession(suffix)
+					}
+				}
+			}
+			if sched != nil {
+				sched.ClearAll()
+				logger.Info("scheduler: cleared all NPC schedules for new day")
+			}
+			suppressTickRelayUntil = time.Now().Add(5 * time.Second)
 		}
 
 		// ── game_time_tick: check scheduler and fire triggers ───────────
 		if name == bridge.EventGameTimeTick && sched != nil {
+
 			var tick struct {
 				Hour int `json:"hour"`
 			}
 			if err := json.Unmarshal(data, &tick); err == nil && tick.Hour >= 6 {
 				fired := sched.Tick(tick.Hour)
+				// When schedule entries fire, suppress the game_time_tick
+				// relay so the LLM doesn't receive two concurrent turns
+				// (schedule_trigger + tick) for the same hour.
+				if len(fired) > 0 {
+					suppressTickRelayUntil = time.Now().Add(5 * time.Second)
+				}
+				// Persist a human-readable record of what fired this tick to
+				// <logDir>/mcp/schedule_triggers.log. No-op when nothing
+				// fired. Console output stays out of the way — slog already
+				// emits a structured "scheduler: firing schedule_trigger"
+				// line below for each entry.
+				tools.LogScheduleTriggers(tick.Hour, fired)
 				for _, entry := range fired {
 					triggerData, err := json.Marshal(map[string]any{
 						"npc":       entry.NPC,
@@ -337,31 +416,30 @@ func makeRouter(
 					// Forward to MCP clients for observability.
 					forward(ctx, bridge.EventScheduleTrigger, triggerData)
 
-					if schedDebug && br != nil {
-						// DEBUG mode: display action + reason in game chat
-						// instead of waking the LLM. Parameters are no longer
-						// part of the schedule, so we surface the LLM's
-						// original reason instead — it's far more readable
-						// for at-a-glance debugging. We stamp FromNPC
-						// explicitly via CallAs so the mod can route this
-						// debug bubble to entry.NPC's chat-panel even
-						// though the call originates outside any MCP
-						// session (no agent registry hit).
-						msg := fmt.Sprintf("[schedule] %s", entry.Action)
-						if entry.Reason != "" {
-							msg = fmt.Sprintf("%s — %s", msg, entry.Reason)
+					// Dispatch to per-NPC worker queue for serial execution.
+					msg := schedTriggerMsg{
+						ctx:         ctx,
+						npc:         entry.NPC,
+						triggerData: triggerData,
+						action:      entry.Action,
+						reason:      entry.Reason,
+					}
+					if ch, ok := npcQueues[entry.NPC]; ok {
+						select {
+						case ch <- msg:
+						default:
+							logger.Warn("scheduler: NPC trigger queue full, dropping",
+								"npc", entry.NPC, "action", entry.Action)
 						}
-						_, _ = br.CallAs(ctx, entry.NPC, bridge.ActionChatSay, map[string]any{
-							"npc":  entry.NPC,
-							"text": msg,
-						})
-						_, _ = br.CallAs(ctx, entry.NPC, bridge.ActionNpcShowTextBubble, map[string]any{
-							"npc":  entry.NPC,
-							"text": msg,
-						})
-					} else if relay != nil {
-						// Normal mode: wake the NPC's Hermes profile.
-						relay(ctx, bridge.EventScheduleTrigger, triggerData)
+					} else {
+						// NPC not in pre-registered list — fall back to inline.
+						logger.Warn("scheduler: no worker for NPC, inline dispatch",
+							"npc", entry.NPC, "action", entry.Action)
+						if schedDebug && br != nil {
+							dispatchSchedDebug(ctx, logger, br, entry.NPC, entry.Action, entry.Reason)
+						} else if relay != nil {
+							relay(ctx, bridge.EventScheduleTrigger, triggerData)
+						}
 					}
 				}
 			}
@@ -386,8 +464,11 @@ func makeRouter(
 			if relay != nil {
 				relay(ctx, bridge.EventChatMessage, synthData)
 			}
-		case relay != nil:
+		case relay != nil && !(name == bridge.EventGameTimeTick && time.Now().Before(suppressTickRelayUntil)):
 			relay(ctx, name, data)
+		case relay != nil && name == bridge.EventGameTimeTick:
+			logger.Info("relay: suppressing game_time_tick after day_started",
+				"suppress_until", suppressTickRelayUntil.Format("15:04:05.000"))
 		}
 
 		if !echo || br == nil || name != bridge.EventChatReceived {
@@ -416,6 +497,49 @@ func makeRouter(
 			}
 		}()
 	}
+}
+
+// npcTriggerWorker is the persistent goroutine that consumes schedule_trigger
+// messages for a single NPC. It serializes execution so ws calls for the same
+// NPC never race.
+func npcTriggerWorker(
+	ch <-chan schedTriggerMsg,
+	logger *slog.Logger,
+	br *bridge.WSClient,
+	relay bridge.EventHandler,
+	schedDebug bool,
+) {
+	for msg := range ch {
+		if schedDebug && br != nil {
+			dispatchSchedDebug(msg.ctx, logger, br, msg.npc, msg.action, msg.reason)
+		} else if relay != nil {
+			relay(msg.ctx, bridge.EventScheduleTrigger, msg.triggerData)
+		}
+	}
+}
+
+// dispatchSchedDebug sends the schedule action as game chat + text bubble for
+// visual debugging without waking the LLM.
+func dispatchSchedDebug(
+	ctx context.Context,
+	logger *slog.Logger,
+	br *bridge.WSClient,
+	npc, action, reason string,
+) {
+	msg := fmt.Sprintf("[schedule] %s", action)
+	if reason != "" {
+		msg = fmt.Sprintf("%s — %s", msg, reason)
+	}
+	logger.Debug("schedDebug: dispatching",
+		"npc", npc, "msg", msg)
+	_, _ = br.CallAs(ctx, npc, bridge.ActionChatSay, map[string]any{
+		"npc":  npc,
+		"text": msg,
+	})
+	_, _ = br.CallAs(ctx, npc, bridge.ActionNpcShowTextBubble, map[string]any{
+		"npc":  npc,
+		"text": msg,
+	})
 }
 
 // synthChatMessageFromAudible inspects a chat_received payload and, when

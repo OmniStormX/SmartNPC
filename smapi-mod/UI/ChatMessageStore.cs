@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using StardewValley;
 
 namespace SmartNPC.Bridge
 {
@@ -9,6 +10,7 @@ namespace SmartNPC.Bridge
         public string Text { get; set; } = "";
         public bool IsPlayer { get; set; }
         public DateTime Time { get; set; } = DateTime.Now;
+        public int GameTime { get; set; } // in-game time of day when this message was created (e.g. 1430)
     }
 
     /// <summary>
@@ -39,6 +41,7 @@ namespace SmartNPC.Bridge
                 Text = text,
                 IsPlayer = isPlayer,
                 Time = DateTime.Now,
+                GameTime = Game1.timeOfDay,
             });
             if (list.Count > _maxPerNpc)
                 list.RemoveAt(0);

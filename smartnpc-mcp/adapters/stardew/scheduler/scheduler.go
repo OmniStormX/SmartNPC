@@ -11,6 +11,8 @@
 package scheduler
 
 import (
+	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -88,6 +90,18 @@ func (s *Scheduler) SetSchedule(sched DaySchedule) {
 	s.schedules[sched.NPC] = &sched
 }
 
+// AlreadyPlannedToday reports whether the NPC already has a schedule for this
+// game day. Used by npc_plan_day to warn the LLM it's re-planning the same day.
+func (s *Scheduler) AlreadyPlannedToday(npc string, day int, season string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sched := s.schedules[npc]
+	if sched == nil {
+		return false
+	}
+	return sched.Day == day && sched.Season == season
+}
+
 // GetSchedule returns the current day's schedule for an NPC.
 // Returns nil if no schedule is set.
 func (s *Scheduler) GetSchedule(npc string) *DaySchedule {
@@ -110,6 +124,7 @@ func (s *Scheduler) ClearAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.schedules = make(map[string]*DaySchedule)
+	fmt.Fprintln(os.Stderr, "\033[34m[schedule]: =========clear =========\033[0m")
 }
 
 // ClearNPC removes the schedule for a specific NPC.

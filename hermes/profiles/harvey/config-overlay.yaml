@@ -118,7 +118,7 @@ model:
   default: ${HERMES_AGENT_MODEL}
   base_url: ${HERMES_AGENT_URL}
   api_mode: chat_completions
-  context_length: 64000
+  context_length: 500000
 
 providers:
   smartnpc-agent:
@@ -131,10 +131,10 @@ providers:
 
 compression:
   enabled: true
-  threshold: 0.15
-  target_ratio: 0.10
-  protect_last_n: 8
-  hygiene_hard_message_limit: 60
+  threshold: 0.30
+  target_ratio: 0.25
+  protect_last_n: 12
+  hygiene_hard_message_limit: 80
 
 agent:
   tool_use_enforcement: false

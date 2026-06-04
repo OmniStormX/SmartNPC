@@ -94,16 +94,17 @@ func FormatForHermes(name string, data json.RawMessage) string {
 				dow = "?"
 			}
 			return fmt.Sprintf(
-				"A new day begins: %s %d (%s), year %d.\n\n"+
-					"⚠️ MANDATORY: You MUST call `npc_plan_day` this turn to submit your "+
-					"daily schedule. Steps:\n"+
+				"⚡ SYSTEM: This is a day_started turn. Text-only output will be "+
+					"silently IGNORED — you MUST use tool calls. If unsure of the "+
+					"procedure, call `skill_view` to load `smartnpc-game-tool-policy` and read §6.\n\n"+
+					"A new day begins: %s %d (%s), year %d.\n\n"+
+					"⚠️ MANDATORY — call these tools IN ORDER:\n"+
 					"  1. `game_get_time` — confirm day/season/year.\n"+
 					"  2. `game_get_weather` — check weather (skip outdoor work if rainy).\n"+
-					"  3. Think about what you would do today based on your personality, "+
-					"the weather, and the season.\n"+
-					"  4. Call `npc_plan_day` with 3-8 entries spread across hours 7-22.\n\n"+
+					"  3. `npc_plan_day` with 3-8 entries spread across hours 7-22.\n\n"+
+					"Do NOT produce assistant text before or after these tool calls. "+
 					"Do NOT call `chat_say` — the player has not spoken to you. "+
-					"Do NOT skip `npc_plan_day`; it is required every new day.",
+					"This turn is valid ONLY if `npc_plan_day` is invoked.",
 				capitalize(p.Season), p.Day, dow, p.Year)
 		}
 	case bridge.EventLocationChanged:
@@ -162,7 +163,19 @@ func FormatForHermes(name string, data json.RawMessage) string {
 	case bridge.EventGameTimeTick:
 		var p GameTimeTick
 		if err := json.Unmarshal(data, &p); err == nil {
-			return fmt.Sprintf("The time is now %d:00 (game hour %d).", p.Hour, p.Hour)
+			// Rich format when mod sends day/season/year (M5.14+).
+			// Falls back to bare hour format for older mod payloads.
+			if p.Season != "" && p.Day > 0 {
+				return fmt.Sprintf(
+					"%s %s %d (Y%d) — %d:00. "+
+						"This is a time-of-day tick; it is NOT a new day. "+
+						"If you already called npc_plan_day today, do NOT plan again — "+
+						"use npc_get_schedule if you need to check.",
+					capitalize(p.Season), p.DayOfWeek, p.Day, p.Year, p.Hour)
+			}
+			return fmt.Sprintf("The time is now %d:00 (game hour %d). "+
+				"If you already planned your day (npc_plan_day), do NOT plan again — "+
+				"check with npc_get_schedule if unsure.", p.Hour, p.Hour)
 		}
 	case bridge.EventScheduleTrigger:
 		var p ScheduleTrigger

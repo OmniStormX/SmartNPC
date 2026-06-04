@@ -352,6 +352,10 @@ namespace SmartNPC.Bridge
             {
                 hour,
                 time = e.NewTime,
+                day = Game1.dayOfMonth,
+                season = Game1.currentSeason,
+                year = Game1.year,
+                day_of_week = Game1.shortDayNameFromDayOfSeason(Game1.dayOfMonth),
             });
             this.Monitor.Log($"[Schedule] game_time_tick emitted: hour={hour} (raw={e.NewTime})", LogLevel.Trace);
         }

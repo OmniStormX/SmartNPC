@@ -1,4 +1,4 @@
-package hermesrelay
+﻿package hermesrelay
 
 import (
 	"fmt"
@@ -24,8 +24,9 @@ type profileEntry struct {
 	Conversation string `yaml:"conversation"`
 	Model        string `yaml:"model"`
 	APIKeyEnv    string `yaml:"api_key_env"`
-	PersonaFile  string `yaml:"persona_file,omitempty"`
-	TimeoutMS    int    `yaml:"timeout_ms,omitempty"`
+	PersonaFile        string `yaml:"persona_file,omitempty"`
+	CriticalPolicyFile string `yaml:"critical_policy_file,omitempty"`
+	TimeoutMS          int    `yaml:"timeout_ms,omitempty"`
 }
 
 // LoadConfigFile reads a multi-profile runtime config and returns a slice of
@@ -98,7 +99,8 @@ func LoadConfigFile(path string) ([]Config, error) {
 			Conversation:  p.Conversation,
 			Model:         p.Model,
 			NPCName:       p.NPCFilter,
-			PersonaFile:   p.PersonaFile,
+			PersonaFile:        p.PersonaFile,
+				CriticalPolicyFile: p.CriticalPolicyFile,
 			DebugPayload:  debugPayload,
 			PayloadLogger: payloadLogger,
 			Store:         store,

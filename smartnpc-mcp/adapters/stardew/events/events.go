@@ -76,8 +76,12 @@ type DayStarted struct {
 // GameTimeTick — emitted every in-game hour (when time changes to XX:00).
 // Drives the NPC schedule dispatcher in the router.
 type GameTimeTick struct {
-	Hour int `json:"hour"` // 6-25 (SDV convention)
-	Time int `json:"time"` // raw SDV time value, e.g. 900 = 9:00am
+	Hour      int    `json:"hour"`       // 6-25 (SDV convention)
+	Time      int    `json:"time"`       // raw SDV time value, e.g. 900 = 9:00am
+	Day       int    `json:"day"`        // 1-28
+	Season    string `json:"season"`     // spring/summer/fall/winter
+	Year      int    `json:"year"`       // in-game year
+	DayOfWeek string `json:"day_of_week"` // short day name, e.g. Mon
 }
 
 // LocationChanged — a watched NPC or the player moved between maps.

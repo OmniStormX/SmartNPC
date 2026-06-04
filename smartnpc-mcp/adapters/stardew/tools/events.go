@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -30,9 +31,18 @@ func MakeEventForwarder(server *mcp.Server, log *slog.Logger) bridge.EventHandle
 			"data":      json.RawMessage(data),
 			"timestamp": time.Now().UnixMilli(),
 		}
+
+		// Log the envelope being forwarded to all MCP sessions.
+		if rawPayload, err := json.Marshal(payload); err == nil {
+			LogSessionForward(name, rawPayload)
+		} else {
+			LogSessionForward(name, json.RawMessage(fmt.Appendf(nil, `{"marshal_error":%q}`, err.Error())))
+		}
+
 		// Push to every active session. Errors are non-fatal — sessions may
 		// have closed in flight. server.Sessions() returns iter.Seq, which
 		// we drain with the explicit pull form to stay Go-1.22 compatible.
+		//TODO - currently sends all Events to Hermes Agent over MCP
 		server.Sessions()(func(sess *mcp.ServerSession) bool {
 			if err := sess.Log(ctx, &mcp.LoggingMessageParams{
 				Level: "info",

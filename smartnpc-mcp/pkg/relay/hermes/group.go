@@ -43,18 +43,30 @@ func NewGroup(configs []Config, logger *slog.Logger) (*Group, error) {
 // match. When no relay matches, the event is dropped with a debug log so an
 // unrouteable NPC name surfaces during diagnosis.
 func (g *Group) HandleEvent(ctx context.Context, name string, data json.RawMessage) {
-	matched := 0
+	matched := make([]string, 0, len(g.relays))
+	skipped := make([]string, 0)
+
 	for _, r := range g.relays {
+		npcName := r.cfg.NPCName
 		if !r.ShouldRoute(name, data) {
+			if npcName != "" {
+				skipped = append(skipped, npcName)
+			}
 			continue
 		}
 		r.HandleEvent(ctx, name, data)
-		matched++
+		if npcName != "" {
+			matched = append(matched, npcName)
+		}
 	}
-	if matched == 0 {
+
+	if len(matched) == 0 {
 		recipient, _, _ := events.RecipientNPC(name, data)
-		g.logger.Debug("hermesrelay group: no profile matched event, dropping",
-			"event", name, "recipient", recipient)
+		g.logger.Warn("hermesrelay group: no profile matched event, dropping",
+			"event", name, "recipient", recipient, "total_relays", len(g.relays), "skipped", skipped)
+	} else {
+		g.logger.Info("hermesrelay group: event dispatched",
+			"event", name, "matched", matched, "skipped", skipped)
 	}
 }
 

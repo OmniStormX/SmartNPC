@@ -23,6 +23,13 @@ func New(level string) *slog.Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})
+	// AddSource: true makes slog attach a "source" group with file/line/function
+	// to every record, e.g. "source":{"function":"main.run","file":".../main.go","line":120}.
+	// Cost is one runtime.Callers per log call — negligible for our volume,
+	// and invaluable when grepping logs to locate where a message came from.
+	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level:     lvl,
+		AddSource: true,
+	})
 	return slog.New(h)
 }
