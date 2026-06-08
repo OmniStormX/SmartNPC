@@ -29,6 +29,7 @@ namespace SmartNPC.Bridge
         // Per-save persistence keys.
         private const string SaveKey_ChatHistory = "smartnpc.chat_history";
         private const string SaveKey_Unread      = "smartnpc.unread";
+        private const string SaveKey_Inventories = "smartnpc.inventories";
 
         private ModConfig _config = null!;
 
@@ -48,6 +49,7 @@ namespace SmartNPC.Bridge
 
         private readonly ChatMessageStore _messageStore = new();
         private readonly UnreadTracker    _unread       = new();
+        private readonly NpcInventory     _npcInventory = new();
         private NotificationToast?        _toast;
         private GroupChatManager?         _groupMgr;
 
@@ -118,8 +120,8 @@ namespace SmartNPC.Bridge
                 var actionHandlers = new NpcActionHandlerBase[]
                 {
                     // World actions.
-                    new WanderHandler(this.Monitor, showBubble),
-                    new ClearDebrisHandler(this.Monitor, showBubble),
+                    new WanderHandler(this.Monitor, showBubble, _follow),
+                    new ClearDebrisHandler(this.Monitor, showBubble, _npcInventory),
                     new WaterCropsHandler(this.Monitor, showBubble),
                     new HarvestCropsHandler(this.Monitor, showBubble),
                     new DepositItemsHandler(this.Monitor, showBubble),
@@ -175,7 +177,7 @@ namespace SmartNPC.Bridge
                 _chat.SetGroupManager(_groupMgr);
 
                 // Register SMAPI console debug commands.
-                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws);
+                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws, _follow);
 
                 this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat + mail + UI)", LogLevel.Info);
             }
@@ -223,6 +225,9 @@ namespace SmartNPC.Bridge
                 // _messageStore.Restore(hist);
                 var un = this.Helper.Data.ReadSaveData<Dictionary<string, int>>(SaveKey_Unread);
                 _unread.Restore(un);
+                var inv = this.Helper.Data.ReadSaveData<Dictionary<string, List<ItemSlot>>>(SaveKey_Inventories);
+                _npcInventory.Restore(inv);
+                this.Monitor.Log($"NPC inventories restored ({AgentNpcRegistry.GetAll().Count} NPCs)", LogLevel.Debug);
                 this.Monitor.Log(
                     $"Chat history cleared on load; unread restored ({_unread.TotalUnread})",
                     LogLevel.Debug);
@@ -247,6 +252,7 @@ namespace SmartNPC.Bridge
             {
                 this.Helper.Data.WriteSaveData(SaveKey_ChatHistory, _messageStore.Snapshot());
                 this.Helper.Data.WriteSaveData(SaveKey_Unread,      _unread.Snapshot());
+                this.Helper.Data.WriteSaveData(SaveKey_Inventories, _npcInventory.Snapshot());
             }
             catch (Exception ex)
             {
