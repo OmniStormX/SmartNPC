@@ -24,13 +24,16 @@ namespace SmartNPC.Bridge
         private const string CmdProactive  = "smartnpc_proactive";
         private const string CmdStatus     = "smartnpc_status";
         private const string CmdTick       = "smartnpc_tick";
-        private const string CmdGoto       = "smartnpc_goto";
-        private const string CmdGather     = "smartnpc_gather";
+        private const string CmdGoto        = "smartnpc_goto";
+        private const string CmdGather      = "smartnpc_gather";
+        private const string CmdWander      = "smartnpc_wander";
+        private const string CmdClearDebris = "smartnpc_clear_debris";
+        private const string CmdDeposit     = "smartnpc_deposit_items";
 
         private static readonly Random s_rng = new();
         private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
-        public static void Register(ICommandHelper commands, IMonitor log, WebSocketServer ws)
+        public static void Register(ICommandHelper commands, IMonitor log, WebSocketServer ws, FollowSystem follow, NpcInventory inventory)
         {
             commands.Add(
                 name: CmdFriendship,
@@ -110,7 +113,36 @@ namespace SmartNPC.Bridge
                     $"Usage: {CmdGather}",
                 callback: (_, args) => HandleGather(args, log));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}", LogLevel.Trace);
+            commands.Add(
+                name: CmdWander,
+                documentation:
+                    "Force an NPC to immediately wander to a random nearby tile.\n" +
+                    "Uses the same PathFindController logic as the npc_wander MCP tool.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdWander} <NpcName>           Wander with default radius (8 tiles).\n" +
+                    $"  {CmdWander} <NpcName> <radius>  Wander within radius tiles (1..24).",
+                callback: (_, args) => HandleWander(args, log, follow));
+
+            commands.Add(
+                name: CmdClearDebris,
+                documentation:
+                    "Force an NPC to clear nearby debris (weeds/twigs/stones) and collect drops into their backpack.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdClearDebris} <NpcName>                    radius=5 max=3\n" +
+                    $"  {CmdClearDebris} <NpcName> <radius> <max>     e.g. Abigail 8 5",
+                callback: (_, args) => HandleClearDebris(args, log, inventory, follow));
+
+            commands.Add(
+                name: CmdDeposit,
+                documentation:
+                    "Force an NPC to walk to the nearest chest and deposit backpack items.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdDeposit} <NpcName>                      auto-find nearest chest, deposit all\n" +
+                    $"  {CmdDeposit} <NpcName> <chestX> <chestY>   deposit to specific chest, deposit all\n" +
+                    $"  {CmdDeposit} <NpcName> auto (O)390 (O)388  auto-find, filter by item ids",
+                callback: (_, args) => HandleDeposit(args, log, inventory, follow));
+
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}, {CmdWander}, {CmdClearDebris}, {CmdDeposit}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -697,6 +729,169 @@ namespace SmartNPC.Bridge
                 }
             }
             return fallback;
+        }
+
+        // ── smartnpc_wander ────────────────────────────────────────────
+
+        // Immediately triggers the npc_wander action on the specified NPC.
+        // Delegates directly to WanderHandler.DoWander so the debug path
+        // and the MCP path exercise exactly the same logic.
+        private static void HandleWander(string[] args, IMonitor log, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdWander} <NpcName> [radius]", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            int radius = 8;
+            if (args.Length >= 2)
+            {
+                if (!int.TryParse(args[1], out radius) || radius < 1 || radius > 24)
+                {
+                    log.Log($"invalid radius: '{args[1]}' (must be int 1..24)", LogLevel.Error);
+                    return;
+                }
+            }
+
+            WanderHandler.DoWander(npc, name, radius, follow, log);
+            log.Log($"[smartnpc_wander] triggered wander for {name} radius={radius}", LogLevel.Info);
+        }
+
+        // ── smartnpc_clear_debris ──────────────────────────────────────
+
+        private static void HandleClearDebris(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdClearDebris} <NpcName> [radius] [max_count]", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            int radius   = 5;
+            int maxCount = 3;
+            if (args.Length >= 2 && (!int.TryParse(args[1], out radius) || radius < 1 || radius > 10))
+            {
+                log.Log($"invalid radius '{args[1]}' (1..10)", LogLevel.Error);
+                return;
+            }
+            if (args.Length >= 3 && (!int.TryParse(args[2], out maxCount) || maxCount < 1 || maxCount > 10))
+            {
+                log.Log($"invalid max_count '{args[2]}' (1..10)", LogLevel.Error);
+                return;
+            }
+
+            // Build a JsonElement params object and delegate to ClearDebrisHandler.Execute
+            // via the same path the MCP tool uses, so both exercise identical logic.
+            var paramsDict = new System.Collections.Generic.Dictionary<string, object>
+            {
+                ["npc"]       = name,
+                ["radius"]    = radius,
+                ["max_count"] = maxCount,
+            };
+            string json = System.Text.Json.JsonSerializer.Serialize(paramsDict);
+            var paramsEl = System.Text.Json.JsonDocument.Parse(json).RootElement;
+
+            var handler = new ClearDebrisHandler(log, () => false, inventory, follow);
+            handler.ExecuteDebug(npc, name, paramsEl);
+            log.Log($"[smartnpc_clear_debris] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
+        }
+
+        // ── smartnpc_deposit_items ─────────────────────────────────────────
+
+        // Usage:
+        //   smartnpc_deposit_items <NpcName>                      → auto-find, all items
+        //   smartnpc_deposit_items <NpcName> <chestX> <chestY>   → specific chest, all items
+        //   smartnpc_deposit_items <NpcName> auto (O)390 (O)388  → auto-find, filtered
+        private static void HandleDeposit(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdDeposit} <NpcName> [chestX chestY | auto] [(O)itemId ...]", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            bool autoFind = true;
+            int  chestX   = 0;
+            int  chestY   = 0;
+            System.Collections.Generic.List<string>? itemIds = null;
+            int argIdx = 1;
+
+            if (args.Length > 1)
+            {
+                if (string.Equals(args[1], "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    autoFind = true;
+                    argIdx   = 2;
+                }
+                else if (args.Length >= 3 && int.TryParse(args[1], out int px) && int.TryParse(args[2], out int py))
+                {
+                    autoFind = false;
+                    chestX   = px;
+                    chestY   = py;
+                    argIdx   = 3;
+                }
+            }
+
+            // Remaining args are item_ids.
+            if (argIdx < args.Length)
+            {
+                itemIds = new System.Collections.Generic.List<string>();
+                for (int i = argIdx; i < args.Length; i++)
+                    itemIds.Add(args[i]);
+            }
+
+            bool started = follow.StartDepositItems(
+                name, npc,
+                new Microsoft.Xna.Framework.Point(chestX, chestY),
+                autoFind, null,
+                itemIds,
+                inventory);
+
+            if (started)
+                log.Log($"[smartnpc_deposit_items] triggered for {name} autoFind={autoFind} chest=({chestX},{chestY})", LogLevel.Info);
+            else
+                log.Log($"[smartnpc_deposit_items] could not start (no chest found?)", LogLevel.Warn);
         }
     }
 }
