@@ -18,7 +18,7 @@ type NpcInventoryGetInput struct {
 type ItemSlotOutput struct {
 	ItemId  string `json:"item_id"           jsonschema:"SDV qualified item id"`
 	Count   int    `json:"count"             jsonschema:"stack size"`
-	Quality int    `json:"quality"           jsonschema:"0=normal 1=silver 2=gold 4=iridium"`
+	Quality int    `json:"quality"           jsonschema:"item quality: normal=0 silver=1 gold=2 iridium=4"`
 }
 
 type NpcInventoryGetOutput struct {
@@ -33,7 +33,7 @@ type NpcInventoryPutInput struct {
 	NPC     string `json:"npc"               jsonschema:"NPC internal name"`
 	ItemId  string `json:"item_id"           jsonschema:"SDV qualified item id, e.g. \"(O)390\""`
 	Count   int    `json:"count"             jsonschema:"amount to add (default 1)"`
-	Quality int    `json:"quality,omitempty" jsonschema:"0=normal 1=silver 2=gold 4=iridium"`
+	Quality int    `json:"quality,omitempty" jsonschema:"item quality: normal=0 silver=1 gold=2 iridium=4"`
 }
 
 type NpcInventoryPutOutput struct {
