@@ -48,7 +48,7 @@ const (
 	// Debug — fired by the SMAPI mod's `sn_proactive` console command.
 	// Carries `{npc: "<PascalCase>"}`. Format layer renders it as a
 	// system-prompt nudge that makes the target NPC run the
-	// smartnpc-proactive-visit SKILL immediately, skipping the dice
+	// smartnpc-visit SKILL immediately, skipping the dice
 	// roll and the 60-minute cool-down. Intended for operators
 	// testing proactive behavior without waiting for the scheduled
 	// */15 minute cron.

@@ -95,16 +95,11 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			}
 			return fmt.Sprintf(
 				"⚡ SYSTEM: This is a day_started turn. Text-only output will be "+
-					"silently IGNORED — you MUST use tool calls. If unsure of the "+
-					"procedure, call `skill_view` to load `smartnpc-day-plan-policy`.\n\n"+
+					"silently IGNORED — you MUST use tool calls.\n\n"+
 					"A new day begins: %s %d (%s), year %d.\n\n"+
-					"⚠️ MANDATORY — call these tools IN ORDER:\n"+
-					"  1. `game_get_time` — confirm day/season/year.\n"+
-					"  2. `game_get_weather` — check weather (skip outdoor work if rainy).\n"+
-					"  3. `npc_plan_day` with 3-8 entries spread across hours 7-22.\n\n"+
-					"Do NOT produce assistant text before or after these tool calls. "+
-					"Do NOT call `chat_say` — the player has not spoken to you. "+
-					"This turn is valid ONLY if `npc_plan_day` is invoked.",
+					"Load `smartnpc-schedule` via skill_view and follow §A (Plan the day). "+
+					"Do NOT produce text before tool calls. "+
+					"Do NOT call `chat_say` — the player has not spoken to you.",
 				capitalize(p.Season), p.Day, dow, p.Year)
 		}
 	case bridge.EventLocationChanged:
@@ -137,7 +132,7 @@ func FormatForHermes(name string, data json.RawMessage) string {
 				"[inter_npc_message from=%q to=%q] NPC %s sent you a private message: %s\n\n"+
 					"⚠️ This is an INTER-NPC wake-up, NOT a player turn. The player did "+
 					"NOT speak; do NOT chat_say back to the player as if they did.%s\n\n"+
-					"Follow `smartnpc-inter-npc-message` (load it via skill_view if "+
+					"Follow `smartnpc-inter-npc` (load it via skill_view if "+
 					"unfamiliar). Mandatory flow:\n"+
 					"  1. `npc_inbox_get(npc=%q)` to read the full item (id + kind).\n"+
 					"  2. Decide audibility via `npc_get_position` + `player_get_status`.\n"+
@@ -187,7 +182,7 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			return fmt.Sprintf(
 				"[schedule_trigger] It is now %d:00 — your planned activity is: `%s`%s.\n\n"+
 					"If unsure of the procedure, call `skill_view` to load "+
-					"`smartnpc-schedule-action-policy`.\n\n"+
+					"`smartnpc-schedule`.\n\n"+
 					"Call `%s` NOW with concrete arguments you choose based on live "+
 					"game state — your current location, what's nearby, weather, "+
 					"inventory, who else is around, etc. The schedule only commits "+
@@ -204,7 +199,7 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			return fmt.Sprintf(
 				"[debug proactive-visit force=true target=%s] The operator "+
 					"forced an immediate proactive-visit trigger for testing. "+
-					"Follow smartnpc-proactive-visit but SKIP steps 1 and 2 "+
+					"Follow smartnpc-visit but SKIP steps 1 and 2 "+
 					"(cool-down and dice — this run is intentional, not "+
 					"scheduled). Do steps 3-5 normally: check "+
 					"player_get_status, check game_get_time politeness "+

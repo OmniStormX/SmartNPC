@@ -79,6 +79,7 @@ namespace SmartNPC.Bridge
                 // Harmony patches (centralized).
                 var harmony = new Harmony(this.ModManifest.UniqueID);
                 NpcDialoguePatch.Apply(harmony, this.Monitor);
+                AgentControlPatch.Apply(harmony, this.Monitor);
 
                 _router = new MessageRouter(this.Monitor);
                 _mail   = new MailHandler(this.Monitor);
@@ -210,7 +211,10 @@ namespace SmartNPC.Bridge
         {
             string[] managedVanilla = { "Abigail", "Sebastian", "Haley", "Harvey", "Penny" };
             foreach (string npc in managedVanilla)
+            {
                 AgentNpcRegistry.Register(npc);
+                _follow?.EnsureRegistered(npc);   // pre-register Idle guard
+            }
 
             try
             {
@@ -231,6 +235,9 @@ namespace SmartNPC.Bridge
             this.Monitor.Log(
                 $"Agent-managed NPCs registered: {string.Join(", ", managedVanilla)}",
                 LogLevel.Info);
+
+            // Suppress schedule on the current day immediately after save load.
+            SuppressScheduleForAgentNpcs();
         }
 
         /// <summary>Persist chat history + unread counters into the save file.</summary>
@@ -333,6 +340,37 @@ namespace SmartNPC.Bridge
                 day_of_week = dow,
             });
             this.Monitor.Log($"[Schedule] day_started emitted: Y{year} {season} {day} ({dow})", LogLevel.Debug);
+
+            // Cut game schedule control for all Agent-managed NPCs.
+            // dayupdate() resets ignoreScheduleToday = false and calls TryLoadSchedule()
+            // before DayStarted fires, so we must re-suppress here every morning.
+            SuppressScheduleForAgentNpcs();
+        }
+
+        /// <summary>
+        /// For every Agent-managed NPC: set ignoreScheduleToday=true and clear the
+        /// loaded Schedule dictionary so the game's checkSchedule() is a no-op.
+        /// Also clear any in-flight PathFindController left over from yesterday.
+        /// </summary>
+        private void SuppressScheduleForAgentNpcs()
+        {
+            foreach (string npcName in AgentNpcRegistry.GetAll())
+            {
+                NPC? npc = Game1.getCharacterFromName(npcName);
+                if (npc is null) continue;
+
+                npc.ignoreScheduleToday = true;
+                npc.Schedule?.Clear();
+
+                // Cancel any controller the game set during dayupdate warp-home logic.
+                if (npc.controller != null)
+                {
+                    try { npc.Halt(); } catch { /* non-fatal */ }
+                    npc.controller = null;
+                }
+
+                this.Monitor.Log($"[AgentControl] schedule suppressed for {npcName}", LogLevel.Debug);
+            }
         }
 
         /// <summary>

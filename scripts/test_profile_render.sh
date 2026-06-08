@@ -401,7 +401,7 @@ check_identical() {
 
 echo "[10/10] byte-identity for skills with no per-NPC placeholders"
 ok=1
-check_identical "skills/smartnpc/smartnpc-proactive-greeting/SKILL.md" "fail" || ok=0
+check_identical "skills/smartnpc/smartnpc-greeting/SKILL.md" "fail" || ok=0
 [ "$ok" -eq 1 ] || fail "byte-identity check failed; see above"
 
 echo ""

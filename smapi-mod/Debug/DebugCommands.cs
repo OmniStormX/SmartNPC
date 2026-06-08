@@ -25,6 +25,7 @@ namespace SmartNPC.Bridge
         private const string CmdStatus     = "smartnpc_status";
         private const string CmdTick       = "smartnpc_tick";
         private const string CmdGoto       = "smartnpc_goto";
+        private const string CmdGather     = "smartnpc_gather";
 
         private static readonly Random s_rng = new();
         private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(5) };
@@ -58,7 +59,7 @@ namespace SmartNPC.Bridge
                 documentation:
                     "Force an immediate proactive-visit trigger, bypassing the " +
                     "15-minute cron and the 60-minute cool-down. The targeted NPC " +
-                    "runs the smartnpc-proactive-visit SKILL right now (still " +
+                    "runs the smartnpc-visit SKILL right now (still " +
                     "honoring player_get_status + game_get_time checks).\n" +
                     $"Usage:\n" +
                     $"  {CmdProactive}            Pick a random Agent-managed NPC.\n" +
@@ -100,7 +101,16 @@ namespace SmartNPC.Bridge
                     $"Usage: {CmdGoto} <NpcName>",
                 callback: (_, args) => HandleGoto(args, log));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}", LogLevel.Trace);
+            commands.Add(
+                name: CmdGather,
+                documentation:
+                    "Warp all Agent-managed NPCs to the player's current farm " +
+                    "in a loose ring around the player. Useful for staging " +
+                    "multi-NPC scenes without using Agent commands.\n" +
+                    $"Usage: {CmdGather}",
+                callback: (_, args) => HandleGather(args, log));
+
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -573,6 +583,120 @@ namespace SmartNPC.Bridge
             log.Log(
                 $"warped player to {name} at {dest.Name} ({tileX},{tileY}) facing={FacingName(facing)}",
                 LogLevel.Info);
+        }
+
+        // ── smartnpc_gather ────────────────────────────────────────────
+
+        // Warp all Agent-managed NPCs to the player's current map in a loose
+        // ring around the player.  Each NPC is placed on its own spoke so they
+        // don't overlap.  We try tiles at increasing radius on each spoke until
+        // we find a passable, unoccupied tile — this keeps them spread out even
+        // on busy maps.
+        private static void HandleGather(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+
+            var managed = AgentNpcRegistry.GetAll()
+                .Where(n => Game1.getCharacterFromName(n) != null)
+                .ToList();
+
+            if (managed.Count == 0)
+            {
+                log.Log("no Agent-managed NPCs found in the world.", LogLevel.Warn);
+                return;
+            }
+
+            var player   = Game1.player;
+            var location = player.currentLocation;
+            if (location is null)
+            {
+                log.Log("player has no currentLocation.", LogLevel.Error);
+                return;
+            }
+
+            int baseTileX = (int)(player.Position.X / 64f);
+            int baseTileY = (int)(player.Position.Y / 64f);
+
+            // Spoke angles: evenly distributed around the player.
+            // We start each spoke at radius 3 and step outward until we find a
+            // passable tile, so NPCs land roughly 3–6 tiles away from the player
+            // and don't cluster at a single point.
+            int count = managed.Count;
+            int placed = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                string npcName = managed[i];
+                NPC? npc = Game1.getCharacterFromName(npcName);
+                if (npc is null) continue;
+
+                double angle = (2.0 * Math.PI * i) / count;
+
+                // Search outward from radius 3 until we find a clear tile.
+                Microsoft.Xna.Framework.Vector2 destTile = FindPassableTile(
+                    location, baseTileX, baseTileY, angle, minRadius: 3, maxRadius: 8);
+
+                npc.Halt();
+                if (npc.controller != null) npc.controller = null;
+
+                Game1.warpCharacter(npc, location, destTile);
+
+                // Face the player from the destination tile.
+                double dx = baseTileX - destTile.X;
+                double dy = baseTileY - destTile.Y;
+                int facing = (Math.Abs(dx) >= Math.Abs(dy))
+                    ? (dx >= 0 ? 1 : 3)   // right or left
+                    : (dy >= 0 ? 2 : 0);  // down or up
+                npc.faceDirection(facing);
+
+                log.Log(
+                    $"[smartnpc_gather] {npcName} → {location.Name} ({(int)destTile.X},{(int)destTile.Y}) facing={FacingName(facing)}",
+                    LogLevel.Info);
+                placed++;
+            }
+
+            log.Log($"[smartnpc_gather] gathered {placed}/{count} NPC(s) to {location.Name} around player ({baseTileX},{baseTileY}).", LogLevel.Info);
+        }
+
+        /// <summary>
+        /// Walk outward along <paramref name="angle"/> from the origin tile,
+        /// returning the first passable, unoccupied tile found between
+        /// <paramref name="minRadius"/> and <paramref name="maxRadius"/>.
+        /// Falls back to the minRadius tile if nothing passable is found.
+        /// </summary>
+        private static Microsoft.Xna.Framework.Vector2 FindPassableTile(
+            GameLocation location,
+            int originX, int originY,
+            double angle,
+            int minRadius, int maxRadius)
+        {
+            Microsoft.Xna.Framework.Vector2 fallback =
+                new(originX + (int)Math.Round(Math.Cos(angle) * minRadius),
+                    originY + (int)Math.Round(Math.Sin(angle) * minRadius));
+
+            for (int r = minRadius; r <= maxRadius; r++)
+            {
+                int tx = originX + (int)Math.Round(Math.Cos(angle) * r);
+                int ty = originY + (int)Math.Round(Math.Sin(angle) * r);
+                var tile = new Microsoft.Xna.Framework.Vector2(tx, ty);
+
+                // isTilePassableAndClearOfDebris checks the tile layer + object layer.
+                if (location.isTilePassable(new xTile.Dimensions.Location(tx, ty),
+                        Game1.viewport)
+                    && !location.isObjectAtTile(tx, ty)
+                    && Game1.getCharacterFromName(location.characters
+                           .FirstOrDefault(c => (int)(c.Position.X / 64f) == tx
+                                             && (int)(c.Position.Y / 64f) == ty)
+                           ?.Name ?? "") == null)
+                {
+                    return tile;
+                }
+            }
+            return fallback;
         }
     }
 }

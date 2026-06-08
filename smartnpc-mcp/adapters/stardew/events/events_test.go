@@ -189,8 +189,7 @@ func TestFormatForHermes_DayStartedReferencesDayPlanSkill(t *testing.T) {
 
 	got := FormatForHermes(bridge.EventDayStarted, raw)
 	wantSubs := []string{
-		"smartnpc-day-plan-policy",
-		"npc_plan_day",
+		"smartnpc-schedule",
 		"Do NOT call `chat_say`",
 	}
 	for _, want := range wantSubs {
@@ -198,7 +197,7 @@ func TestFormatForHermes_DayStartedReferencesDayPlanSkill(t *testing.T) {
 			t.Fatalf("FormatForHermes(day_started) = %q; want contains %q", got, want)
 		}
 	}
-	if strings.Contains(got, "smartnpc-game-tool-policy") {
+	if strings.Contains(got, "smartnpc-core") {
 		t.Fatalf("day_started should reference the dedicated day-plan skill, got %q", got)
 	}
 }
@@ -212,7 +211,7 @@ func TestFormatForHermes_ScheduleTriggerReferencesScheduleActionSkill(t *testing
 
 	got := FormatForHermes(bridge.EventScheduleTrigger, raw)
 	wantSubs := []string{
-		"smartnpc-schedule-action-policy",
+		"smartnpc-schedule",
 		"npc_wander",
 		"concrete arguments",
 	}

@@ -141,7 +141,7 @@ type ScheduleTrigger struct {
 }
 
 // DebugProactiveTrigger — operator-initiated forced trigger of the
-// smartnpc-proactive-visit SKILL for a named NPC. Emitted by the mod's
+// smartnpc-visit SKILL for a named NPC. Emitted by the mod's
 // `sn_proactive` SMAPI console command. The `npc` field drives
 // hermesrelay routing; the format layer renders a system nudge that
 // tells the target profile to skip the dice roll + cool-down and go

@@ -77,6 +77,13 @@ namespace SmartNPC.Bridge
 
         // ── public API (called from ws handlers on the game thread via ModEntry) ──
 
+        /// <summary>
+        /// Pre-register an Agent-managed NPC so the Idle guard in PumpOnGameTick
+        /// can cancel game-injected controllers even before the first Agent command.
+        /// Safe to call multiple times for the same name.
+        /// </summary>
+        public void EnsureRegistered(string npcName) => this.GetOrCreate(npcName);
+
         public void Summon(string npcName)
         {
             var st = this.GetOrCreate(npcName);
@@ -138,10 +145,24 @@ namespace SmartNPC.Bridge
             {
                 string name = kv.Key;
                 NpcBehaviorState st = kv.Value;
-                if (st.Mode == NpcBehaviorMode.Idle) continue;
 
                 NPC? npc = Game1.getCharacterFromName(name);
                 if (npc == null) continue;
+
+                // Idle guard: if the game has injected a PathFindController while
+                // the Agent isn't driving any movement, cancel it immediately.
+                // This covers schedule-driven pathing that survived ignoreScheduleToday,
+                // warp-home logic from returnHomeFromFarmPosition, and any other
+                // game-side controller assignment.
+                if (st.Mode == NpcBehaviorMode.Idle && npc.controller != null)
+                {
+                    try { npc.Halt(); } catch { /* non-fatal */ }
+                    npc.controller = null;
+                    _log.Log($"[FollowSystem] cancelled game-injected controller for {name}", LogLevel.Trace);
+                    continue;
+                }
+
+                if (st.Mode == NpcBehaviorMode.Idle) continue;
 
                 try
                 {

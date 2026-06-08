@@ -155,14 +155,14 @@ smartnpc-mcp/
 - `smartnpc-mcp/adapters/stardew/bridge/` — ws 客户端 + testserver mock
 - `smartnpc-mcp/adapters/stardew/events/` — 游戏事件 typed structs（`ChatMessage` / `NpcInteract` 等）+ format 工具
 - `hermes/npcs.yaml` — **NPC 元数据唯一真相源**（id / game_name / display_name / gateway_port / peer 关系）。增删 NPC 必须从这个文件开始，`render_profiles.sh` 和 `runtime-config.yaml` 都从它生成。
-- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。
-- `hermes/profiles/<npc>/` — 单个 NPC profile。`SOUL.md` 手写保留，其余由 `_master/` 渲染生成。6 个 NPC：`xiami` / `abigail` / `haley` / `harvey` / `penny` / `sebastian`。
+- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `critical-policy.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。Skills：`smartnpc-core` / `smartnpc-gift` / `smartnpc-greeting` / `smartnpc-group-chat` / `smartnpc-inter-npc` / `smartnpc-memory` / `smartnpc-schedule` / `smartnpc-visit`。
+- `hermes/profiles/<npc>/` — 单个 NPC profile。`SOUL.md` 手写保留，`critical-policy.md` 手写保留，其余由 `_master/` 渲染生成。6 个 NPC：`xiami` / `abigail` / `haley` / `harvey` / `penny` / `sebastian`。
 - `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
 - `smapi-mod/NPC/` — 多 NPC 路由（`AudibleNPCResolver.cs` + `TurnQueue.cs`）
 - `smapi-mod/{Query,Perception,Movement,Mail,Chat,UI}/` — 按 domain 拆分的游戏侧 handler
 - `smapi-mod/assets/xiami/` — NPC sprite 资产 + 构建脚本
 - `scripts/` — Hermes 管理脚本：`render_profiles.sh`（渲染模板）、`start_hermes_profiles.sh`（启动指定 NPC gateway）、`detect_wsl_ips.sh`（自动探测 WSL/Windows IP）、`apply_hermes_tuning.sh`（调参）、`lib/npc_registry.sh`（从 `hermes/npcs.yaml` 读 NPC 列表的公共库）
-- `deploy/hermes/` — Docker Compose 部署方案（Dockerfile + docker-compose.yml + Langfuse 可选）
+- `deploy/hermes/` — Docker Compose 部署方案（Dockerfile + docker-compose.yml + Langfuse 可选）；`deploy/hermes/profiles/` 是旧版 profile 备份，日常开发以 `hermes/profiles/` 为准
 
 ## Sprite 资产管线
 
@@ -275,20 +275,15 @@ git tag v0.x.0 && git push origin v0.x.0
 
 ## M5 (Hermes-first) 落地清单
 
-| # | 内容 | 关键产物 |
-|---|------|---------|
-| 5.0 / 5.0b | 冻结声明 + Hermes 触发方案锁定 B | `REFACTOR.md` / `docs/hermes-event-trigger.md` |
-| 5.1 | smartnpc-mcp `--http :3000` Streamable HTTP | `cmd/smartnpc-mcp/main.go::runHTTP` |
-| 5.2 | tool description 操作手册化（when to call / side-effect） | `smartnpc-mcp/internal/tools/*.go` |
-| 5.3 | inter-NPC 工具 `npc_send_message` / `_broadcast_event` / `_inbox_*`（合成事件复用 hermesrelay outbound 路径，触发 recipient profile） | `internal/tools/npc_message.go` + ADR-0001 |
-| 5.4 | 事件 payload 规范化（typed structs + reserved schemas） | `internal/events/` + `docs/events.md` |
-| 5.5 | `hermes/profiles/xiami/`（SOUL.md + skill + overlay） | `hermes/` + `hermes/install.sh` |
-| 5.8 | hermesrelay outbound HTTP → Hermes Gateway | `internal/hermesrelay/` |
-| 5.9 / 5.10 / 5.11 | proactive-greeting + memory-policy + cron recipes | `hermes/profiles/xiami/skills/...` + `cron-recipes.md` |
-| 5.12 | SMAPI mod 多 NPC 路由（AudibleNPCResolver + TurnQueue） | `smapi-mod/NPC/AudibleNPCResolver.cs` + `TurnQueue.cs` |
-| 5.13 | 删除旧 `smartnpc-agent/` Go 编排器 | 已完成 |
-| 5.14 | 文档拆分（architecture / hermes-profiles / mcp-tools） | `docs/` |
+全部代码已就绪；5.6 / 5.7（实机端到端）待用户验证。详见 [`REFACTOR.md`](REFACTOR.md)、[`docs/architecture.md`](docs/architecture.md)、[ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md)。
 
-**待验证（5.6 / 5.7）**：实机跑通"玩家聊天 → Hermes → chat_say"和"问时间 → Hermes 自动调 game_get_time"。代码全部就绪，pipeline 集成测试已有；需要游戏 + Hermes gateway + mcp HTTP 模式同时跑一次完整 happy path。
+关键路径参考（ADR-0004 重构后实际路径）：
 
-> 详见 [ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md) — synthetic events 为何复用 hermesrelay outbound 路径。
+| 内容 | 实际路径 |
+|------|---------|
+| MCP 工具（tool description） | `adapters/stardew/tools/*.go` |
+| inter-NPC 工具 | `adapters/stardew/tools/npc_message.go` |
+| 事件 typed structs | `adapters/stardew/events/` |
+| Hermes relay Backend | `pkg/relay/hermes/` |
+| NPC profile + skills | `hermes/profiles/<npc>/` |
+| SMAPI 多 NPC 路由 | `smapi-mod/NPC/AudibleNPCResolver.cs` + `TurnQueue.cs` |
