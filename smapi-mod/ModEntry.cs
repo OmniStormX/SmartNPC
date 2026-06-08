@@ -51,6 +51,7 @@ namespace SmartNPC.Bridge
         private readonly UnreadTracker    _unread       = new();
         private readonly NpcInventory     _npcInventory = new();
         private NotificationToast?        _toast;
+        private NpcInventoryHud?          _inventoryHud;
         private GroupChatManager?         _groupMgr;
 
         public override void Entry(IModHelper helper)
@@ -179,6 +180,8 @@ namespace SmartNPC.Bridge
                 // Register SMAPI console debug commands.
                 DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws, _follow);
 
+                _inventoryHud = new NpcInventoryHud(_npcInventory, OpenInventoryPanel);
+
                 this.Monitor.Log($"StardewMCPBridge ready (ws={prefix} + chat + mail + UI)", LogLevel.Info);
             }
             catch (Exception ex)
@@ -265,6 +268,7 @@ namespace SmartNPC.Bridge
             // Toasts are HUD-level; draw above world but below menus.
             if (Game1.activeClickableMenu is ChatPanel) return;
             _toast?.Draw(e.SpriteBatch);
+            _inventoryHud?.Draw(e.SpriteBatch);
         }
 
         /// <summary>Hotkey handler: F2 (panel + focus list), Tab (toggle), F3 (debug).</summary>
@@ -309,11 +313,13 @@ namespace SmartNPC.Bridge
         {
             if (e.Button != SButton.MouseLeft) return;
             if (Game1.activeClickableMenu != null) return;
-            if (_toast == null) return;
 
             int mx = (int)e.Cursor.ScreenPixels.X;
             int my = (int)e.Cursor.ScreenPixels.Y;
-            _toast.TryClick(mx, my);
+
+            // Backpack icon takes priority over toast (icon is smaller / more precise).
+            if (_inventoryHud != null && _inventoryHud.TryClick(mx, my)) return;
+            _toast?.TryClick(mx, my);
         }
 
         private void OnPlayerWarped(object? sender, WarpedEventArgs e)
@@ -418,6 +424,11 @@ namespace SmartNPC.Bridge
         private void OpenChatPanelForNpc(string npcName)
         {
             OpenChatPanel(npcName);
+        }
+
+        private void OpenInventoryPanel(string npcName)
+        {
+            Game1.activeClickableMenu = new NpcInventoryPanel(npcName, _npcInventory);
         }
 
         /// <summary>Called when player sends a message from the chat window.</summary>
