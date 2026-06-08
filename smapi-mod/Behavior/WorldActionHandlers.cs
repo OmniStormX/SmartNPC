@@ -113,7 +113,8 @@ namespace SmartNPC.Bridge
             {
                 // Walk NPC toward target (best-effort; no async await here).
                 var adjacent = new Microsoft.Xna.Framework.Vector2(tile.X, tile.Y + 1);
-                try { npc.controller = null; npc.Halt(); } catch { }
+                try { npc.controller = null; npc.Halt(); }
+                catch (Exception ex) { Log.Log($"[npc_clear_debris] Halt failed: {ex.Message}", LogLevel.Debug); }
                 try
                 {
                     npc.controller = new StardewValley.Pathfinding.PathFindController(
@@ -123,7 +124,7 @@ namespace SmartNPC.Bridge
                         finalFacingDirection: 0,
                         endBehaviorFunction: null);
                 }
-                catch { /* non-fatal, NPC stays put but still clears */ }
+                catch (Exception ex) { Log.Log($"[npc_clear_debris] PathFind skipped: {ex.Message}", LogLevel.Debug); }
 
                 // Play emote and remove object.
                 npc.doEmote(16); // exclamation "!"
