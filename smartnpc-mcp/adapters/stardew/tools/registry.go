@@ -66,6 +66,7 @@ func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler,
 		// Mod side currently returns a stub bubble + ack; the wiring is
 		// real, only the in-game effect is a placeholder.
 		registerNpcWorldAction(s, br)
+		registerNpcInventory(s, br)
 		registerNpcSocialAction(s, br)
 	}
 

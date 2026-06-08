@@ -90,6 +90,11 @@ const (
 	ActionNpcInspectObject = "npc_inspect_object"
 	ActionNpcPlaceObject   = "npc_place_object"
 
+	// ── NPC inventory ────────────────────────────────────────────
+	ActionNpcInventoryGet  = "npc_inventory_get"
+	ActionNpcInventoryPut  = "npc_inventory_put"
+	ActionNpcInventoryTake = "npc_inventory_take"
+
 	// ── Rich NPC behaviors (social / performance) ───────────────
 	ActionNpcApproachAndSpeak = "npc_approach_and_speak"
 	ActionNpcExpressEmotion   = "npc_express_emotion"
