@@ -113,6 +113,11 @@ namespace SmartNPC.Bridge
                 _router.Register("npc_lead_to",          _behavior.HandleLeadTo);
                 _router.Register("npc_get_behavior",     _behavior.HandleGetBehavior);
 
+                // NPC inventory ws actions — read/write the in-memory NpcInventory.
+                _router.Register("npc_inventory_get",  HandleInventoryGet);
+                _router.Register("npc_inventory_put",  HandleInventoryPut);
+                _router.Register("npc_inventory_take", HandleInventoryTake);
+
                 // ── Behavior actions (per-action handler, bubble + TODO real logic)
                 // Each action has its own handler class (subclass of
                 // NpcActionHandlerBase). Current default: show head bubble.
@@ -383,6 +388,72 @@ namespace SmartNPC.Bridge
 
                 this.Monitor.Log($"[AgentControl] schedule suppressed for {npcName}", LogLevel.Debug);
             }
+        }
+
+        // ── NPC inventory ws handlers ───────────────────────────────────────
+
+        private System.Threading.Tasks.Task<Response> HandleInventoryGet(string id, System.Text.Json.JsonElement p)
+        {
+            string? npc = p.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                          p.TryGetProperty("npc", out var el) ? el.GetString() : null;
+            if (string.IsNullOrWhiteSpace(npc))
+                return System.Threading.Tasks.Task.FromResult(Response.Failure(id, "invalid_params", "npc is required"));
+
+            var items = _npcInventory.GetItems(npc!)
+                .Select(s => new { item_id = s.ItemId, count = s.Count, quality = s.Quality })
+                .ToArray();
+
+            return System.Threading.Tasks.Task.FromResult(Response.Success(id, new
+            {
+                ok    = true,
+                npc,
+                items,
+            }));
+        }
+
+        private System.Threading.Tasks.Task<Response> HandleInventoryPut(string id, System.Text.Json.JsonElement p)
+        {
+            if (p.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return System.Threading.Tasks.Task.FromResult(Response.Failure(id, "invalid_params", "object params required"));
+
+            string? npc    = p.TryGetProperty("npc",     out var e1) ? e1.GetString()    : null;
+            string? itemId = p.TryGetProperty("item_id", out var e2) ? e2.GetString()    : null;
+            int count      = p.TryGetProperty("count",   out var e3) && e3.TryGetInt32(out int c) ? c : 1;
+            int quality    = p.TryGetProperty("quality", out var e4) && e4.TryGetInt32(out int q) ? q : 0;
+
+            if (string.IsNullOrWhiteSpace(npc) || string.IsNullOrWhiteSpace(itemId))
+                return System.Threading.Tasks.Task.FromResult(Response.Failure(id, "invalid_params", "npc and item_id are required"));
+
+            int newTotal = _npcInventory.Add(npc!, itemId!, count, quality);
+            return System.Threading.Tasks.Task.FromResult(Response.Success(id, new
+            {
+                ok        = true,
+                npc,
+                new_total = newTotal,
+                message   = $"added {count}× {itemId} to {npc}",
+            }));
+        }
+
+        private System.Threading.Tasks.Task<Response> HandleInventoryTake(string id, System.Text.Json.JsonElement p)
+        {
+            if (p.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return System.Threading.Tasks.Task.FromResult(Response.Failure(id, "invalid_params", "object params required"));
+
+            string? npc    = p.TryGetProperty("npc",     out var e1) ? e1.GetString() : null;
+            string? itemId = p.TryGetProperty("item_id", out var e2) ? e2.GetString() : null;
+            int count      = p.TryGetProperty("count",   out var e3) && e3.TryGetInt32(out int c) ? c : 1;
+
+            if (string.IsNullOrWhiteSpace(npc) || string.IsNullOrWhiteSpace(itemId))
+                return System.Threading.Tasks.Task.FromResult(Response.Failure(id, "invalid_params", "npc and item_id are required"));
+
+            int taken = _npcInventory.Take(npc!, itemId!, count);
+            return System.Threading.Tasks.Task.FromResult(Response.Success(id, new
+            {
+                ok      = true,
+                npc,
+                taken,
+                message = taken > 0 ? $"removed {taken}× {itemId} from {npc}" : "item not found in inventory",
+            }));
         }
 
         /// <summary>
