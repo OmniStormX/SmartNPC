@@ -117,7 +117,7 @@ type Request struct {
 	Type    string      `json:"type"`               // "request"
 	ID      string      `json:"id"`                 // uuid
 	Action  string      `json:"action"`             // see ActionName constants
-	Params  interface{} `json:"params,omitempty"`   // action-specific
+	Params  any         `json:"params,omitempty"`   // action-specific
 	FromNPC string      `json:"from_npc,omitempty"` // originating NPC profile, if any
 }
 
