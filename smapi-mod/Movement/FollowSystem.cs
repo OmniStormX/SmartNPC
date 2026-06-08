@@ -19,6 +19,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -223,6 +224,86 @@ namespace SmartNPC.Bridge
             _log.Log($"[FollowSystem/ClearDebris] {npcName}: started, {st.DebrisQueue.Count + 1} targets", LogLevel.Debug);
         }
 
+        // ── StartDepositItems ─────────────────────────────────────────────
+
+        /// <summary>
+        /// Walk NPC to the specified chest (or nearest chest if autoFind=true),
+        /// then deposit items from <paramref name="inventory"/> filtered by
+        /// <paramref name="itemIds"/> (null = all items).
+        /// Returns false immediately if no chest is found.
+        /// </summary>
+        public bool StartDepositItems(
+            string npcName,
+            NPC npc,
+            Point chestTile,
+            bool autoFind,
+            string? chestMap,
+            IEnumerable<string>? itemIds,
+            NpcInventory inventory)
+        {
+            var location = string.IsNullOrEmpty(chestMap)
+                ? npc.currentLocation
+                : Game1.getLocationFromName(chestMap);
+
+            if (location is null)
+            {
+                _log.Log($"[FollowSystem/DepositItems] {npcName}: map '{chestMap}' not found", LogLevel.Warn);
+                return false;
+            }
+
+            // Auto-find nearest chest.
+            if (autoFind)
+            {
+                Point? nearest = FindNearestChest(npc, location);
+                if (nearest is null)
+                {
+                    _log.Log($"[FollowSystem/DepositItems] {npcName}: no chest found in {location.Name}", LogLevel.Warn);
+                    return false;
+                }
+                chestTile = nearest.Value;
+            }
+            else
+            {
+                // Validate that the specified tile contains a Chest.
+                if (!location.Objects.TryGetValue(new Vector2(chestTile.X, chestTile.Y), out var obj)
+                    || obj is not StardewValley.Objects.Chest)
+                {
+                    _log.Log($"[FollowSystem/DepositItems] {npcName}: no chest at ({chestTile.X},{chestTile.Y})", LogLevel.Warn);
+                    return false;
+                }
+            }
+
+            var st = this.GetOrCreate(npcName);
+            st.DepositChestTile = chestTile;
+            st.DepositChestMap  = location.NameOrUniqueName ?? location.Name;
+            st.DepositItemIds   = itemIds is null ? null : new HashSet<string>(itemIds, StringComparer.OrdinalIgnoreCase);
+            st.DepositInventory = inventory;
+            st.DepositPathed    = false;
+            st.DepositedCount   = 0;
+            st.Mode             = NpcBehaviorMode.DepositItems;
+            st.LastPathTick     = 0;
+
+            _log.Log(
+                $"[FollowSystem/DepositItems] {npcName}: started → chest=({chestTile.X},{chestTile.Y}) " +
+                $"map={st.DepositChestMap} filter={st.DepositItemIds?.Count.ToString() ?? "all"}",
+                LogLevel.Debug);
+            return true;
+        }
+
+        /// <summary>Scan <paramref name="location"/> for the Chest nearest to <paramref name="npc"/>.</summary>
+        private static Point? FindNearestChest(NPC npc, GameLocation location)
+        {
+            Point? best = null;
+            float bestDist = float.MaxValue;
+            foreach (var kv in location.Objects.Pairs)
+            {
+                if (kv.Value is not StardewValley.Objects.Chest) continue;
+                float d = Vector2.Distance(npc.Tile, kv.Key);
+                if (d < bestDist) { bestDist = d; best = new Point((int)kv.Key.X, (int)kv.Key.Y); }
+            }
+            return best;
+        }
+
         public NpcBehaviorMode GetMode(string npcName)
         {
             return _states.TryGetValue(npcName, out var st) ? st.Mode : NpcBehaviorMode.Idle;
@@ -286,6 +367,9 @@ namespace SmartNPC.Bridge
                             break;
                         case NpcBehaviorMode.ClearDebris:
                             this.TickClearDebris(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.DepositItems:
+                            this.TickDepositItems(npc, name, st);
                             break;
                     }
                 }
@@ -574,6 +658,110 @@ namespace SmartNPC.Bridge
 
                 _log.Log(
                     $"[FollowSystem/ClearDebris] {npcName}: pathing to ({target.X},{target.Y}) ok={ok}",
+                    LogLevel.Debug);
+            }
+        }
+
+        private void TickDepositItems(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            if (st.DepositInventory is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // Resolve the target location.
+            var location = string.IsNullOrEmpty(st.DepositChestMap)
+                ? npc.currentLocation
+                : Game1.getLocationFromName(st.DepositChestMap);
+
+            if (location is null) { st.Mode = NpcBehaviorMode.Idle; return; }
+
+            var chestV2 = new Vector2(st.DepositChestTile.X, st.DepositChestTile.Y);
+
+            // Check chest still exists.
+            if (!location.Objects.TryGetValue(chestV2, out var chestObj)
+                || chestObj is not StardewValley.Objects.Chest chest)
+            {
+                _log.Log(
+                    $"[FollowSystem/DepositItems] {npcName}: chest at ({st.DepositChestTile.X}," +
+                    $"{st.DepositChestTile.Y}) gone → Idle (deposited={st.DepositedCount})",
+                    LogLevel.Debug);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            float dist = Vector2.Distance(npc.Tile,
+                new Vector2(st.DepositChestTile.X, st.DepositChestTile.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Deposit phase ──────────────────────────────────────
+                var items = st.DepositInventory.GetItems(npcName).ToList();
+                if (st.DepositItemIds is not null)
+                    items = items.Where(s => st.DepositItemIds.Contains(s.ItemId)).ToList();
+
+                if (items.Count == 0)
+                {
+                    _log.Log($"[FollowSystem/DepositItems] {npcName}: nothing to deposit → Idle", LogLevel.Debug);
+                    npc.doEmote(32); // happy
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                foreach (var slot in items)
+                {
+                    StardewValley.Item? item;
+                    try { item = StardewValley.ItemRegistry.Create(slot.ItemId, slot.Count, slot.Quality); }
+                    catch (Exception ex)
+                    {
+                        _log.Log($"[FollowSystem/DepositItems] ItemRegistry.Create({slot.ItemId}) failed: {ex.Message}", LogLevel.Warn);
+                        continue;
+                    }
+
+                    var leftover = chest.addItem(item);
+                    int placed = slot.Count - (leftover?.Stack ?? 0);
+                    if (placed > 0)
+                    {
+                        st.DepositInventory.Take(npcName, slot.ItemId, placed);
+                        st.DepositedCount += placed;
+                    }
+                    _log.Log(
+                        $"[FollowSystem/DepositItems] {npcName}: deposited {placed}/{slot.Count}× {slot.ItemId}",
+                        LogLevel.Debug);
+                }
+
+                npc.doEmote(32); // happy
+                _log.Log(
+                    $"[FollowSystem/DepositItems] {npcName}: done, total deposited={st.DepositedCount} → Idle",
+                    LogLevel.Info);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // ── Pathing phase ──────────────────────────────────────────
+            if (!st.DepositPathed || npc.controller == null)
+            {
+                Point ct = st.DepositChestTile;
+                // Try adjacent tiles: below, above, right, left.
+                Point[] candidates = {
+                    new(ct.X, ct.Y + 1),
+                    new(ct.X, ct.Y - 1),
+                    new(ct.X + 1, ct.Y),
+                    new(ct.X - 1, ct.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.DepositPathed = ok;
+                st.LastPathTick  = _tickCounter > 0 ? _tickCounter : 1;
+                _log.Log(
+                    $"[FollowSystem/DepositItems] {npcName}: pathing to chest ({ct.X},{ct.Y}) ok={ok}",
                     LogLevel.Debug);
             }
         }
