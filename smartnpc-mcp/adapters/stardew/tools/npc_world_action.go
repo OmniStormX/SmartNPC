@@ -72,16 +72,20 @@ type NpcHarvestCropsOutput struct {
 // ── npc_deposit_items ─────────────────────────────────────────────
 
 type NpcDepositItemsInput struct {
-	NPC    string `json:"npc"              jsonschema:"NPC internal name"`
-	ChestX int    `json:"chest_x"          jsonschema:"chest tile X"`
-	ChestY int    `json:"chest_y"          jsonschema:"chest tile Y"`
-	Map    string `json:"map,omitempty"    jsonschema:"map (default: NPC's current map)"`
+	NPC      string   `json:"npc"                jsonschema:"NPC internal name"`
+	ChestX   int      `json:"chest_x,omitempty"  jsonschema:"chest tile X; ignored when auto_find=true"`
+	ChestY   int      `json:"chest_y,omitempty"  jsonschema:"chest tile Y; ignored when auto_find=true"`
+	AutoFind bool     `json:"auto_find,omitempty" jsonschema:"true = ignore coordinates and walk to nearest chest"`
+	Map      string   `json:"map,omitempty"      jsonschema:"map name (default: NPC current map)"`
+	ItemIds  []string `json:"item_ids,omitempty" jsonschema:"qualified item ids to deposit; omit to deposit everything"`
 }
 
 type NpcDepositItemsOutput struct {
 	OK        bool   `json:"ok"                  jsonschema:"true if accepted"`
 	NPC       string `json:"npc"                 jsonschema:"echo"`
-	Deposited int    `json:"deposited,omitempty" jsonschema:"items deposited"`
+	Deposited int    `json:"deposited,omitempty" jsonschema:"total items actually deposited"`
+	ChestX    int    `json:"chest_x,omitempty"   jsonschema:"actual chest tile X used"`
+	ChestY    int    `json:"chest_y,omitempty"   jsonschema:"actual chest tile Y used"`
 	Message   string `json:"message,omitempty"   jsonschema:"status"`
 }
 
@@ -284,9 +288,15 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_deposit_items",
-		Description: "NPC walks to a chest and deposits all carried items.\n\n" +
-			"When to call: after harvesting/foraging, NPC puts items away.\n\n" +
-			"Side-effect: WRITE (modifies chest contents, clears NPC backpack).",
+		Description: "NPC walks to a chest and deposits carried items from their backpack.\n\n" +
+			"When to call: after npc_clear_debris / npc_forage_collect / npc_harvest_crops, " +
+			"to transfer collected items into storage.\n\n" +
+			"Chest selection: set auto_find=true to automatically walk to the nearest chest " +
+			"(ignores chest_x/chest_y). Or specify chest_x+chest_y for a specific chest.\n\n" +
+			"Item filter: set item_ids to deposit only specific items (e.g. [\"(O)390\"]); " +
+			"omit to deposit everything in backpack.\n\n" +
+			"Side-effect: WRITE (adds items to chest, removes from NPC backpack). " +
+			"If chest is full, remaining items stay in NPC backpack.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcDepositItemsInput) (*mcp.CallToolResult, NpcDepositItemsOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcDepositItemsOutput{}, errNpcRequired
