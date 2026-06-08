@@ -33,6 +33,9 @@ namespace SmartNPC.Bridge
         Summoning,
         Following,
         Leading,
+        Wander,
+        ClearDebris,
+        DepositItems,
     }
 
     /// <summary>Per-NPC mutable state held by FollowSystem.</summary>
@@ -43,6 +46,24 @@ namespace SmartNPC.Bridge
         // Leading target (map-local tile coordinates).
         public Point LeadTarget { get; set; }
         public string? LeadMap   { get; set; }
+
+        // Wander: current destination + radius for continuous re-selection.
+        public Point WanderTarget { get; set; }
+        public int   WanderRadius { get; set; } = 8;
+
+        // ClearDebris: ordered queue of debris tiles to visit and destroy.
+        public Queue<Point>?  DebrisQueue     { get; set; }
+        public NpcInventory?  DebrisInventory { get; set; }
+        public Point          DebrisTarget    { get; set; }
+        public bool           DebrisPathed    { get; set; }
+
+        // DepositItems: walk to a chest and deposit carried items.
+        public Point               DepositChestTile { get; set; }
+        public string?             DepositChestMap  { get; set; }
+        public HashSet<string>?    DepositItemIds   { get; set; }  // null = all
+        public NpcInventory?       DepositInventory { get; set; }
+        public bool                DepositPathed    { get; set; }
+        public int                 DepositedCount   { get; set; }
 
         // Tick scheduler: only repath on these boundaries.
         public uint LastPathTick { get; set; }
@@ -66,6 +87,8 @@ namespace SmartNPC.Bridge
 
         // Leading segment length: walk at most this many tiles per replan.
         private const int LeadSegmentTiles = 5;
+
+        private static readonly Random s_rng = new();
 
         private readonly IMonitor _log;
         private readonly Dictionary<string, NpcBehaviorState> _states =
@@ -122,6 +145,84 @@ namespace SmartNPC.Bridge
             st.LastPathTick = 0;
         }
 
+        /// <summary>
+        /// Start continuous wander for <paramref name="npcName"/>: pick a random passable tile
+        /// within <paramref name="radius"/>, walk there, then repeat automatically until
+        /// <see cref="StopFollow"/> is called or the mode is superseded.
+        /// FollowSystem owns the controller so the Idle guard never cancels mid-walk.
+        /// </summary>
+        public void StartWander(string npcName, NPC npc, int radius)
+        {
+            var st = this.GetOrCreate(npcName);
+            var prev = st.Mode;
+            st.WanderRadius = Math.Clamp(radius, 1, 24);
+
+            Point? dest = PickWanderDest(npc, st.WanderRadius, s_rng);
+            if (dest is null)
+            {
+                _log.Log($"[FollowSystem/StartWander] {npcName}: no passable tile, aborting", LogLevel.Warn);
+                return;
+            }
+
+            st.Mode = NpcBehaviorMode.Wander;
+            st.WanderTarget = dest.Value;
+            st.LastPathTick = 0;
+            _log.Log(
+                $"[FollowSystem/StartWander] {npcName}: mode {prev}→Wander " +
+                $"dest=({dest.Value.X},{dest.Value.Y}) radius={radius}",
+                LogLevel.Debug);
+        }
+
+        /// <summary>
+        /// Pick a random passable tile within <paramref name="radius"/> tiles of <paramref name="npc"/>.
+        /// Returns null if no candidate is found in 20 attempts.
+        /// </summary>
+        internal static Point? PickWanderDest(NPC npc, int radius, Random rng)
+        {
+            var location = npc.currentLocation;
+            if (location is null) return null;
+
+            int ox = (int)(npc.Position.X / 64f);
+            int oy = (int)(npc.Position.Y / 64f);
+
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                int tx = ox + rng.Next(-radius, radius + 1);
+                int ty = oy + rng.Next(-radius, radius + 1);
+                if (tx == ox && ty == oy) continue;
+
+                if (location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)
+                    && !location.isObjectAtTile(tx, ty))
+                    return new Point(tx, ty);
+            }
+            return null;
+        }
+
+        // ── StartClearDebris ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up a list of debris tiles for the NPC to walk to, destroy, and
+        /// collect into <paramref name="inventory"/> one by one.
+        /// </summary>
+        public void StartClearDebris(string npcName, IEnumerable<Point> targets, NpcInventory inventory)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.DebrisQueue     = new Queue<Point>(targets);
+            st.DebrisInventory = inventory;
+            st.DebrisPathed    = false;
+
+            if (st.DebrisQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/ClearDebris] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.DebrisTarget = st.DebrisQueue.Dequeue();
+            st.Mode         = NpcBehaviorMode.ClearDebris;
+            st.LastPathTick = 0;
+            _log.Log($"[FollowSystem/ClearDebris] {npcName}: started, {st.DebrisQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
         public NpcBehaviorMode GetMode(string npcName)
         {
             return _states.TryGetValue(npcName, out var st) ? st.Mode : NpcBehaviorMode.Idle;
@@ -156,9 +257,12 @@ namespace SmartNPC.Bridge
                 // game-side controller assignment.
                 if (st.Mode == NpcBehaviorMode.Idle && npc.controller != null)
                 {
+                    _log.Log(
+                        $"[FollowSystem/IdleGuard] cancelled game-injected controller for {name} " +
+                        $"tick={_tickCounter}",
+                        LogLevel.Debug);
                     try { npc.Halt(); } catch { /* non-fatal */ }
                     npc.controller = null;
-                    _log.Log($"[FollowSystem] cancelled game-injected controller for {name}", LogLevel.Trace);
                     continue;
                 }
 
@@ -176,6 +280,12 @@ namespace SmartNPC.Bridge
                             break;
                         case NpcBehaviorMode.Leading:
                             this.TickLeading(npc, st);
+                            break;
+                        case NpcBehaviorMode.Wander:
+                            this.TickWander(npc, st);
+                            break;
+                        case NpcBehaviorMode.ClearDebris:
+                            this.TickClearDebris(npc, name, st);
                             break;
                     }
                 }
@@ -324,6 +434,148 @@ namespace SmartNPC.Bridge
             Point next = SegmentTarget(npcTile, st.LeadTarget, LeadSegmentTiles);
             this.TryStartPath(npc, npc.currentLocation, next);
             st.LastPathTick = _tickCounter;
+        }
+
+        private void TickWander(NPC npc, NpcBehaviorState st)
+        {
+            // First tick (or re-kick after selecting a new dest): kick off the path.
+            if (st.LastPathTick == 0)
+            {
+                var loc = npc.currentLocation;
+                if (loc is null)
+                {
+                    _log.Log($"[FollowSystem/Wander] {npc.Name}: currentLocation null, aborting", LogLevel.Warn);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                _log.Log(
+                    $"[FollowSystem/Wander] {npc.Name}: initiating path to " +
+                    $"({st.WanderTarget.X},{st.WanderTarget.Y}) tick={_tickCounter} " +
+                    $"loc={loc.Name} ctrlBefore={npc.controller != null}",
+                    LogLevel.Debug);
+
+                bool ok = this.TryStartPath(npc, loc, st.WanderTarget);
+                int pathLen = npc.controller?.pathToEndPoint?.Count ?? -1;
+
+                _log.Log(
+                    $"[FollowSystem/Wander] {npc.Name}: TryStartPath ok={ok} " +
+                    $"pathLen={pathLen} ctrlAfter={npc.controller != null}",
+                    LogLevel.Debug);
+
+                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+                return;
+            }
+
+            // Subsequent ticks: monitor for arrival.
+            bool ctrlNull  = npc.controller == null;
+            int  pathCount = npc.controller?.pathToEndPoint?.Count ?? 0;
+            bool pathDone  = ctrlNull || pathCount == 0;
+
+            _log.Log(
+                $"[FollowSystem/Wander] {npc.Name}: tick={_tickCounter} " +
+                $"ctrlNull={ctrlNull} pathCount={pathCount} done={pathDone}",
+                LogLevel.Trace);
+
+            if (!pathDone) return;
+
+            // Arrived — pick the next random destination and loop.
+            Point? next = PickWanderDest(npc, st.WanderRadius, s_rng);
+            if (next is null)
+            {
+                _log.Log(
+                    $"[FollowSystem/Wander] {npc.Name}: no passable tile found, going Idle",
+                    LogLevel.Debug);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            st.WanderTarget = next.Value;
+            st.LastPathTick = 0;   // trigger path kick on the very next tick
+            _log.Log(
+                $"[FollowSystem/Wander] {npc.Name}: arrived → next dest=({next.Value.X},{next.Value.Y})",
+                LogLevel.Debug);
+        }
+
+        private void TickClearDebris(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.DebrisQueue is null || st.DebrisInventory is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Point target = st.DebrisTarget;
+
+            // Check if target object still exists (may have been cleared by something else).
+            var targetV2 = new Vector2(target.X, target.Y);
+            bool objectPresent = location.Objects.ContainsKey(targetV2);
+
+            // If arrived (≤ 1.5 tiles) and path finished → destroy + collect → advance queue.
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // Destroy object if still present.
+                if (objectPresent && location.Objects.TryGetValue(targetV2, out var obj))
+                {
+                    string dropId = obj.IsTwig()  ? "(O)388"
+                                  : obj.IsWeeds() ? "(O)771"
+                                  : "(O)390";
+
+                    location.Objects.Remove(targetV2);
+                    st.DebrisInventory.Add(npcName, dropId, 1);
+                    npc.doEmote(16); // "!"
+                    _log.Log(
+                        $"[FollowSystem/ClearDebris] {npcName}: cleared {obj.Name} " +
+                        $"at ({target.X},{target.Y}) → {dropId}",
+                        LogLevel.Debug);
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/ClearDebris] {npcName}: object at ({target.X},{target.Y}) " +
+                        $"already gone, skipping",
+                        LogLevel.Debug);
+                }
+
+                // Advance to next target.
+                if (st.DebrisQueue.Count == 0)
+                {
+                    _log.Log($"[FollowSystem/ClearDebris] {npcName}: all targets done → Idle", LogLevel.Debug);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.DebrisTarget  = st.DebrisQueue.Dequeue();
+                st.DebrisPathed  = false;
+                st.LastPathTick  = 0;
+                return;
+            }
+
+            // Not yet arrived — start or continue pathing.
+            if (!st.DebrisPathed || npc.controller == null)
+            {
+                // Walk to a tile adjacent to the debris (one tile below it).
+                Point adjacent = new Point(target.X, target.Y + 1);
+                bool ok = this.TryStartPath(npc, location, adjacent);
+                if (!ok)
+                {
+                    // Try tile above if below is impassable.
+                    adjacent = new Point(target.X, target.Y - 1);
+                    ok = this.TryStartPath(npc, location, adjacent);
+                }
+                st.DebrisPathed = ok;
+                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+
+                _log.Log(
+                    $"[FollowSystem/ClearDebris] {npcName}: pathing to ({target.X},{target.Y}) ok={ok}",
+                    LogLevel.Debug);
+            }
         }
 
         // ── helpers ───────────────────────────────────────────────────────
