@@ -707,7 +707,7 @@ namespace SmartNPC.Bridge
                 if (items.Count == 0)
                 {
                     _log.Log($"[FollowSystem/DepositItems] {npcName}: nothing to deposit → Idle", LogLevel.Debug);
-                    npc.doEmote(32); // happy
+                    npc.doEmote(16); // "!" — nothing to do
                     st.Mode = NpcBehaviorMode.Idle;
                     return;
                 }
@@ -729,9 +729,18 @@ namespace SmartNPC.Bridge
                         st.DepositInventory.Take(npcName, slot.ItemId, placed);
                         st.DepositedCount += placed;
                     }
-                    _log.Log(
-                        $"[FollowSystem/DepositItems] {npcName}: deposited {placed}/{slot.Count}× {slot.ItemId}",
-                        LogLevel.Debug);
+                    if (placed > 0)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/DepositItems] {npcName}: deposited {placed}/{slot.Count}× {slot.ItemId}",
+                            LogLevel.Debug);
+                    }
+                    else
+                    {
+                        _log.Log(
+                            $"[FollowSystem/DepositItems] {npcName}: chest full, could not deposit {slot.ItemId}",
+                            LogLevel.Warn);
+                    }
                 }
 
                 npc.doEmote(32); // happy
