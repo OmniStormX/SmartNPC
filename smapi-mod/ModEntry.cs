@@ -127,10 +127,10 @@ namespace SmartNPC.Bridge
                 {
                     // World actions.
                     new WanderHandler(this.Monitor, showBubble, _follow),
-                    new ClearDebrisHandler(this.Monitor, showBubble, _npcInventory),
+                    new ClearDebrisHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new WaterCropsHandler(this.Monitor, showBubble),
                     new HarvestCropsHandler(this.Monitor, showBubble),
-                    new DepositItemsHandler(this.Monitor, showBubble),
+                    new DepositItemsHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new DeliverItemsHandler(this.Monitor, showBubble),
                     new ForageCollectHandler(this.Monitor, showBubble),
                     new PetAnimalHandler(this.Monitor, showBubble),
@@ -183,7 +183,7 @@ namespace SmartNPC.Bridge
                 _chat.SetGroupManager(_groupMgr);
 
                 // Register SMAPI console debug commands.
-                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws, _follow);
+                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws, _follow, _npcInventory);
 
                 _inventoryHud = new NpcInventoryHud(_npcInventory, OpenInventoryPanel);
 
