@@ -76,6 +76,7 @@ namespace SmartNPC.Bridge
                 if (slot.Count <= 0) bag.Remove(slot);
                 if (taken >= count) break;
             }
+            if (bag.Count == 0) _bags.Remove(npcName);
             return taken;
         }
 
