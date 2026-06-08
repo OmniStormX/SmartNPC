@@ -51,8 +51,8 @@ namespace SmartNPC.Bridge
 
             foreach (var npcName in AgentNpcRegistry.GetAll())
             {
-                if (!_inventory.HasItems(npcName)) continue;
-
+                // Show the icon for all Agent NPCs (even empty backpack),
+                // so players always know they can click to inspect.
                 NPC? npc = Game1.getCharacterFromName(npcName);
                 if (npc is null || npc.currentLocation != location) continue;
 
@@ -75,7 +75,7 @@ namespace SmartNPC.Bridge
                     texture: Game1.mouseCursors,
                     destinationRectangle: new Rectangle(drawX, drawY, drawW, drawH),
                     sourceRectangle: BackpackSrc,
-                    color: Color.White * 0.92f);
+                    color: Color.White * (_inventory.HasItems(npcName) ? 0.92f : 0.35f));
 
                 _hotspots.Add((npcName, new Rectangle(drawX, drawY, drawW, drawH)));
             }

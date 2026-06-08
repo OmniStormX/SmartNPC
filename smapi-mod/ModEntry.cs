@@ -323,7 +323,12 @@ namespace SmartNPC.Bridge
             int my = (int)e.Cursor.ScreenPixels.Y;
 
             // Backpack icon takes priority over toast (icon is smaller / more precise).
-            if (_inventoryHud != null && _inventoryHud.TryClick(mx, my)) return;
+            // Suppress the input so SDV's NPC.checkAction doesn't fire and open the chat panel.
+            if (_inventoryHud != null && _inventoryHud.TryClick(mx, my))
+            {
+                this.Helper.Input.Suppress(e.Button);
+                return;
+            }
             _toast?.TryClick(mx, my);
         }
 
