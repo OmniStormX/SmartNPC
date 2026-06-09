@@ -27,8 +27,13 @@ namespace SmartNPC.Bridge
         private const string CmdGoto        = "smartnpc_goto";
         private const string CmdGather      = "smartnpc_gather";
         private const string CmdWander      = "smartnpc_wander";
-        private const string CmdClearDebris = "smartnpc_clear_debris";
-        private const string CmdDeposit     = "smartnpc_deposit_items";
+        private const string CmdClearDebris  = "smartnpc_clear_debris";
+        private const string CmdDeposit      = "smartnpc_deposit_items";
+        private const string CmdDeliver      = "smartnpc_deliver_items";
+        private const string CmdTillSoil     = "smartnpc_till_soil";
+        private const string CmdApproach     = "smartnpc_approach_speak";
+        private const string CmdForage       = "smartnpc_forage_collect";
+        private const string CmdGiveChest    = "smartnpc_give_chest";
 
         private static readonly Random s_rng = new();
         private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(5) };
@@ -142,7 +147,49 @@ namespace SmartNPC.Bridge
                     $"  {CmdDeposit} <NpcName> auto (O)390 (O)388  auto-find, filter by item ids",
                 callback: (_, args) => HandleDeposit(args, log, inventory, follow));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}, {CmdWander}, {CmdClearDebris}, {CmdDeposit}", LogLevel.Trace);
+            commands.Add(
+                name: CmdDeliver,
+                documentation:
+                    "Force an NPC to walk to the player and hand over all backpack items.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdDeliver} <NpcName>",
+                callback: (_, args) => HandleDeliver(args, log, inventory, follow));
+
+            commands.Add(
+                name: CmdTillSoil,
+                documentation:
+                    "Force an NPC to till empty soil within a radius.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdTillSoil} <NpcName>                    radius=3 max=5\n" +
+                    $"  {CmdTillSoil} <NpcName> <radius> <max>    e.g. Abigail 5 8",
+                callback: (_, args) => HandleTillSoil(args, log, follow));
+
+            commands.Add(
+                name: CmdApproach,
+                documentation:
+                    "Force an NPC to walk to the player and show a heart emote (approach and speak).\n" +
+                    $"Usage:\n" +
+                    $"  {CmdApproach} <NpcName>              walk to player\n" +
+                    $"  {CmdApproach} <NpcName> <reason>    walk to player with reason",
+                callback: (_, args) => HandleApproach(args, log, follow));
+
+            commands.Add(
+                name: CmdForage,
+                documentation:
+                    "Force an NPC to collect nearby forageable items (mushrooms, shells, berries, etc.).\n" +
+                    $"Usage:\n" +
+                    $"  {CmdForage} <NpcName>                    radius=8 max=3\n" +
+                    $"  {CmdForage} <NpcName> <radius> <max>    e.g. XiaMi 10 5",
+                callback: (_, args) => HandleForage(args, log, inventory, follow));
+
+            commands.Add(
+                name: CmdGiveChest,
+                documentation:
+                    "Give the player a Chest (item ID 130) directly into their inventory.\n" +
+                    $"Usage: {CmdGiveChest}",
+                callback: (_, args) => HandleGiveChest(log));
+
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}, {CmdWander}, {CmdClearDebris}, {CmdDeposit}, {CmdDeliver}, {CmdTillSoil}, {CmdApproach}, {CmdForage}, {CmdGiveChest}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -824,6 +871,39 @@ namespace SmartNPC.Bridge
             log.Log($"[smartnpc_clear_debris] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
         }
 
+        // ── smartnpc_forage_collect ────────────────────────────────────────
+
+        private static void HandleForage(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded", LogLevel.Error);
+                return;
+            }
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdForage} <NpcName> [radius] [max_count]", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            int radius   = args.Length >= 2 && int.TryParse(args[1], out int r) ? Math.Clamp(r, 1, 15) : 8;
+            int maxCount = args.Length >= 3 && int.TryParse(args[2], out int m) ? Math.Clamp(m, 1, 10) : 3;
+
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found", LogLevel.Error);
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(
+                $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
+            var handler = new ForageCollectHandler(log, () => false, inventory, follow);
+            handler.ExecuteDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_forage_collect] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
+        }
+
         // ── smartnpc_deposit_items ─────────────────────────────────────────
 
         // Usage:
@@ -892,6 +972,133 @@ namespace SmartNPC.Bridge
                 log.Log($"[smartnpc_deposit_items] triggered for {name} autoFind={autoFind} chest=({chestX},{chestY})", LogLevel.Info);
             else
                 log.Log($"[smartnpc_deposit_items] could not start (no chest found?)", LogLevel.Warn);
+        }
+
+        // ── smartnpc_deliver_items ────────────────────────────────────────
+
+        // Usage:
+        //   smartnpc_deliver_items <NpcName>   → walk to player and hand over all items
+        private static void HandleDeliver(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdDeliver} <NpcName>", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            var items = inventory.GetItems(name);
+            if (items.Count == 0)
+            {
+                log.Log($"[smartnpc_deliver_items] {name}: backpack empty, nothing to deliver", LogLevel.Warn);
+                return;
+            }
+
+            follow.StartDeliverItems(name, inventory);
+            log.Log($"[smartnpc_deliver_items] triggered for {name} ({items.Count} item types)", LogLevel.Info);
+        }
+
+        // ── smartnpc_till_soil ────────────────────────────────────────────
+
+        // Usage:
+        //   smartnpc_till_soil <NpcName>                 radius=3 max=5
+        //   smartnpc_till_soil <NpcName> <radius> <max>  e.g. Abigail 5 8
+        private static void HandleTillSoil(string[] args, IMonitor log, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdTillSoil} <NpcName> [radius] [max_count]", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            int radius   = args.Length > 1 && int.TryParse(args[1], out int pr) ? Math.Clamp(pr, 1, 8) : 3;
+            int maxCount = args.Length > 2 && int.TryParse(args[2], out int pm) ? Math.Clamp(pm, 1, 15) : 5;
+
+            using var doc = JsonDocument.Parse(
+                $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
+            var handler = new TillSoilHandler(log, () => false, follow);
+            handler.ExecuteDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_till_soil] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
+        }
+
+        // ── smartnpc_approach_speak ──────────────────────────────────────
+
+        // Usage:
+        //   smartnpc_approach_speak <NpcName>              walk to player
+        //   smartnpc_approach_speak <NpcName> <reason>    walk to player with reason
+        private static void HandleApproach(string[] args, IMonitor log, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdApproach} <NpcName> [reason]", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            string? reason = args.Length > 1 ? args[1] : null;
+
+            using var doc = JsonDocument.Parse(
+                $"{{\"npc\":\"{name}\"{(reason is not null ? $",\"reason\":\"{reason}\"" : "")}}}");
+            var handler = new ApproachAndSpeakHandler(log, () => false, follow);
+            handler.ExecuteDebug(npc, name, doc.RootElement);
+            log.Log(
+                $"[smartnpc_approach_speak] triggered for {name}{(reason is not null ? $" reason=\"{reason}\"" : "")}",
+                LogLevel.Info);
+        }
+
+        // ── smartnpc_give_chest ────────────────────────────────────────────
+
+        private static void HandleGiveChest(IMonitor log)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+
+            var chest = StardewValley.ItemRegistry.Create("(BC)130"); // Big Craftable 130 = Chest
+            bool placed = Game1.player.addItemToInventoryBool(chest);
+            if (placed)
+                log.Log("[smartnpc_give_chest] Chest added to player inventory.", LogLevel.Info);
+            else
+                log.Log("[smartnpc_give_chest] Inventory full — chest dropped at player's feet.", LogLevel.Warn);
         }
     }
 }

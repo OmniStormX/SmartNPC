@@ -341,6 +341,10 @@ namespace SmartNPC.Bridge
             Log.Log($"[npc_forage_collect] {npcName}: queued {targets.Count} forage targets", LogLevel.Info);
         }
 
+        /// <summary>Public entry for debug commands running on the game thread.</summary>
+        public void ExecuteDebug(NPC npc, string npcName, JsonElement @params)
+            => Execute(npc, npcName, @params);
+
         private static int ParseInt(JsonElement p, string key, int def, int min, int max)
         {
             if (p.ValueKind == JsonValueKind.Object &&
