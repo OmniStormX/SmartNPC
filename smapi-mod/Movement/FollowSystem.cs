@@ -24,6 +24,7 @@ using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Pathfinding;
+using StardewValley.TerrainFeatures;
 
 namespace SmartNPC.Bridge
 {
@@ -36,7 +37,11 @@ namespace SmartNPC.Bridge
         Leading,
         Wander,
         ClearDebris,
+        ForageCollect,
         DepositItems,
+        DeliverItems,
+        TillSoil,
+        ApproachAndSpeak,
     }
 
     /// <summary>Per-NPC mutable state held by FollowSystem.</summary>
@@ -66,6 +71,27 @@ namespace SmartNPC.Bridge
         public bool                DepositPathed    { get; set; }
         public int                 DepositedCount   { get; set; }
 
+        // DeliverItems: walk to player and hand over items.
+        public NpcInventory?  DeliverInventory { get; set; }
+        public bool           DeliverPathed    { get; set; }
+        public int            DeliveredCount   { get; set; }
+
+        // TillSoil: walk to tiles and create HoeDirt.
+        public Queue<Point>? TillQueue  { get; set; }
+        public Point         TillTarget { get; set; }
+        public bool          TillPathed { get; set; }
+        public int           TillCount  { get; set; }
+
+        // ForageCollect: walk to spawned objects and pick them up.
+        public Queue<(Point Tile, string ItemId, string ItemName)>? ForageQueue    { get; set; }
+        public (Point Tile, string ItemId, string ItemName)          ForageTarget  { get; set; }
+        public NpcInventory?                                          ForageInventory { get; set; }
+        public bool                                                   ForagePathed  { get; set; }
+
+        // ApproachAndSpeak: walk to player and emote.
+        public string? ApproachReason { get; set; }
+        public bool    ApproachPathed { get; set; }
+
         // Tick scheduler: only repath on these boundaries.
         public uint LastPathTick { get; set; }
 
@@ -92,12 +118,22 @@ namespace SmartNPC.Bridge
         private static readonly Random s_rng = new();
 
         private readonly IMonitor _log;
+        private Func<string, object?, Task>? _broadcastEvent;
         private readonly Dictionary<string, NpcBehaviorState> _states =
             new(StringComparer.OrdinalIgnoreCase);
 
         private uint _tickCounter;
 
         public FollowSystem(IMonitor log) { _log = log; }
+
+        /// <summary>
+        /// Wire in the ws broadcast function after WebSocketServer is created.
+        /// Called from ModEntry once _ws is ready.
+        /// </summary>
+        public void SetBroadcast(Func<string, object?, Task> broadcast)
+        {
+            _broadcastEvent = broadcast;
+        }
 
         // ── public API (called from ws handlers on the game thread via ModEntry) ──
 
@@ -224,6 +260,34 @@ namespace SmartNPC.Bridge
             _log.Log($"[FollowSystem/ClearDebris] {npcName}: started, {st.DebrisQueue.Count + 1} targets", LogLevel.Debug);
         }
 
+        // ── StartForageCollect ────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up a list of forage targets for the NPC to walk to, pick up, and
+        /// store in <paramref name="inventory"/>, emitting a ws event per item.
+        /// </summary>
+        public void StartForageCollect(
+            string npcName,
+            IEnumerable<(Point, string, string)> targets,
+            NpcInventory inventory)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.ForageQueue    = new Queue<(Point, string, string)>(targets);
+            st.ForageInventory = inventory;
+            st.ForagePathed   = false;
+
+            if (st.ForageQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/ForageCollect] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.ForageTarget = st.ForageQueue.Dequeue();
+            st.Mode         = NpcBehaviorMode.ForageCollect;
+            st.LastPathTick = 0;
+            _log.Log($"[FollowSystem/ForageCollect] {npcName}: started, {st.ForageQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
         // ── StartDepositItems ─────────────────────────────────────────────
 
         /// <summary>
@@ -304,6 +368,71 @@ namespace SmartNPC.Bridge
             return best;
         }
 
+        // ── StartDeliverItems ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Walk NPC to the player and hand over all items from <paramref name="inventory"/>.
+        /// Player must be on the same map. Items that can't fit stay in NPC backpack.
+        /// </summary>
+        public void StartDeliverItems(string npcName, NpcInventory inventory)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.DeliverInventory = inventory;
+            st.DeliverPathed    = false;
+            st.DeliveredCount   = 0;
+            st.Mode             = NpcBehaviorMode.DeliverItems;
+            st.LastPathTick     = 0;
+
+            _log.Log(
+                $"[FollowSystem/DeliverItems] {npcName}: started",
+                LogLevel.Debug);
+        }
+
+        // ── StartTillSoil ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up a list of empty diggable tiles for the NPC to walk to and
+        /// till (create HoeDirt) one by one. Only valid on farm-type maps.
+        /// </summary>
+        public void StartTillSoil(string npcName, IEnumerable<Point> targets)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.TillQueue  = new Queue<Point>(targets);
+            st.TillPathed = false;
+            st.TillCount  = 0;
+
+            if (st.TillQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/TillSoil] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.TillTarget   = st.TillQueue.Dequeue();
+            st.Mode         = NpcBehaviorMode.TillSoil;
+            st.LastPathTick = 0;
+            _log.Log($"[FollowSystem/TillSoil] {npcName}: started, {st.TillQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
+        // ── StartApproachAndSpeak ──────────────────────────────────────────
+
+        /// <summary>
+        /// Walk NPC to the player, face them, and show a heart emote.
+        /// Intended as a precursor to LLM-initiated chat_say — after arrival,
+        /// the NPC returns to Idle and the LLM can follow up with a message.
+        /// </summary>
+        public void StartApproachAndSpeak(string npcName, string? reason)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.ApproachReason = reason;
+            st.ApproachPathed = false;
+            st.Mode           = NpcBehaviorMode.ApproachAndSpeak;
+            st.LastPathTick   = 0;
+
+            _log.Log(
+                $"[FollowSystem/ApproachAndSpeak] {npcName}: started{(reason is not null ? $" reason=\"{reason}\"" : "")}",
+                LogLevel.Debug);
+        }
+
         public NpcBehaviorMode GetMode(string npcName)
         {
             return _states.TryGetValue(npcName, out var st) ? st.Mode : NpcBehaviorMode.Idle;
@@ -368,8 +497,20 @@ namespace SmartNPC.Bridge
                         case NpcBehaviorMode.ClearDebris:
                             this.TickClearDebris(npc, name, st);
                             break;
+                        case NpcBehaviorMode.ForageCollect:
+                            this.TickForageCollect(npc, name, st);
+                            break;
                         case NpcBehaviorMode.DepositItems:
                             this.TickDepositItems(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.DeliverItems:
+                            this.TickDeliverItems(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.TillSoil:
+                            this.TickTillSoil(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.ApproachAndSpeak:
+                            this.TickApproachAndSpeak(npc, name, st);
                             break;
                     }
                 }
@@ -662,6 +803,85 @@ namespace SmartNPC.Bridge
             }
         }
 
+        private void TickForageCollect(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.ForageQueue is null || st.ForageInventory is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            (Point target, string itemId, string itemName) = st.ForageTarget;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                if (location.Objects.ContainsKey(targetV2))
+                {
+                    location.Objects.Remove(targetV2);
+                    st.ForageInventory.Add(npcName, itemId, 1);
+                    npc.doEmote(20);
+                    _log.Log(
+                        $"[FollowSystem/ForageCollect] {npcName}: collected {itemName} ({itemId}) " +
+                        $"at ({target.X},{target.Y})",
+                        LogLevel.Debug);
+
+                    _broadcastEvent?.Invoke("forage_collected", new
+                    {
+                        npc       = npcName,
+                        item_id   = itemId,
+                        item_name = itemName,
+                        quantity  = 1,
+                        tile_x    = target.X,
+                        tile_y    = target.Y,
+                        location  = location.Name ?? "",
+                    });
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/ForageCollect] {npcName}: object at ({target.X},{target.Y}) " +
+                        $"already gone, skipping",
+                        LogLevel.Debug);
+                }
+
+                if (st.ForageQueue.Count == 0)
+                {
+                    _log.Log($"[FollowSystem/ForageCollect] {npcName}: all targets done → Idle", LogLevel.Debug);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.ForageTarget = st.ForageQueue.Dequeue();
+                st.ForagePathed = false;
+                st.LastPathTick = 0;
+                return;
+            }
+
+            if (!st.ForagePathed || npc.controller == null)
+            {
+                Point adjacent = new Point(target.X, target.Y + 1);
+                bool ok = this.TryStartPath(npc, location, adjacent);
+                if (!ok)
+                {
+                    adjacent = new Point(target.X, target.Y - 1);
+                    ok = this.TryStartPath(npc, location, adjacent);
+                }
+                st.ForagePathed = ok;
+                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+
+                _log.Log(
+                    $"[FollowSystem/ForageCollect] {npcName}: pathing to ({target.X},{target.Y}) ok={ok}",
+                    LogLevel.Debug);
+            }
+        }
+
         private void TickDepositItems(NPC npc, string npcName, NpcBehaviorState st)
         {
             if (st.DepositInventory is null)
@@ -771,6 +991,277 @@ namespace SmartNPC.Bridge
                 st.LastPathTick  = _tickCounter > 0 ? _tickCounter : 1;
                 _log.Log(
                     $"[FollowSystem/DepositItems] {npcName}: pathing to chest ({ct.X},{ct.Y}) ok={ok}",
+                    LogLevel.Debug);
+            }
+        }
+
+        private void TickDeliverItems(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            if (st.DeliverInventory is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // Check items still exist — early out if empty.
+            var items = st.DeliverInventory.GetItems(npcName).ToList();
+            if (items.Count == 0)
+            {
+                _log.Log(
+                    $"[FollowSystem/DeliverItems] {npcName}: backpack empty → Idle",
+                    LogLevel.Debug);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Farmer player = Game1.player;
+            if (player?.currentLocation is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // Must be on same map.
+            if (npc.currentLocation != player.currentLocation)
+            {
+                _log.Log(
+                    $"[FollowSystem/DeliverItems] {npcName}: player not on same map → Idle",
+                    LogLevel.Debug);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            var location = npc.currentLocation;
+            if (location is null) { st.Mode = NpcBehaviorMode.Idle; return; }
+
+            Point playerTile = player.Tile.ToPoint();
+
+            float dist = Vector2.Distance(npc.Tile,
+                new Vector2(playerTile.X, playerTile.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Delivery phase ──────────────────────────────────────
+                foreach (var slot in items)
+                {
+                    StardewValley.Item? item;
+                    try { item = StardewValley.ItemRegistry.Create(slot.ItemId, slot.Count, slot.Quality); }
+                    catch (Exception ex)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/DeliverItems] ItemRegistry.Create({slot.ItemId}) failed: {ex.Message}",
+                            LogLevel.Warn);
+                        continue;
+                    }
+
+                    bool added = Game1.player.addItemToInventoryBool(item);
+                    if (added)
+                    {
+                        st.DeliverInventory.Take(npcName, slot.ItemId, slot.Count);
+                        st.DeliveredCount += slot.Count;
+                        _log.Log(
+                            $"[FollowSystem/DeliverItems] {npcName}: delivered {slot.Count}× {slot.ItemId}",
+                            LogLevel.Debug);
+                    }
+                    else
+                    {
+                        _log.Log(
+                            $"[FollowSystem/DeliverItems] {npcName}: player inventory full, kept {slot.ItemId}",
+                            LogLevel.Warn);
+                    }
+                }
+
+                npc.doEmote(32); // happy
+                _log.Log(
+                    $"[FollowSystem/DeliverItems] {npcName}: done, total delivered={st.DeliveredCount} → Idle",
+                    LogLevel.Info);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // ── Pathing phase — walk to adjacent tile near player ──────
+            if (!st.DeliverPathed || npc.controller == null || this.ShouldReplan(st))
+            {
+                // Try adjacent tiles: below, above, right, left of player.
+                Point[] candidates = {
+                    new(playerTile.X,     playerTile.Y + 1),
+                    new(playerTile.X,     playerTile.Y - 1),
+                    new(playerTile.X + 1, playerTile.Y),
+                    new(playerTile.X - 1, playerTile.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.DeliverPathed = ok;
+                st.LastPathTick  = _tickCounter > 0 ? _tickCounter : 1;
+                _log.Log(
+                    $"[FollowSystem/DeliverItems] {npcName}: pathing to player ({playerTile.X},{playerTile.Y}) ok={ok}",
+                    LogLevel.Debug);
+            }
+        }
+
+        private void TickTillSoil(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.TillQueue is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Point target = st.TillTarget;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            // Check if tile is still tillable (empty ground, no HoeDirt yet).
+            bool occupied = location.Objects.ContainsKey(targetV2)
+                         || location.terrainFeatures.ContainsKey(targetV2);
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Till phase ──────────────────────────────────────────
+                if (!occupied)
+                {
+                    try
+                    {
+                        int frame = npc.Sprite.currentFrame;
+                        npc.faceDirection(2); // face down
+                        location.terrainFeatures.Add(targetV2, new HoeDirt());
+                        st.TillCount++;
+
+                        _log.Log(
+                            $"[FollowSystem/TillSoil] {npcName}: tilled ({target.X},{target.Y}) frame={frame}",
+                            LogLevel.Debug);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/TillSoil] {npcName}: till ({target.X},{target.Y}) failed: {ex.Message}",
+                            LogLevel.Warn);
+                    }
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/TillSoil] {npcName}: tile ({target.X},{target.Y}) occupied, skipping",
+                        LogLevel.Debug);
+                }
+
+                // Advance to next target.
+                if (st.TillQueue.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/TillSoil] {npcName}: done, tilled={st.TillCount} → Idle",
+                        LogLevel.Info);
+                    npc.doEmote(32); // happy
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.TillTarget  = st.TillQueue.Dequeue();
+                st.TillPathed  = false;
+                st.LastPathTick = 0;
+                return;
+            }
+
+            // ── Pathing phase ──────────────────────────────────────────
+            if (!st.TillPathed || npc.controller == null)
+            {
+                // Walk to a tile adjacent to the target (try below first).
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.TillPathed = ok;
+                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+                _log.Log(
+                    $"[FollowSystem/TillSoil] {npcName}: pathing to ({target.X},{target.Y}) ok={ok}",
+                    LogLevel.Debug);
+            }
+        }
+
+        private void TickApproachAndSpeak(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            Farmer player = Game1.player;
+            if (player?.currentLocation is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // Must be on same map.
+            if (npc.currentLocation != player.currentLocation)
+            {
+                _log.Log(
+                    $"[FollowSystem/ApproachAndSpeak] {npcName}: player not on same map → Idle",
+                    LogLevel.Debug);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            var location = npc.currentLocation;
+            if (location is null) { st.Mode = NpcBehaviorMode.Idle; return; }
+
+            Point playerTile = player.Tile.ToPoint();
+
+            float dist = Vector2.Distance(npc.Tile,
+                new Vector2(playerTile.X, playerTile.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Arrived ─────────────────────────────────────────────
+                int facing = FacePlayerDir(npc, player);
+                npc.faceDirection(facing);
+
+                // Show a text bubble with the reason (if any).
+                if (!string.IsNullOrWhiteSpace(st.ApproachReason))
+                    npc.showTextAboveHead(st.ApproachReason);
+                npc.doEmote(20); // heart — "I want to talk to you"
+
+                _log.Log(
+                    $"[FollowSystem/ApproachAndSpeak] {npcName}: arrived, facing={facing} → Idle",
+                    LogLevel.Info);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // ── Pathing phase ──────────────────────────────────────────
+            if (!st.ApproachPathed || npc.controller == null || this.ShouldReplan(st))
+            {
+                Point[] candidates = {
+                    new(playerTile.X,     playerTile.Y + 1),
+                    new(playerTile.X,     playerTile.Y - 1),
+                    new(playerTile.X + 1, playerTile.Y),
+                    new(playerTile.X - 1, playerTile.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.ApproachPathed = ok;
+                st.LastPathTick   = _tickCounter > 0 ? _tickCounter : 1;
+                _log.Log(
+                    $"[FollowSystem/ApproachAndSpeak] {npcName}: pathing to player ({playerTile.X},{playerTile.Y}) ok={ok}",
                     LogLevel.Debug);
             }
         }

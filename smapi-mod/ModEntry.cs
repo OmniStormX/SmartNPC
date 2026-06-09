@@ -131,15 +131,15 @@ namespace SmartNPC.Bridge
                     new WaterCropsHandler(this.Monitor, showBubble),
                     new HarvestCropsHandler(this.Monitor, showBubble),
                     new DepositItemsHandler(this.Monitor, showBubble, _npcInventory, _follow),
-                    new DeliverItemsHandler(this.Monitor, showBubble),
-                    new ForageCollectHandler(this.Monitor, showBubble),
+                    new DeliverItemsHandler(this.Monitor, showBubble, _npcInventory, _follow),
+                    new ForageCollectHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new PetAnimalHandler(this.Monitor, showBubble),
                     new PlantSeedsHandler(this.Monitor, showBubble),
-                    new TillSoilHandler(this.Monitor, showBubble),
+                    new TillSoilHandler(this.Monitor, showBubble, _follow),
                     new InspectObjectHandler(this.Monitor, showBubble),
                     new PlaceObjectHandler(this.Monitor, showBubble),
                     // Social actions.
-                    new ApproachAndSpeakHandler(this.Monitor, showBubble),
+                    new ApproachAndSpeakHandler(this.Monitor, showBubble, _follow),
                     new ExpressEmotionHandler(this.Monitor, showBubble),
                     new ShyRetreatHandler(this.Monitor, showBubble),
                     new ShowTextBubbleHandler(this.Monitor, showBubble),
@@ -154,6 +154,7 @@ namespace SmartNPC.Bridge
 
                 string prefix = this._config.ListenPrefix();
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
+                _follow.SetBroadcast((name, data) => _ws.BroadcastEvent(name, data));
                 // Optional: mirror every inbound mcp request into the
                 // custom chat panel for live debugging. Each request is
                 // appended as a bubble in its target NPC's conversation

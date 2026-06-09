@@ -244,16 +244,111 @@ namespace SmartNPC.Bridge
 
     internal sealed class DeliverItemsHandler : NpcActionHandlerBase
     {
+        private readonly NpcInventory _inventory;
+        private readonly FollowSystem _follow;
+
         protected override string ActionName => "npc_deliver_items";
-        public DeliverItemsHandler(IMonitor log, Func<bool> showBubble) : base(log, showBubble) { }
-        // TODO: pathfind to target and hand over items
+
+        public DeliverItemsHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
+            : base(log, showBubble)
+        {
+            _inventory = inventory;
+            _follow    = follow;
+        }
+
+        /// <summary>Public entry for debug commands running on the game thread.</summary>
+        public void ExecuteDebug(NPC npc, string npcName, JsonElement @params)
+            => Execute(npc, npcName, @params);
+
+        protected override string ResolveBubble(JsonElement @params)
+        {
+            return "[送货]";
+        }
+
+        protected override void Execute(NPC npc, string npcName, JsonElement @params)
+        {
+            var items = _inventory.GetItems(npcName);
+            if (items.Count == 0)
+            {
+                Log.Log($"[npc_deliver_items] {npcName}: backpack empty, nothing to deliver", LogLevel.Info);
+                return;
+            }
+
+            _follow.StartDeliverItems(npcName, _inventory);
+            Log.Log($"[npc_deliver_items] {npcName}: queued delivery of {items.Count} item types", LogLevel.Info);
+        }
     }
 
     internal sealed class ForageCollectHandler : NpcActionHandlerBase
     {
+        private readonly NpcInventory _inventory;
+        private readonly FollowSystem _follow;
+
         protected override string ActionName => "npc_forage_collect";
-        public ForageCollectHandler(IMonitor log, Func<bool> showBubble) : base(log, showBubble) { }
-        // TODO: find forage items in range and pick them up
+
+        public ForageCollectHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
+            : base(log, showBubble)
+        {
+            _inventory = inventory;
+            _follow    = follow;
+        }
+
+        protected override string ResolveBubble(JsonElement @params)
+        {
+            int radius   = ParseInt(@params, "radius",    8, 1, 15);
+            int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+            return $"[采集] r={radius} max={maxCount}";
+        }
+
+        protected override void Execute(NPC npc, string npcName, JsonElement @params)
+        {
+            int radius   = ParseInt(@params, "radius",    8, 1, 15);
+            int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+
+            var location = npc.currentLocation;
+            if (location is null) return;
+
+            var npcTile = npc.Tile;
+            var targets = new List<(Microsoft.Xna.Framework.Vector2 tile, string itemId, string itemName)>();
+
+            foreach (var kv in location.Objects.Pairs)
+            {
+                var tile = kv.Key;
+                var obj  = kv.Value;
+                if (!obj.IsSpawnedObject) continue;
+                float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
+                if (dist > radius) continue;
+                targets.Add((tile, obj.ItemId, obj.DisplayName));
+            }
+
+            targets.Sort((a, b) =>
+                Microsoft.Xna.Framework.Vector2.Distance(npcTile, a.tile)
+                    .CompareTo(Microsoft.Xna.Framework.Vector2.Distance(npcTile, b.tile)));
+
+            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+
+            if (targets.Count == 0)
+            {
+                Log.Log($"[npc_forage_collect] {npcName}: no forage in radius={radius}", LogLevel.Info);
+                return;
+            }
+
+            var forageTargets = targets.Select(t =>
+                (new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y), t.itemId, t.itemName))
+                .ToList();
+
+            _follow.StartForageCollect(npcName, forageTargets, _inventory);
+            Log.Log($"[npc_forage_collect] {npcName}: queued {targets.Count} forage targets", LogLevel.Info);
+        }
+
+        private static int ParseInt(JsonElement p, string key, int def, int min, int max)
+        {
+            if (p.ValueKind == JsonValueKind.Object &&
+                p.TryGetProperty(key, out JsonElement el) &&
+                el.TryGetInt32(out int v))
+                return System.Math.Clamp(v, min, max);
+            return def;
+        }
     }
 
     internal sealed class PetAnimalHandler : NpcActionHandlerBase
@@ -272,9 +367,104 @@ namespace SmartNPC.Bridge
 
     internal sealed class TillSoilHandler : NpcActionHandlerBase
     {
+        private readonly FollowSystem _follow;
+
         protected override string ActionName => "npc_till_soil";
-        public TillSoilHandler(IMonitor log, Func<bool> showBubble) : base(log, showBubble) { }
-        // TODO: find diggable tiles and till them
+
+        public TillSoilHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
+            : base(log, showBubble)
+        {
+            _follow = follow;
+        }
+
+        /// <summary>Public entry for debug commands running on the game thread.</summary>
+        public void ExecuteDebug(NPC npc, string npcName, JsonElement @params)
+            => Execute(npc, npcName, @params);
+
+        protected override string ResolveBubble(JsonElement @params)
+        {
+            int radius   = ParseInt(@params, "radius",    3, 1, 8);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
+            return $"[翻地] r={radius} max={maxCount}";
+        }
+
+        protected override void Execute(NPC npc, string npcName, JsonElement @params)
+        {
+            int radius   = ParseInt(@params, "radius",    3, 1, 8);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
+
+            var location = npc.currentLocation;
+            if (location is null) return;
+
+            // Only allow on farm-type maps to avoid creating HoeDirt on paths / indoors.
+            if (!IsTillableMap(location))
+            {
+                Log.Log($"[npc_till_soil] {npcName}: map '{location.Name}' is not tillable (farm/greenhouse only)", LogLevel.Warn);
+                return;
+            }
+
+            // Scan for empty diggable tiles within radius.
+            var npcTile = npc.Tile;
+            var targets = new System.Collections.Generic.List<(Microsoft.Xna.Framework.Vector2 tile, float dist)>();
+            int scanRange = Math.Max(radius, 1);
+
+            for (int dx = -scanRange; dx <= scanRange; dx++)
+            {
+                for (int dy = -scanRange; dy <= scanRange; dy++)
+                {
+                    int tx = (int)npcTile.X + dx;
+                    int ty = (int)npcTile.Y + dy;
+                    var tileV2 = new Microsoft.Xna.Framework.Vector2(tx, ty);
+                    float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
+                    if (d > radius) continue;
+
+                    // Skip occupied tiles.
+                    if (location.Objects.ContainsKey(tileV2)) continue;
+                    if (location.terrainFeatures.ContainsKey(tileV2)) continue;
+                    // Must be passable (not water, cliff, building, etc.).
+                    if (!location.isTilePassable(
+                        new xTile.Dimensions.Location(tx, ty), Game1.viewport)) continue;
+
+                    targets.Add((tileV2, d));
+                }
+            }
+
+            // Sort by distance and take top maxCount.
+            targets.Sort((a, b) => a.dist.CompareTo(b.dist));
+            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+
+            if (targets.Count == 0)
+            {
+                Log.Log($"[npc_till_soil] {npcName}: no empty diggable tiles in radius={radius}", LogLevel.Info);
+                return;
+            }
+
+            var tilePoints = targets.Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
+            _follow.StartTillSoil(npcName, tilePoints);
+
+            Log.Log($"[npc_till_soil] {npcName}: queued {targets.Count} tiles to till", LogLevel.Info);
+        }
+
+        // ── helpers ───────────────────────────────────────────────────
+
+        private static bool IsTillableMap(GameLocation location)
+        {
+            if (location.IsFarm) return true;
+            if (location.IsGreenhouse) return true;
+            // Also allow Island farm maps (e.g. IslandWest).
+            string name = location.NameOrUniqueName ?? location.Name ?? "";
+            return name.Contains("Island", StringComparison.OrdinalIgnoreCase)
+                && name.Contains("Farm",  StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int ParseInt(JsonElement p, string key, int def, int min, int max)
+        {
+            if (p.ValueKind == JsonValueKind.Object &&
+                p.TryGetProperty(key, out JsonElement el) &&
+                el.TryGetInt32(out int v))
+                return System.Math.Clamp(v, min, max);
+            return def;
+        }
     }
 
     internal sealed class InspectObjectHandler : NpcActionHandlerBase
