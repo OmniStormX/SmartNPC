@@ -238,3 +238,45 @@ func TestNpcInspectObject_EndToEnd(t *testing.T) {
 		t.Errorf("output: %+v", out)
 	}
 }
+
+// ── npc_forage_collect ────────────────────────────────────────────
+
+func TestNpcForageCollect_EndToEnd(t *testing.T) {
+	cs, ctx, cleanup := newWorldActionClientServer(t)
+	defer cleanup()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "npc_forage_collect",
+		Arguments: map[string]any{"npc": "XiaMi", "radius": 8, "max_count": 5},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	b, _ := json.Marshal(res.StructuredContent)
+	var out NpcForageCollectOutput
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !out.OK || out.NPC != "XiaMi" {
+		t.Errorf("output: %+v", out)
+	}
+}
+
+func TestNpcForageCollect_RejectsEmptyNPC(t *testing.T) {
+	cs, ctx, cleanup := newWorldActionClientServer(t)
+	defer cleanup()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "npc_forage_collect",
+		Arguments: map[string]any{"npc": ""},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Error("expected IsError=true for empty npc")
+	}
+}

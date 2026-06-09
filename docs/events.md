@@ -44,6 +44,7 @@ fields will be added over time; consumers must not error on them.
 | `chat_received` | mod | ✅ implemented (legacy) |
 | `npc_interact` | mod | ✅ implemented |
 | `group_create` | mod | ✅ implemented (legacy group chat) |
+| `forage_collected` | mod | ✅ implemented |
 | `day_started` | mod | 🔒 reserved — schema frozen, mod implementation pending |
 | `location_changed` | mod | 🔒 reserved |
 | `friendship_changed` | mod | 🔒 reserved |
@@ -134,6 +135,25 @@ Emitted by [`smapi-mod/UI/GroupChatManager.cs`](../smapi-mod/UI/GroupChatManager
 | field | type | notes |
 |---|---|---|
 | `participants` | array of string | NPC internal names in the group |
+
+### `forage_collected`
+
+Emitted by `smapi-mod/Movement/FollowSystem.cs::TickForageCollect` each time
+an NPC successfully removes a forage object from the map and stores it in their
+NPC backpack. One event per item collected.
+
+Emitted after `location.Objects.Remove(tile)` succeeds — the object is already
+gone from the world when the event fires.
+
+| field | type | notes |
+|---|---|---|
+| `npc` | string | NPC internal name, e.g. `"XiaMi"` |
+| `item_id` | string | SDV qualified item id, e.g. `"(O)281"` (Morel) |
+| `item_name` | string | Display name, e.g. `"Morel"` |
+| `quantity` | int | always `1` per event |
+| `tile_x` | int | tile X where the forage was collected |
+| `tile_y` | int | tile Y where the forage was collected |
+| `location` | string | SDV map name, e.g. `"Forest"` |
 
 ---
 
