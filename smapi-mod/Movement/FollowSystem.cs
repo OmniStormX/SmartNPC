@@ -832,7 +832,7 @@ namespace SmartNPC.Bridge
                         $"at ({target.X},{target.Y})",
                         LogLevel.Debug);
 
-                    _broadcastEvent?.Invoke("forage_collected", new
+                    _ = _broadcastEvent?.Invoke("forage_collected", new
                     {
                         npc       = npcName,
                         item_id   = itemId,
@@ -864,14 +864,19 @@ namespace SmartNPC.Bridge
                 return;
             }
 
-            if (!st.ForagePathed || npc.controller == null)
+            if (!st.ForagePathed || npc.controller == null || this.ShouldReplan(st))
             {
-                Point adjacent = new Point(target.X, target.Y + 1);
-                bool ok = this.TryStartPath(npc, location, adjacent);
-                if (!ok)
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
                 {
-                    adjacent = new Point(target.X, target.Y - 1);
-                    ok = this.TryStartPath(npc, location, adjacent);
+                    ok = this.TryStartPath(npc, location, adj);
+                    if (ok) break;
                 }
                 st.ForagePathed = ok;
                 st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
