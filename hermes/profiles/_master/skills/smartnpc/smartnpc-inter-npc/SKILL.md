@@ -36,6 +36,7 @@ Mandatory flow:
 |---|---|
 | `query` | Answer via `npc_send_message` with kind="reply"; usually no `chat_say` |
 | `behavioral` | Do the requested game action if safe; maybe one `chat_say` only if player can hear; send kind="reply" |
+| `behavioral` (farm task from manager) | Load `smartnpc-farm-worker` via `skill_view`, then follow §A or §B of that skill. Do NOT handle farm tasks with generic behavioral flow — farm workers have a specialized workflow. |
 | `reply` | Save or remember for your next player turn; do not counter-reply |
 
 ## Anti-loop rules

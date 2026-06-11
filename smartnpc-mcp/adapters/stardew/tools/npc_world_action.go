@@ -16,6 +16,18 @@ type NpcWanderInput struct {
 	NPC           string `json:"npc"                    jsonschema:"NPC internal name, e.g. \"XiaMi\""`
 	Location      string `json:"location,omitempty"     jsonschema:"map name to wander in (default: NPC's current map)"`
 	DurationTicks int    `json:"duration_ticks,omitempty" jsonschema:"how many game ticks to wander (default: 300 ~5s)"`
+	Radius        int    `json:"radius,omitempty"       jsonschema:"tile radius for random step (default 8, max 24)"`
+
+	// ── Constraint A: center + tether ─────────────────────────────
+	CenterX     int `json:"center_x,omitempty"     jsonschema:"center X for wander zone; defaults to NPC start position"`
+	CenterY     int `json:"center_y,omitempty"     jsonschema:"center Y for wander zone; defaults to NPC start position"`
+	MaxDistance int `json:"max_distance,omitempty" jsonschema:"max tiles from center; 0=unlimited"`
+
+	// ── Constraint B: bounding box ────────────────────────────────
+	X1 int `json:"x1,omitempty" jsonschema:"zone left edge (inclusive); set all 4 to enable"`
+	Y1 int `json:"y1,omitempty" jsonschema:"zone top edge (inclusive)"`
+	X2 int `json:"x2,omitempty" jsonschema:"zone right edge (inclusive)"`
+	Y2 int `json:"y2,omitempty" jsonschema:"zone bottom edge (inclusive)"`
 }
 
 type NpcWanderOutput struct {
@@ -165,18 +177,125 @@ type NpcTillSoilOutput struct {
 // ── npc_inspect_object ────────────────────────────────────────────
 
 type NpcInspectObjectInput struct {
-	NPC string `json:"npc"            jsonschema:"NPC internal name"`
-	X   int    `json:"x"              jsonschema:"target tile X"`
-	Y   int    `json:"y"              jsonschema:"target tile Y"`
-	Map string `json:"map,omitempty"  jsonschema:"map (default: NPC's current map)"`
+	NPC    string `json:"npc"             jsonschema:"NPC internal name"`
+	X      int    `json:"x,omitempty"     jsonschema:"center tile X (default: NPC's current tile)"`
+	Y      int    `json:"y,omitempty"     jsonschema:"center tile Y (default: NPC's current tile)"`
+	Radius int    `json:"radius,omitempty" jsonschema:"scan radius in tiles, 0 = single tile at (x,y) (default 0, max 10)"`
+	What   string `json:"what,omitempty"  jsonschema:"filter: crops, objects, terrain, or all (default: all)"`
+}
+
+type JsonTile struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
+
+type JsonCrop struct {
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
+	Crop string `json:"crop"`
+	ID   string `json:"id"`
+}
+
+type JsonTileObj struct {
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
+	Name string `json:"name"`
+	ID   string `json:"id"`
+}
+
+type JsonTileType struct {
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
+	Type string `json:"type"`
 }
 
 type NpcInspectObjectOutput struct {
-	OK          bool   `json:"ok"                     jsonschema:"true if accepted"`
-	NPC         string `json:"npc"                    jsonschema:"echo"`
-	ObjectName  string `json:"object_name,omitempty"  jsonschema:"name of the object/crop/terrain at target"`
-	Description string `json:"description,omitempty"  jsonschema:"human-readable state description"`
-	Message     string `json:"message,omitempty"      jsonschema:"status"`
+	OK             bool           `json:"ok"                       jsonschema:"true on success"`
+	NPC            string         `json:"npc"                      jsonschema:"echo"`
+	Center         JsonTile       `json:"center"                   jsonschema:"scan center tile"`
+	Radius         int            `json:"radius"                   jsonschema:"scan radius used"`
+	TilesScanned   int            `json:"tiles_scanned"            jsonschema:"total tiles examined"`
+	Summary        string         `json:"summary"                  jsonschema:"one-line summary, e.g. '3 mature crops, 2 unwatered'"`
+	Location       string         `json:"location"                 jsonschema:"map name"`
+	Season         string         `json:"season"                   jsonschema:"current in-game season"`
+	MatureCrops    []JsonCrop     `json:"mature_crops,omitempty"  jsonschema:"mature crops ready to harvest"`
+	UnwateredCrops int            `json:"unwatered_crops,omitempty" jsonschema:"number of unwatered crop tiles"`
+	EmptyHoedirt   int            `json:"empty_hoedirt,omitempty"   jsonschema:"number of empty HoeDirt tiles"`
+	Objects        []JsonTileObj  `json:"objects,omitempty"      jsonschema:"objects on the ground"`
+	Terrain        []JsonTileType `json:"terrain,omitempty"     jsonschema:"non-HoeDirt terrain features"`
+}
+
+// ── npc_withdraw_from_chest ─────────────────────────────────────────
+
+type NpcWithdrawFromChestInput struct {
+	NPC      string `json:"npc"                jsonschema:"NPC internal name"`
+	ItemID   string `json:"item_id"            jsonschema:"SDV qualified item id to withdraw, e.g. \"(O)472\""`
+	Count    int    `json:"count,omitempty"    jsonschema:"how many to withdraw (default 1, max 999)"`
+	ChestX   int    `json:"chest_x,omitempty"  jsonschema:"chest tile X; ignored when auto_find=true"`
+	ChestY   int    `json:"chest_y,omitempty"  jsonschema:"chest tile Y; ignored when auto_find=true"`
+	AutoFind bool   `json:"auto_find,omitempty" jsonschema:"true = ignore coordinates and walk to nearest chest"`
+	Map      string `json:"map,omitempty"      jsonschema:"map name (default: NPC current map)"`
+}
+
+type NpcWithdrawFromChestOutput struct {
+	OK        bool   `json:"ok"                   jsonschema:"true if accepted"`
+	NPC       string `json:"npc"                  jsonschema:"echo"`
+	Withdrawn int    `json:"withdrawn,omitempty"  jsonschema:"items actually withdrawn"`
+	ItemID    string `json:"item_id,omitempty"    jsonschema:"item id withdrawn"`
+	ChestX    int    `json:"chest_x,omitempty"    jsonschema:"actual chest tile X used"`
+	ChestY    int    `json:"chest_y,omitempty"    jsonschema:"actual chest tile Y used"`
+	Message   string `json:"message,omitempty"    jsonschema:"status"`
+}
+
+// ── npc_transfer_item ──────────────────────────────────────────────
+
+type NpcTransferItemInput struct {
+	FromNPC string `json:"from_npc" jsonschema:"sender NPC internal name"`
+	ToNPC   string `json:"to_npc"   jsonschema:"recipient NPC internal name"`
+	ItemID  string `json:"item_id"  jsonschema:"SDV qualified item id, e.g. \"(O)472\""`
+	Count   int    `json:"count"    jsonschema:"how many to transfer (max 999)"`
+}
+
+type NpcTransferItemOutput struct {
+	OK          bool   `json:"ok"                   jsonschema:"true if accepted"`
+	FromNPC     string `json:"from_npc"             jsonschema:"echo"`
+	ToNPC       string `json:"to_npc"               jsonschema:"echo"`
+	Transferred int    `json:"transferred,omitempty" jsonschema:"items actually transferred"`
+	ItemID      string `json:"item_id,omitempty"    jsonschema:"item id transferred"`
+	Message     string `json:"message,omitempty"    jsonschema:"status"`
+}
+
+// ── npc_fertilize ────────────────────────────────────────────────────
+
+type NpcFertilizeInput struct {
+	NPC          string `json:"npc"                jsonschema:"NPC internal name"`
+	FertilizerID string `json:"fertilizer_id"      jsonschema:"SDV qualified fertilizer item id, e.g. \"(O)368\" for basic fertilizer"`
+	Radius       int    `json:"radius,omitempty"   jsonschema:"tile radius (default 5, max 10)"`
+	MaxCount     int    `json:"max_count,omitempty" jsonschema:"max tiles to fertilize (default 5, max 15)"`
+}
+
+type NpcFertilizeOutput struct {
+	OK          bool   `json:"ok"                   jsonschema:"true if accepted"`
+	NPC         string `json:"npc"                  jsonschema:"echo"`
+	Fertilized  int    `json:"fertilized,omitempty"  jsonschema:"tiles fertilized"`
+	FertilizerID string `json:"fertilizer_id,omitempty" jsonschema:"fertilizer used"`
+	Message     string `json:"message,omitempty"    jsonschema:"status"`
+}
+
+// ── npc_break_resource ──────────────────────────────────────────────
+
+type NpcBreakResourceInput struct {
+	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius to scan (default 6, max 15)"`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"max resources to break (default 3, max 10)"`
+	What     string `json:"what,omitempty"    jsonschema:"filter: trees, stones, or all (default: all)"`
+}
+
+type NpcBreakResourceOutput struct {
+	OK      bool   `json:"ok"                jsonschema:"true if accepted"`
+	NPC     string `json:"npc"               jsonschema:"echo"`
+	Broken  int    `json:"broken,omitempty"  jsonschema:"resources broken"`
+	Message string `json:"message,omitempty" jsonschema:"status"`
 }
 
 // ── npc_place_object ──────────────────────────────────────────────
@@ -229,6 +348,11 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"random passable tiles and pathfinds between them for the given duration.\n\n" +
 			"When to call: NPC is idle and you want natural roaming behavior — e.g. " +
 			"during downtime, after finishing a task, or to simulate casual exploration.\n\n" +
+			"Constraints (all optional, can combine):\n" +
+			"  A. center_x + center_y + max_distance — NPC stays within max_distance of center.\n" +
+			"  B. x1/y1/x2/y2 — NPC only picks tiles inside this rectangular zone.\n" +
+			"  If both are set, the effective zone is their intersection.\n" +
+			"  If neither, wanders freely within radius of current position (legacy behavior).\n\n" +
 			"Side-effect: WRITE (moves character). Ongoing for duration_ticks.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcWanderInput) (*mcp.CallToolResult, NpcWanderOutput, error) {
 		if in.NPC == "" {
@@ -353,10 +477,13 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_plant_seeds",
 		Description: "NPC plants seeds on empty tilled soil within radius.\n\n" +
-			"When to call: player asks NPC to plant, or NPC has seeds and sees empty HoeDirt.\n\n" +
+			"When to call: player asks NPC to plant, or NPC sees empty HoeDirt.\n\n" +
+			"Seed consumption: if the NPC has seeds of the given seed_id in their backpack, " +
+			"one seed is consumed per tile planted. If the backpack has no matching seeds, " +
+			"planting still succeeds without consuming anything (free plant mode).\n\n" +
 			"Constraints: seed_id must be a valid SDV seed item; radius max 10, max_count max 10. " +
-			"Only plants on Farm-type maps in the correct season.\n\n" +
-			"Side-effect: WRITE (creates crops on HoeDirt).",
+			"Only plants on Farm-type maps.\n\n" +
+			"Side-effect: WRITE (creates crops on HoeDirt, optionally consumes seeds from NPC backpack).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcPlantSeedsInput) (*mcp.CallToolResult, NpcPlantSeedsOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcPlantSeedsOutput{}, errNpcRequired
@@ -416,6 +543,99 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 		}
 		logToolCall("npc_place_object", in)
 		out, err := callBridge[NpcPlaceObjectOutput](ctx, req, br, bridge.ActionNpcPlaceObject, in, "npc_place_object")
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_withdraw_from_chest",
+		Description: "NPC walks to a chest and withdraws items into their backpack.\n\n" +
+			"When to call: NPC needs to get seeds, tools, or materials from storage " +
+			"before doing farm work. E.g. manager NPC getting seeds to distribute to workers.\n\n" +
+			"Chest selection: set auto_find=true to automatically walk to the nearest chest " +
+			"(ignores chest_x/chest_y). Or specify chest_x+chest_y for a specific chest.\n\n" +
+			"Side-effect: WRITE (removes items from chest, adds to NPC backpack). " +
+			"If chest doesn't have enough, takes what's available.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcWithdrawFromChestInput) (*mcp.CallToolResult, NpcWithdrawFromChestOutput, error) {
+		if in.NPC == "" {
+			return nil, NpcWithdrawFromChestOutput{}, errNpcRequired
+		}
+		if in.ItemID == "" {
+			return nil, NpcWithdrawFromChestOutput{}, errItemIDRequired
+		}
+		if in.Count <= 0 {
+			in.Count = 1
+		}
+		logToolCall("npc_withdraw_from_chest", in)
+		out, err := callBridge[NpcWithdrawFromChestOutput](ctx, req, br, bridge.ActionNpcWithdrawItems, in, "npc_withdraw_from_chest")
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_transfer_item",
+		Description: "Transfer items from one NPC's backpack to another NPC's backpack. " +
+			"Direct inventory-to-inventory transfer — no movement involved.\n\n" +
+			"When to call: farm manager distributing seeds/tools to workers, " +
+			"or NPCs sharing resources among themselves.\n\n" +
+			"Constraints: from_npc must have enough items; count is capped at what's available.\n\n" +
+			"Side-effect: WRITE (modifies both NPCs' backpacks).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcTransferItemInput) (*mcp.CallToolResult, NpcTransferItemOutput, error) {
+		if in.FromNPC == "" || in.ToNPC == "" {
+			return nil, NpcTransferItemOutput{}, fmt.Errorf("from_npc and to_npc are required")
+		}
+		if in.ItemID == "" {
+			return nil, NpcTransferItemOutput{}, errItemIDRequired
+		}
+		if in.Count <= 0 {
+			return nil, NpcTransferItemOutput{}, fmt.Errorf("count must be positive")
+		}
+		if in.FromNPC == in.ToNPC {
+			return nil, NpcTransferItemOutput{}, fmt.Errorf("from_npc and to_npc must differ")
+		}
+		logToolCall("npc_transfer_item", in)
+		out, err := callBridge[NpcTransferItemOutput](ctx, req, br, bridge.ActionNpcTransferItem, in, "npc_transfer_item")
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_fertilize",
+		Description: "NPC applies fertilizer to empty tilled soil within radius.\n\n" +
+			"When to call: before planting, to improve soil quality for better crops.\n\n" +
+			"Fertilizer consumption: if the NPC has the fertilizer in their backpack, " +
+			"one is consumed per tile. If the backpack has none, fertilizing still " +
+			"succeeds (free mode). Valid fertilizer_ids: \"(O)368\" (Basic), \"(O)369\" " +
+			"(Quality), \"(O)465\" (Speed-Gro), \"(O)466\" (Deluxe Speed-Gro), " +
+			"\"(O)370\" (Basic Retaining), \"(O)371\" (Quality Retaining).\n\n" +
+			"Constraints: radius max 10, max_count max 15. Only on Farm-type maps. " +
+			"Skips tiles that already have fertilizer or a crop.\n\n" +
+			"Side-effect: WRITE (sets HoeDirt fertilizer, optionally consumes from NPC backpack).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcFertilizeInput) (*mcp.CallToolResult, NpcFertilizeOutput, error) {
+		if in.NPC == "" {
+			return nil, NpcFertilizeOutput{}, errNpcRequired
+		}
+		if in.FertilizerID == "" {
+			return nil, NpcFertilizeOutput{}, errItemIDRequired
+		}
+		logToolCall("npc_fertilize", in)
+		out, err := callBridge[NpcFertilizeOutput](ctx, req, br, bridge.ActionNpcFertilize, in, "npc_fertilize")
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_break_resource",
+		Description: "NPC breaks natural resources (trees, stumps, large stones) and collects " +
+			"the drops into their backpack.\n\n" +
+			"When to call: NPC is in a forest/mountain/quarry area and wants to gather wood, " +
+			"hardwood, stone, or other natural materials.\n\n" +
+			"Constraints: radius max 15, max_count max 10. Does NOT break player-placed objects " +
+			"or machines. Trees with tappers are skipped. Use `what` to filter: \"trees\" (trees " +
+			"+ stumps), \"stones\" (large stones only), or \"all\" (default).\n\n" +
+			"Side-effect: WRITE (removes terrain features / world objects, adds drops to NPC backpack).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcBreakResourceInput) (*mcp.CallToolResult, NpcBreakResourceOutput, error) {
+		if in.NPC == "" {
+			return nil, NpcBreakResourceOutput{}, errNpcRequired
+		}
+		logToolCall("npc_break_resource", in)
+		out, err := callBridge[NpcBreakResourceOutput](ctx, req, br, bridge.ActionNpcBreakResource, in, "npc_break_resource")
 		return nil, out, err
 	})
 }

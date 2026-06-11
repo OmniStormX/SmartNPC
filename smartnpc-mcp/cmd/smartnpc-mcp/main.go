@@ -510,9 +510,12 @@ func npcTriggerWorker(
 	schedDebug bool,
 ) {
 	for msg := range ch {
+		// Debug mode: show bubble for visual feedback AND relay to LLM.
+		// Previously debug hijacked the trigger and skipped the LLM entirely.
 		if schedDebug && br != nil {
 			dispatchSchedDebug(msg.ctx, logger, br, msg.npc, msg.action, msg.reason)
-		} else if relay != nil {
+		}
+		if relay != nil {
 			relay(msg.ctx, bridge.EventScheduleTrigger, msg.triggerData)
 		}
 	}

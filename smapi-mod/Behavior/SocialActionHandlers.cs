@@ -13,9 +13,60 @@ namespace SmartNPC.Bridge
 
     internal sealed class ApproachAndSpeakHandler : NpcActionHandlerBase
     {
+        private readonly FollowSystem _follow;
+
         protected override string ActionName => "npc_approach_and_speak";
-        public ApproachAndSpeakHandler(IMonitor log, Func<bool> showBubble) : base(log, showBubble) { }
-        // TODO: pathfind to player and initiate dialogue
+
+        public ApproachAndSpeakHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
+            : base(log, showBubble)
+        {
+            _follow = follow;
+        }
+
+        /// <summary>Public entry for debug commands running on the game thread.</summary>
+        public void ExecuteDebug(NPC npc, string npcName, JsonElement @params)
+            => Execute(npc, npcName, @params);
+
+        protected override string ResolveBubble(JsonElement @params)
+        {
+            string? reason = ParseReason(@params);
+
+            if (!string.IsNullOrWhiteSpace(reason))
+                return $"[搭话] {reason}";
+            return "[搭话]";
+        }
+
+        protected override void Execute(NPC npc, string npcName, JsonElement @params)
+        {
+            string? reason = ParseReason(@params);
+
+            _follow.StartApproachAndSpeak(npcName, reason);
+
+            Log.Log(
+                $"[npc_approach_and_speak] {npcName}: started{(reason is not null ? $" reason=\"{reason}\"" : "")}",
+                LogLevel.Info);
+        }
+
+        /// <summary>
+        /// Read the bubble text from params. Go MCP tool sends "message",
+        /// legacy callers may send "reason". Try both.
+        /// </summary>
+        private static string? ParseReason(JsonElement @params)
+        {
+            if (@params.ValueKind != JsonValueKind.Object) return null;
+
+            // Primary: "message" field (from MCP tool NpcApproachAndSpeakInput).
+            if (@params.TryGetProperty("message", out JsonElement msgEl) &&
+                msgEl.ValueKind == JsonValueKind.String)
+                return msgEl.GetString();
+
+            // Fallback: "reason" field (legacy / debug).
+            if (@params.TryGetProperty("reason", out JsonElement rEl) &&
+                rEl.ValueKind == JsonValueKind.String)
+                return rEl.GetString();
+
+            return null;
+        }
     }
 
     internal sealed class ExpressEmotionHandler : NpcActionHandlerBase

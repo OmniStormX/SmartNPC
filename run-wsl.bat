@@ -30,6 +30,9 @@ if not defined SMARTNPC_WS_URL       set "SMARTNPC_WS_URL=ws://127.0.0.1:18745/w
 if not defined SMARTNPC_HERMES_KEY   set "SMARTNPC_HERMES_KEY=smartnpc-test-key"
 if not defined SMARTNPC_ACTIVE_PROFILES set "SMARTNPC_ACTIVE_PROFILES=xiami,abigail,haley,harvey,penny,sebastian"
 if not defined HERMES_BOOT_TIMEOUT   set "HERMES_BOOT_TIMEOUT=90"
+if not defined HERMES_AGENT_URL      set "HERMES_AGENT_URL=https://api.deepseek.com"
+if not defined HERMES_AGENT_API_KEY  set "HERMES_AGENT_API_KEY=sk-REPLACE_ME"
+if not defined HERMES_AGENT_MODEL    set "HERMES_AGENT_MODEL=deepseek-v4-pro"
 
 rem ---- WSL path of the repo ----
 for /f "usebackq tokens=*" %%P in (`wsl -d %WSL_DISTRO% wslpath -a "%SMARTNPC_REPO%"`) do set "REPO_WSL=%%P"
@@ -116,12 +119,21 @@ echo.
 
 rem ---- Step 4.5: Sync Hermes profiles in WSL ----
 echo [4.5/6] Syncing Hermes profiles to WSL...
-echo      Updating SMARTNPC_MCP_URL in profile .env files (IP=%WIN_HOST_IP%)...
-wsl -d %WSL_DISTRO% bash -lc "cd %REPO_WSL% && for d in hermes/profiles/*/; do p=$(basename \"$d\"); [ \"$p\" = '_master' ] && continue; env_file=\"$d/.env\"; if [ -f \"$env_file\" ]; then sed -i 's|^SMARTNPC_MCP_URL=.*|SMARTNPC_MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp|' \"$env_file\"; fi; done && bash hermes/install.sh"
+echo      Updating SMARTNPC_MCP_URL + HERMES_AGENT_* in profile .env files (IP=%WIN_HOST_IP%)...
+
+rem Rewrite 127.0.0.1/localhost in HERMES_AGENT_URL to WIN_HOST_IP so WSL can reach Windows.
+rem CMD string substitution: %VAR:find=replace% works here because WIN_HOST_IP is already expanded.
+set "EFFECTIVE_AGENT_URL=%HERMES_AGENT_URL%"
+if not "%WIN_HOST_IP%"=="" (
+    call set "EFFECTIVE_AGENT_URL=%%EFFECTIVE_AGENT_URL:127.0.0.1=%WIN_HOST_IP%%%"
+    call set "EFFECTIVE_AGENT_URL=%%EFFECTIVE_AGENT_URL:localhost=%WIN_HOST_IP%%%"
+)
+
+wsl -d %WSL_DISTRO% bash -lc "cd %REPO_WSL% && for d in hermes/profiles/*/; do p=$(basename \"$d\"); [ \"$p\" = '_master' ] && continue; env_file=\"$d/.env\"; if [ -f \"$env_file\" ]; then sed -i 's|^SMARTNPC_MCP_URL=.*|SMARTNPC_MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp|' \"$env_file\"; sed -i 's|^HERMES_AGENT_URL=.*|HERMES_AGENT_URL=%EFFECTIVE_AGENT_URL%|' \"$env_file\"; sed -i 's|^HERMES_AGENT_API_KEY=.*|HERMES_AGENT_API_KEY=%HERMES_AGENT_API_KEY%|' \"$env_file\"; sed -i 's|^HERMES_AGENT_MODEL=.*|HERMES_AGENT_MODEL=%HERMES_AGENT_MODEL%|' \"$env_file\"; fi; done && bash hermes/install.sh"
 if errorlevel 1 (
     echo [WARN] install.sh failed, profiles may be stale
 )
-echo [OK] Profiles synced (MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp).
+echo [OK] Profiles synced (MCP_URL=http://%WIN_HOST_IP%:%SMARTNPC_HTTP_PORT%/mcp, AGENT_URL=%EFFECTIVE_AGENT_URL%, MODEL=%HERMES_AGENT_MODEL%).
 echo.
 
 rem ---- Step 5: Start Hermes Gateways in WSL (native) ----

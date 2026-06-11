@@ -88,6 +88,26 @@ func LogRelayResponse(npc, eventName string, status int, elapsed time.Duration, 
 	_, _ = f.Write(line)
 }
 
+// LogDelegation records a farm task delegation event.
+// Format:
+//
+//	[DELEGATE XiaMi→Penny] 2026-06-03 10:05:00 kind=behavioral text="npc_plant_seeds ..."
+//
+// Safe for concurrent use.
+func LogDelegation(from, to, kind, text string) {
+	f := getRelayLogFile()
+	if f == nil {
+		return
+	}
+	// Truncate text for readability.
+	if len(text) > 200 {
+		text = text[:197] + "..."
+	}
+	line := fmt.Appendf(nil, "[DELEGATE %s→%s] %s kind=%s text=%s\n",
+		from, to, time.Now().Format("2006-01-02 15:04:05"), kind, text)
+	_, _ = f.Write(line)
+}
+
 // LogRelayError records a failed relay attempt.
 // Format:
 //

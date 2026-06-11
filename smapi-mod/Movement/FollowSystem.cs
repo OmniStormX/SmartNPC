@@ -20,6 +20,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -42,6 +43,31 @@ namespace SmartNPC.Bridge
         DeliverItems,
         TillSoil,
         ApproachAndSpeak,
+        PlantSeeds,
+        WaterCrops,
+        HarvestCrops,
+        WithdrawItems,
+        BreakResource,
+        Fertilize,
+    }
+
+    /// <summary>Describes a single resource target (tree, stump, or large stone).</summary>
+    public readonly struct ResourceTarget
+    {
+        public readonly Point Tile;
+        public readonly bool IsTree;
+        public readonly bool IsStump;
+        public readonly string TreeType;    // e.g. "oak", "maple", "pine"
+        public readonly int StoneIndex;     // ParentSheetIndex for stones
+
+        public ResourceTarget(Point tile, bool isTree, bool isStump, string treeType, int stoneIndex)
+        {
+            Tile = tile;
+            IsTree = isTree;
+            IsStump = isStump;
+            TreeType = treeType;
+            StoneIndex = stoneIndex;
+        }
     }
 
     /// <summary>Per-NPC mutable state held by FollowSystem.</summary>
@@ -56,6 +82,15 @@ namespace SmartNPC.Bridge
         // Wander: current destination + radius for continuous re-selection.
         public Point WanderTarget { get; set; }
         public int   WanderRadius { get; set; } = 8;
+
+        // Wander constraints (optional).
+        public int WanderCenterX     { get; set; }
+        public int WanderCenterY     { get; set; }
+        public int WanderMaxDistance { get; set; } // 0 = unlimited
+        public int WanderX1          { get; set; }
+        public int WanderY1          { get; set; }
+        public int WanderX2          { get; set; }
+        public int WanderY2          { get; set; }
 
         // ClearDebris: ordered queue of debris tiles to visit and destroy.
         public Queue<Point>?  DebrisQueue     { get; set; }
@@ -92,8 +127,58 @@ namespace SmartNPC.Bridge
         public string? ApproachReason { get; set; }
         public bool    ApproachPathed { get; set; }
 
+        // PlantSeeds: walk to empty HoeDirt tiles and plant seeds from inventory.
+        public Queue<Point>? PlantSeedQueue     { get; set; }
+        public Point         PlantSeedTarget    { get; set; }
+        public NpcInventory? PlantSeedInventory { get; set; }
+        public string?       PlantSeedID        { get; set; }  // qualified id, e.g. "(O)472"
+        public bool          PlantSeedPathed    { get; set; }
+        public int           PlantSeededCount   { get; set; }
+
+        // WaterCrops: walk to unwatered crop tiles and water them.
+        public Queue<Point>? WaterCropQueue  { get; set; }
+        public Point         WaterCropTarget { get; set; }
+        public bool          WaterCropPathed { get; set; }
+        public int           WaterCropCount  { get; set; }
+
+        // HarvestCrops: walk to mature crop tiles, harvest into inventory.
+        public Queue<Point>? HarvestQueue     { get; set; }
+        public Point         HarvestTarget    { get; set; }
+        public NpcInventory? HarvestInventory { get; set; }
+        public bool          HarvestPathed    { get; set; }
+        public int           HarvestedCount   { get; set; }
+
+        // WithdrawItems: walk to a chest and withdraw items into backpack.
+        public Point               WithdrawChestTile { get; set; }
+        public string?             WithdrawChestMap  { get; set; }
+        public NpcInventory?       WithdrawInventory { get; set; }
+        public string?             WithdrawItemID    { get; set; }
+        public int                 WithdrawCount     { get; set; }
+        public int                 WithdrawnTotal    { get; set; }
+        public bool                WithdrawPathed    { get; set; }
+
+        // BreakResource: walk to trees/stones, destroy them, collect drops.
+        public Queue<ResourceTarget>? BreakResourceQueue     { get; set; }
+        public ResourceTarget         BreakResourceTarget    { get; set; }
+        public NpcInventory?          BreakResourceInventory { get; set; }
+        public bool                   BreakResourcePathed    { get; set; }
+        public int                    BreakResourceCount     { get; set; }
+
+        // Fertilize: walk to empty HoeDirt tiles and apply fertilizer.
+        public Queue<Point>? FertilizeQueue     { get; set; }
+        public Point         FertilizeTarget    { get; set; }
+        public NpcInventory? FertilizeInventory { get; set; }
+        public string?       FertilizeID        { get; set; }
+        public bool          FertilizePathed    { get; set; }
+        public int           FertilizedCount    { get; set; }
+
         // Tick scheduler: only repath on these boundaries.
         public uint LastPathTick { get; set; }
+
+        // Path failure guard: track consecutive TryStartPath failures for the
+        // same target so we can skip unreachable tiles instead of retrying
+        // every tick forever.
+        public int PathFailCount { get; set; }
 
         // Summoning: true once we have issued the final same-map path.
         public bool SummonPathed { get; set; }
@@ -107,6 +192,9 @@ namespace SmartNPC.Bridge
     {
         // Tick cadence for Following / Leading re-evaluation.
         private const int ReplanIntervalTicks = 30;
+
+        // Max consecutive TryStartPath failures before skipping the target.
+        private const int MaxPathFailures = 5;
 
         // Follow radius: stay within this many tiles of the player. If farther,
         // the NPC is repathed behind the player.
@@ -183,21 +271,32 @@ namespace SmartNPC.Bridge
         }
 
         /// <summary>
-        /// Start continuous wander for <paramref name="npcName"/>: pick a random passable tile
-        /// within <paramref name="radius"/>, walk there, then repeat automatically until
-        /// <see cref="StopFollow"/> is called or the mode is superseded.
-        /// FollowSystem owns the controller so the Idle guard never cancels mid-walk.
+        /// Start continuous wander for <paramref name="npcName"/>: pick a random passable tile,
+        /// walk there, then repeat automatically until <see cref="StopFollow"/> is called.
         /// </summary>
-        public void StartWander(string npcName, NPC npc, int radius)
+        /// <param name="centerX">Center X for tether constraint (0 = use NPC position).</param>
+        /// <param name="centerY">Center Y for tether constraint (0 = use NPC position).</param>
+        /// <param name="maxDist">Max distance from center; 0 = unlimited.</param>
+        /// <param name="x1,y1,x2,y2">Bounding box constraint; only active when x1&lt;x2 and y1&lt;y2.</param>
+        public void StartWander(string npcName, NPC npc, int radius,
+            int centerX = 0, int centerY = 0, int maxDist = 0,
+            int x1 = 0, int y1 = 0, int x2 = 0, int y2 = 0)
         {
             var st = this.GetOrCreate(npcName);
             var prev = st.Mode;
             st.WanderRadius = Math.Clamp(radius, 1, 24);
 
-            Point? dest = PickWanderDest(npc, st.WanderRadius, s_rng);
+            // Store constraints.
+            st.WanderCenterX     = centerX;
+            st.WanderCenterY     = centerY;
+            st.WanderMaxDistance = maxDist;
+            st.WanderX1 = x1; st.WanderY1 = y1;
+            st.WanderX2 = x2; st.WanderY2 = y2;
+
+            Point? dest = PickWanderDest(npc, st, s_rng);
             if (dest is null)
             {
-                _log.Log($"[FollowSystem/StartWander] {npcName}: no passable tile, aborting", LogLevel.Warn);
+                _log.Log($"[FollowSystem/StartWander] {npcName}: no passable tile in zone, aborting", LogLevel.Warn);
                 return;
             }
 
@@ -206,27 +305,55 @@ namespace SmartNPC.Bridge
             st.LastPathTick = 0;
             _log.Log(
                 $"[FollowSystem/StartWander] {npcName}: mode {prev}→Wander " +
-                $"dest=({dest.Value.X},{dest.Value.Y}) radius={radius}",
+                $"dest=({dest.Value.X},{dest.Value.Y}) radius={radius}" +
+                (maxDist > 0 ? $" center=({centerX},{centerY}) maxD={maxDist}" : "") +
+                (x1 < x2 && y1 < y2 ? $" zone=({x1},{y1})-({x2},{y2})" : ""),
                 LogLevel.Debug);
         }
 
         /// <summary>
-        /// Pick a random passable tile within <paramref name="radius"/> tiles of <paramref name="npc"/>.
-        /// Returns null if no candidate is found in 20 attempts.
+        /// Pick a random passable tile within the wander zone. When constraints are set
+        /// (center+max_distance, bounding box, or both), tiles outside the zone are rejected.
+        /// Returns null if no candidate is found in 40 attempts.
         /// </summary>
-        internal static Point? PickWanderDest(NPC npc, int radius, Random rng)
+        internal static Point? PickWanderDest(NPC npc, NpcBehaviorState st, Random rng)
         {
             var location = npc.currentLocation;
             if (location is null) return null;
 
             int ox = (int)(npc.Position.X / 64f);
             int oy = (int)(npc.Position.Y / 64f);
+            int radius = st.WanderRadius;
 
-            for (int attempt = 0; attempt < 20; attempt++)
+            // Constraint flags.
+            bool hasTether  = st.WanderMaxDistance > 0;
+            bool hasRect    = st.WanderX1 < st.WanderX2 && st.WanderY1 < st.WanderY2;
+            int  centerX    = hasTether && st.WanderCenterX == 0 && st.WanderCenterY == 0 ? ox : st.WanderCenterX;
+            int  centerY    = hasTether && st.WanderCenterX == 0 && st.WanderCenterY == 0 ? oy : st.WanderCenterY;
+
+            for (int attempt = 0; attempt < 40; attempt++)
             {
-                int tx = ox + rng.Next(-radius, radius + 1);
-                int ty = oy + rng.Next(-radius, radius + 1);
+                int tx, ty;
+                if (hasRect)
+                {
+                    // Pick random tile within the bounding box.
+                    tx = rng.Next(st.WanderX1, st.WanderX2 + 1);
+                    ty = rng.Next(st.WanderY1, st.WanderY2 + 1);
+                }
+                else
+                {
+                    tx = ox + rng.Next(-radius, radius + 1);
+                    ty = oy + rng.Next(-radius, radius + 1);
+                }
                 if (tx == ox && ty == oy) continue;
+
+                // Tether check.
+                if (hasTether)
+                {
+                    int dx = tx - centerX;
+                    int dy = ty - centerY;
+                    if (Math.Abs(dx) + Math.Abs(dy) > st.WanderMaxDistance) continue;
+                }
 
                 if (location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)
                     && !location.isObjectAtTile(tx, ty))
@@ -433,6 +560,203 @@ namespace SmartNPC.Bridge
                 LogLevel.Debug);
         }
 
+        // ── StartPlantSeeds ─────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up a list of empty HoeDirt tiles for the NPC to walk to and
+        /// plant with seeds from their backpack. Only valid on farm-type maps.
+        /// </summary>
+        public void StartPlantSeeds(
+            string npcName,
+            IEnumerable<Point> targets,
+            string seedId,
+            NpcInventory inventory)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.PlantSeedQueue     = new Queue<Point>(targets);
+            st.PlantSeedInventory = inventory;
+            st.PlantSeedID        = seedId;
+            st.PlantSeedPathed    = false;
+            st.PlantSeededCount   = 0;
+
+            if (st.PlantSeedQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/PlantSeeds] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.PlantSeedTarget = st.PlantSeedQueue.Dequeue();
+            st.Mode            = NpcBehaviorMode.PlantSeeds;
+            st.LastPathTick    = 0;
+            _log.Log($"[FollowSystem/PlantSeeds] {npcName}: started, seed={seedId}, {st.PlantSeedQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
+        // ── StartWaterCrops ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up a list of unwatered crop tiles for the NPC to walk to and
+        /// water one by one. Works on any map with HoeDirt.
+        /// </summary>
+        public void StartWaterCrops(string npcName, IEnumerable<Point> targets)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.WaterCropQueue  = new Queue<Point>(targets);
+            st.WaterCropPathed = false;
+            st.WaterCropCount  = 0;
+
+            if (st.WaterCropQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/WaterCrops] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.WaterCropTarget = st.WaterCropQueue.Dequeue();
+            st.Mode            = NpcBehaviorMode.WaterCrops;
+            st.LastPathTick    = 0;
+            _log.Log($"[FollowSystem/WaterCrops] {npcName}: started, {st.WaterCropQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
+        // ── StartWithdrawItems ────────────────────────────────────────────
+
+        /// <summary>
+        /// Walk NPC to the specified chest (or nearest chest if autoFind=true),
+        /// then withdraw items from the chest into <paramref name="inventory"/>.
+        /// Returns false immediately if no chest is found.
+        /// </summary>
+        public bool StartWithdrawItems(
+            string npcName,
+            NPC npc,
+            Point chestTile,
+            bool autoFind,
+            string? chestMap,
+            string itemId,
+            int count,
+            NpcInventory inventory)
+        {
+            var location = string.IsNullOrEmpty(chestMap)
+                ? npc.currentLocation
+                : Game1.getLocationFromName(chestMap);
+
+            if (location is null)
+            {
+                _log.Log($"[FollowSystem/WithdrawItems] {npcName}: map '{chestMap}' not found", LogLevel.Warn);
+                return false;
+            }
+
+            // Auto-find nearest chest.
+            if (autoFind)
+            {
+                Point? nearest = FindNearestChest(npc, location);
+                if (nearest is null)
+                {
+                    _log.Log($"[FollowSystem/WithdrawItems] {npcName}: no chest found in {location.Name}", LogLevel.Warn);
+                    return false;
+                }
+                chestTile = nearest.Value;
+            }
+            else
+            {
+                if (!location.Objects.TryGetValue(new Vector2(chestTile.X, chestTile.Y), out var obj)
+                    || obj is not StardewValley.Objects.Chest)
+                {
+                    _log.Log($"[FollowSystem/WithdrawItems] {npcName}: no chest at ({chestTile.X},{chestTile.Y})", LogLevel.Warn);
+                    return false;
+                }
+            }
+
+            var st = this.GetOrCreate(npcName);
+            st.WithdrawChestTile = chestTile;
+            st.WithdrawChestMap  = location.NameOrUniqueName ?? location.Name;
+            st.WithdrawInventory = inventory;
+            st.WithdrawItemID    = itemId;
+            st.WithdrawCount     = count;
+            st.WithdrawnTotal    = 0;
+            st.WithdrawPathed    = false;
+            st.Mode              = NpcBehaviorMode.WithdrawItems;
+            st.LastPathTick      = 0;
+
+            _log.Log(
+                $"[FollowSystem/WithdrawItems] {npcName}: started → chest=({chestTile.X},{chestTile.Y}) " +
+                $"map={st.WithdrawChestMap} item={itemId} count={count}",
+                LogLevel.Debug);
+            return true;
+        }
+
+        // ── StartBreakResource ────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up a list of resource targets (trees, stumps, large stones) for
+        /// the NPC to walk to, destroy, and collect drops into <paramref name="inventory"/>.
+        /// </summary>
+        public void StartBreakResource(string npcName, IEnumerable<ResourceTarget> targets, NpcInventory inventory)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.BreakResourceQueue     = new Queue<ResourceTarget>(targets);
+            st.BreakResourceInventory = inventory;
+            st.BreakResourcePathed    = false;
+            st.BreakResourceCount     = 0;
+
+            if (st.BreakResourceQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/BreakResource] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.BreakResourceTarget = st.BreakResourceQueue.Dequeue();
+            st.Mode                = NpcBehaviorMode.BreakResource;
+            st.LastPathTick        = 0;
+            _log.Log($"[FollowSystem/BreakResource] {npcName}: started, {st.BreakResourceQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
+        // ── StartFertilize ────────────────────────────────────────────────
+
+        public void StartFertilize(string npcName, IEnumerable<Point> targets, string fertilizerId, NpcInventory inventory)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.FertilizeQueue     = new Queue<Point>(targets);
+            st.FertilizeInventory = inventory;
+            st.FertilizeID        = fertilizerId;
+            st.FertilizePathed    = false;
+            st.FertilizedCount    = 0;
+
+            if (st.FertilizeQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/Fertilize] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.FertilizeTarget = st.FertilizeQueue.Dequeue();
+            st.Mode            = NpcBehaviorMode.Fertilize;
+            st.LastPathTick    = 0;
+            _log.Log($"[FollowSystem/Fertilize] {npcName}: started, fert={fertilizerId}, {st.FertilizeQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
+        // ── StartHarvestCrops ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up a list of mature crop tiles for the NPC to walk to, harvest via
+        /// the game's native crop.harvest(), and store the produce in <paramref name="inventory"/>.
+        /// </summary>
+        public void StartHarvestCrops(string npcName, IEnumerable<Point> targets, NpcInventory inventory)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.HarvestQueue     = new Queue<Point>(targets);
+            st.HarvestInventory = inventory;
+            st.HarvestPathed    = false;
+            st.HarvestedCount   = 0;
+
+            if (st.HarvestQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/HarvestCrops] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.HarvestTarget = st.HarvestQueue.Dequeue();
+            st.Mode          = NpcBehaviorMode.HarvestCrops;
+            st.LastPathTick  = 0;
+            _log.Log($"[FollowSystem/HarvestCrops] {npcName}: started, {st.HarvestQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
         public NpcBehaviorMode GetMode(string npcName)
         {
             return _states.TryGetValue(npcName, out var st) ? st.Mode : NpcBehaviorMode.Idle;
@@ -511,6 +835,24 @@ namespace SmartNPC.Bridge
                             break;
                         case NpcBehaviorMode.ApproachAndSpeak:
                             this.TickApproachAndSpeak(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.PlantSeeds:
+                            this.TickPlantSeeds(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.WaterCrops:
+                            this.TickWaterCrops(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.HarvestCrops:
+                            this.TickHarvestCrops(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.WithdrawItems:
+                            this.TickWithdrawItems(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.BreakResource:
+                            this.TickBreakResource(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.Fertilize:
+                            this.TickFertilize(npc, name, st);
                             break;
                     }
                 }
@@ -688,7 +1030,40 @@ namespace SmartNPC.Bridge
                     $"pathLen={pathLen} ctrlAfter={npc.controller != null}",
                     LogLevel.Debug);
 
-                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                    st.LastPathTick  = _tickCounter > 0 ? _tickCounter : 1;
+                }
+                else
+                {
+                    // Path failed — skip this destination and try another.
+                    st.PathFailCount++;
+                    if (st.PathFailCount >= MaxPathFailures)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/Wander] {npc.Name}: {st.PathFailCount} consecutive path failures, going Idle",
+                            LogLevel.Warn);
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+
+                    Point? next = PickWanderDest(npc, st, s_rng);
+                    if (next is null)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/Wander] {npc.Name}: no passable tile after path fail, going Idle",
+                            LogLevel.Warn);
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+
+                    st.WanderTarget  = next.Value;
+                    st.LastPathTick  = 0; // re-enter first-tick branch immediately
+                    _log.Log(
+                        $"[FollowSystem/Wander] {npc.Name}: path failed → trying dest=({next.Value.X},{next.Value.Y}) fails={st.PathFailCount}",
+                        LogLevel.Debug);
+                }
                 return;
             }
 
@@ -705,8 +1080,9 @@ namespace SmartNPC.Bridge
             if (!pathDone) return;
 
             // Arrived — pick the next random destination and loop.
-            Point? next = PickWanderDest(npc, st.WanderRadius, s_rng);
-            if (next is null)
+            st.PathFailCount = 0; // reset on successful arrival
+            Point? next2 = PickWanderDest(npc, st, s_rng);
+            if (next2 is null)
             {
                 _log.Log(
                     $"[FollowSystem/Wander] {npc.Name}: no passable tile found, going Idle",
@@ -715,10 +1091,10 @@ namespace SmartNPC.Bridge
                 return;
             }
 
-            st.WanderTarget = next.Value;
+            st.WanderTarget = next2.Value;
             st.LastPathTick = 0;   // trigger path kick on the very next tick
             _log.Log(
-                $"[FollowSystem/Wander] {npc.Name}: arrived → next dest=({next.Value.X},{next.Value.Y})",
+                $"[FollowSystem/Wander] {npc.Name}: arrived → next dest=({next2.Value.X},{next2.Value.Y})",
                 LogLevel.Debug);
         }
 
@@ -782,8 +1158,8 @@ namespace SmartNPC.Bridge
                 return;
             }
 
-            // Not yet arrived — start or continue pathing.
-            if (!st.DebrisPathed || npc.controller == null)
+            // Not yet arrived — start or continue pathing (rate-limited).
+            if ((!st.DebrisPathed || npc.controller == null) && this.ShouldReplan(st))
             {
                 // Walk to a tile adjacent to the debris (one tile below it).
                 Point adjacent = new Point(target.X, target.Y + 1);
@@ -795,11 +1171,36 @@ namespace SmartNPC.Bridge
                     ok = this.TryStartPath(npc, location, adjacent);
                 }
                 st.DebrisPathed = ok;
-                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+                st.LastPathTick = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
 
                 _log.Log(
-                    $"[FollowSystem/ClearDebris] {npcName}: pathing to ({target.X},{target.Y}) ok={ok}",
+                    $"[FollowSystem/ClearDebris] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
                     LogLevel.Debug);
+
+                // Skip unreachable target after MaxPathFailures consecutive failures.
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/ClearDebris] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.DebrisQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.DebrisTarget = st.DebrisQueue.Dequeue();
+                    st.DebrisPathed = false;
+                    st.LastPathTick = 0;
+                }
             }
         }
 
@@ -879,11 +1280,36 @@ namespace SmartNPC.Bridge
                     if (ok) break;
                 }
                 st.ForagePathed = ok;
-                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+                st.LastPathTick = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
 
                 _log.Log(
-                    $"[FollowSystem/ForageCollect] {npcName}: pathing to ({target.X},{target.Y}) ok={ok}",
+                    $"[FollowSystem/ForageCollect] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
                     LogLevel.Debug);
+
+                // Skip unreachable target after MaxPathFailures consecutive failures.
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/ForageCollect] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.ForageQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.ForageTarget = st.ForageQueue.Dequeue();
+                    st.ForagePathed = false;
+                    st.LastPathTick = 0;
+                }
             }
         }
 
@@ -977,7 +1403,7 @@ namespace SmartNPC.Bridge
             }
 
             // ── Pathing phase ──────────────────────────────────────────
-            if (!st.DepositPathed || npc.controller == null)
+            if ((!st.DepositPathed || npc.controller == null) && this.ShouldReplan(st))
             {
                 Point ct = st.DepositChestTile;
                 // Try adjacent tiles: below, above, right, left.
@@ -993,10 +1419,27 @@ namespace SmartNPC.Bridge
                     if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
                 }
                 st.DepositPathed = ok;
-                st.LastPathTick  = _tickCounter > 0 ? _tickCounter : 1;
+                st.LastPathTick  = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
                 _log.Log(
-                    $"[FollowSystem/DepositItems] {npcName}: pathing to chest ({ct.X},{ct.Y}) ok={ok}",
+                    $"[FollowSystem/DepositItems] {npcName}: pathing to chest ({ct.X},{ct.Y}) ok={ok} fails={st.PathFailCount}",
                     LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/DepositItems] {npcName}: giving up on chest ({ct.X},{ct.Y}) after {st.PathFailCount} failures → Idle",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    st.Mode = NpcBehaviorMode.Idle;
+                }
             }
         }
 
@@ -1103,10 +1546,27 @@ namespace SmartNPC.Bridge
                     if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
                 }
                 st.DeliverPathed = ok;
-                st.LastPathTick  = _tickCounter > 0 ? _tickCounter : 1;
+                st.LastPathTick  = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
                 _log.Log(
-                    $"[FollowSystem/DeliverItems] {npcName}: pathing to player ({playerTile.X},{playerTile.Y}) ok={ok}",
+                    $"[FollowSystem/DeliverItems] {npcName}: pathing to player ({playerTile.X},{playerTile.Y}) ok={ok} fails={st.PathFailCount}",
                     LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/DeliverItems] {npcName}: giving up after {st.PathFailCount} failures → Idle",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    st.Mode = NpcBehaviorMode.Idle;
+                }
             }
         }
 
@@ -1179,7 +1639,7 @@ namespace SmartNPC.Bridge
             }
 
             // ── Pathing phase ──────────────────────────────────────────
-            if (!st.TillPathed || npc.controller == null)
+            if ((!st.TillPathed || npc.controller == null) && this.ShouldReplan(st))
             {
                 // Walk to a tile adjacent to the target (try below first).
                 Point[] candidates = {
@@ -1194,10 +1654,35 @@ namespace SmartNPC.Bridge
                     if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
                 }
                 st.TillPathed = ok;
-                st.LastPathTick = _tickCounter > 0 ? _tickCounter : 1;
+                st.LastPathTick = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
                 _log.Log(
-                    $"[FollowSystem/TillSoil] {npcName}: pathing to ({target.X},{target.Y}) ok={ok}",
+                    $"[FollowSystem/TillSoil] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
                     LogLevel.Debug);
+
+                // Skip unreachable target after MaxPathFailures consecutive failures.
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/TillSoil] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.TillQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.TillTarget = st.TillQueue.Dequeue();
+                    st.TillPathed = false;
+                    st.LastPathTick = 0;
+                }
             }
         }
 
@@ -1264,10 +1749,738 @@ namespace SmartNPC.Bridge
                     if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
                 }
                 st.ApproachPathed = ok;
-                st.LastPathTick   = _tickCounter > 0 ? _tickCounter : 1;
+                st.LastPathTick   = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
                 _log.Log(
-                    $"[FollowSystem/ApproachAndSpeak] {npcName}: pathing to player ({playerTile.X},{playerTile.Y}) ok={ok}",
+                    $"[FollowSystem/ApproachAndSpeak] {npcName}: pathing to player ({playerTile.X},{playerTile.Y}) ok={ok} fails={st.PathFailCount}",
                     LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/ApproachAndSpeak] {npcName}: giving up after {st.PathFailCount} failures → Idle",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    st.Mode = NpcBehaviorMode.Idle;
+                }
+            }
+        }
+
+        private void TickPlantSeeds(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.PlantSeedQueue is null || st.PlantSeedInventory is null || st.PlantSeedID is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Point target = st.PlantSeedTarget;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            // Check if HoeDirt still exists and is empty.
+            location.terrainFeatures.TryGetValue(targetV2, out var tf);
+            HoeDirt? dirt = tf as HoeDirt;
+            bool hasHoeDirt = dirt != null && dirt.crop == null;
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Plant phase ──────────────────────────────────────────
+                if (hasHoeDirt)
+                {
+                    try
+                    {
+                        npc.faceDirection(2); // face down
+                        // Crop constructor accepts either qualified "(O)490" or
+                        // unqualified "490". HoeDirt.plant() internally calls
+                        // TryGetData which is strict about prefix format — it failed
+                        // with "(O)490". Direct crop assignment via ItemRegistry
+                        // handles both forms.
+                        var seedData = ItemRegistry.GetData(st.PlantSeedID);
+                        string cropId = seedData?.ItemId ?? st.PlantSeedID;
+                        // Strip the "(O)" prefix if present for Crop constructor.
+                        if (cropId.StartsWith("(O)") || cropId.StartsWith("(o)"))
+                            cropId = cropId.Substring(3);
+                        dirt!.crop = new Crop(cropId, target.X, target.Y, location);
+                        // Only consume from inventory if the NPC has the seed.
+                        var items = st.PlantSeedInventory.GetItems(npcName);
+                        bool hasSeed = items.Any(s => s.ItemId == st.PlantSeedID && s.Count > 0);
+                        if (hasSeed)
+                            st.PlantSeedInventory.Take(npcName, st.PlantSeedID, 1);
+                        st.PlantSeededCount++;
+
+                        _log.Log(
+                            $"[FollowSystem/PlantSeeds] {npcName}: planted {st.PlantSeedID} at ({target.X},{target.Y})",
+                            LogLevel.Debug);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/PlantSeeds] {npcName}: plant ({target.X},{target.Y}) failed: {ex.Message}",
+                            LogLevel.Warn);
+                    }
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/PlantSeeds] {npcName}: tile ({target.X},{target.Y}) no longer empty HoeDirt, skipping",
+                        LogLevel.Debug);
+                }
+
+                // Advance to next target.
+                if (st.PlantSeedQueue.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/PlantSeeds] {npcName}: done, planted={st.PlantSeededCount} → Idle",
+                        LogLevel.Info);
+                    npc.doEmote(32); // happy
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.PlantSeedTarget = st.PlantSeedQueue.Dequeue();
+                st.PlantSeedPathed = false;
+                st.LastPathTick    = 0;
+                return;
+            }
+
+            // ── Pathing phase ──────────────────────────────────────────
+            if ((!st.PlantSeedPathed || npc.controller == null) && this.ShouldReplan(st))
+            {
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.PlantSeedPathed = ok;
+                st.LastPathTick    = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
+                _log.Log(
+                    $"[FollowSystem/PlantSeeds] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                // Skip unreachable target after MaxPathFailures consecutive failures.
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/PlantSeeds] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.PlantSeedQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.PlantSeedTarget = st.PlantSeedQueue.Dequeue();
+                    st.PlantSeedPathed = false;
+                    st.LastPathTick    = 0;
+                }
+            }
+        }
+
+        private void TickWaterCrops(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.WaterCropQueue is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Point target = st.WaterCropTarget;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            // Check if HoeDirt still has a crop that needs watering.
+            location.terrainFeatures.TryGetValue(targetV2, out var tf);
+            HoeDirt? dirt = tf as HoeDirt;
+            bool needsWater = dirt != null && dirt.crop != null && dirt.needsWatering();
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                if (needsWater)
+                {
+                    try
+                    {
+                        npc.faceDirection(2); // face down
+                        // No native watering animation on this NPC sprite —
+                        // use a text bubble as visual feedback instead.
+                        npc.showTextAboveHead("这是一个浇水动画");
+                        dirt!.state.Value = 1; // 1 = watered
+                        st.WaterCropCount++;
+
+                        _log.Log(
+                            $"[FollowSystem/WaterCrops] {npcName}: watered at ({target.X},{target.Y})",
+                            LogLevel.Debug);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/WaterCrops] {npcName}: water ({target.X},{target.Y}) failed: {ex.Message}",
+                            LogLevel.Warn);
+                    }
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/WaterCrops] {npcName}: tile ({target.X},{target.Y}) no longer needs water, skipping",
+                        LogLevel.Debug);
+                }
+
+                if (st.WaterCropQueue.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/WaterCrops] {npcName}: done, watered={st.WaterCropCount} → Idle",
+                        LogLevel.Info);
+                    npc.doEmote(32);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.WaterCropTarget = st.WaterCropQueue.Dequeue();
+                st.WaterCropPathed = false;
+                st.LastPathTick    = 0;
+                return;
+            }
+
+            if ((!st.WaterCropPathed || npc.controller == null) && this.ShouldReplan(st))
+            {
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.WaterCropPathed = ok;
+                st.LastPathTick    = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
+                _log.Log(
+                    $"[FollowSystem/WaterCrops] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                // Skip unreachable target after MaxPathFailures consecutive failures.
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/WaterCrops] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.WaterCropQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.WaterCropTarget = st.WaterCropQueue.Dequeue();
+                    st.WaterCropPathed = false;
+                    st.LastPathTick    = 0;
+                }
+            }
+        }
+
+        private void TickHarvestCrops(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.HarvestQueue is null || st.HarvestInventory is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Point target = st.HarvestTarget;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            // Verify the crop is still harvestable.
+            location.terrainFeatures.TryGetValue(targetV2, out var tf);
+            HoeDirt? dirt = tf as HoeDirt;
+            bool canHarvest = dirt != null
+                           && dirt.crop != null
+                           && !dirt.crop.dead.Value
+                           && dirt.crop.currentPhase.Value >= dirt.crop.phaseDays.Count - 1;
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                if (canHarvest)
+                {
+                    try
+                    {
+                        npc.faceDirection(2); // face down
+                        // crop.harvest() without a JunimoHarvester adds produce
+                        // directly to the player's inventory. To put it in the NPC
+                        // backpack instead, snapshot the player inventory BEFORE
+                        // the call, then move only the newly added items.
+                        var playerBefore = new Dictionary<string, int>();
+                        foreach (var pi in Game1.player.Items)
+                        {
+                            if (pi != null)
+                            {
+                                string key = pi.ItemId + "|" + pi.Quality;
+                                playerBefore[key] = pi.Stack;
+                            }
+                        }
+
+                        bool harvested = dirt!.crop.harvest((int)targetV2.X, (int)targetV2.Y, dirt);
+                        if (harvested)
+                        {
+                            // Find what changed in player inventory after harvest().
+                            var toMove = new List<(string itemId, int quality, int count)>();
+                            foreach (var pi in Game1.player.Items)
+                            {
+                                if (pi != null)
+                                {
+                                    string key = pi.ItemId + "|" + pi.Quality;
+                                    playerBefore.TryGetValue(key, out int beforeCount);
+                                    int delta = pi.Stack - beforeCount;
+                                    if (delta > 0)
+                                        toMove.Add((pi.ItemId, pi.Quality, delta));
+                                }
+                            }
+                            // Take the new items from player inventory → NPC backpack.
+                            foreach (var mv in toMove)
+                            {
+                                for (int i = Game1.player.Items.Count - 1; i >= 0; i--)
+                                {
+                                    var pi = Game1.player.Items[i];
+                                    if (pi != null && pi.ItemId == mv.itemId && pi.Quality == mv.quality)
+                                    {
+                                        int take = Math.Min(pi.Stack, mv.count);
+                                        pi.Stack -= take;
+                                        if (pi.Stack <= 0)
+                                            Game1.player.Items[i] = null;
+                                        st.HarvestInventory.Add(npcName, mv.itemId, take, mv.quality);
+                                        st.HarvestedCount += take;
+                                        break;
+                                    }
+                                }
+                            }
+                            // Clean up Debris that harvest() spawned.
+                            foreach (var d in location.debris.ToList())
+                            {
+                                if (d?.item is not null && d.Chunks.Count > 0)
+                                {
+                                    var chunkTile = new Vector2(
+                                        (int)(d.Chunks[0].position.X / Game1.tileSize),
+                                        (int)(d.Chunks[0].position.Y / Game1.tileSize));
+                                    if (chunkTile == targetV2)
+                                        location.debris.Remove(d);
+                                }
+                            }
+                            // For single-harvest crops, harvest() doesn't clear the
+                            // crop from HoeDirt — the plant sprite stays visible.
+                            // Manually clear it so the tile returns to bare dirt.
+                            dirt.crop = null;
+                            npc.doEmote(20);
+                            _log.Log(
+                                $"[FollowSystem/HarvestCrops] {npcName}: harvested at ({target.X},{target.Y}), " +
+                                $"total={st.HarvestedCount}",
+                                LogLevel.Debug);
+
+                            _ = _broadcastEvent?.Invoke("crop_harvested", new
+                            {
+                                npc      = npcName,
+                                tile_x   = target.X,
+                                tile_y   = target.Y,
+                                location = location.Name ?? "",
+                            });
+                        }
+                        else
+                        {
+                            _log.Log(
+                                $"[FollowSystem/HarvestCrops] {npcName}: harvest returned false at ({target.X},{target.Y})",
+                                LogLevel.Debug);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/HarvestCrops] {npcName}: harvest ({target.X},{target.Y}) failed: {ex.Message}",
+                            LogLevel.Warn);
+                    }
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/HarvestCrops] {npcName}: tile ({target.X},{target.Y}) no longer harvestable, skipping",
+                        LogLevel.Debug);
+                }
+
+                if (st.HarvestQueue.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/HarvestCrops] {npcName}: done, harvested={st.HarvestedCount} → Idle",
+                        LogLevel.Info);
+                    npc.doEmote(32);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.HarvestTarget = st.HarvestQueue.Dequeue();
+                st.HarvestPathed = false;
+                st.LastPathTick  = 0;
+                return;
+            }
+
+            if (!st.HarvestPathed || npc.controller == null || this.ShouldReplan(st))
+            {
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.HarvestPathed = ok;
+                st.LastPathTick  = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
+                _log.Log(
+                    $"[FollowSystem/HarvestCrops] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                // Skip unreachable target after MaxPathFailures consecutive failures.
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/HarvestCrops] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.HarvestQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.HarvestTarget = st.HarvestQueue.Dequeue();
+                    st.HarvestPathed = false;
+                    st.LastPathTick  = 0;
+                }
+            }
+        }
+
+        private void TickWithdrawItems(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            if (st.WithdrawInventory is null || st.WithdrawItemID is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // Resolve the target location.
+            var location = string.IsNullOrEmpty(st.WithdrawChestMap)
+                ? npc.currentLocation
+                : Game1.getLocationFromName(st.WithdrawChestMap);
+
+            if (location is null) { st.Mode = NpcBehaviorMode.Idle; return; }
+
+            var chestV2 = new Vector2(st.WithdrawChestTile.X, st.WithdrawChestTile.Y);
+
+            // Check chest still exists.
+            if (!location.Objects.TryGetValue(chestV2, out var chestObj)
+                || chestObj is not StardewValley.Objects.Chest chest)
+            {
+                _log.Log(
+                    $"[FollowSystem/WithdrawItems] {npcName}: chest at ({st.WithdrawChestTile.X}," +
+                    $"{st.WithdrawChestTile.Y}) gone → Idle (withdrawn={st.WithdrawnTotal})",
+                    LogLevel.Debug);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            float dist = Vector2.Distance(npc.Tile,
+                new Vector2(st.WithdrawChestTile.X, st.WithdrawChestTile.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Withdraw phase ────────────────────────────────────
+                int remaining = st.WithdrawCount - st.WithdrawnTotal;
+                if (remaining <= 0)
+                {
+                    _log.Log($"[FollowSystem/WithdrawItems] {npcName}: already got enough → Idle", LogLevel.Debug);
+                    npc.doEmote(32);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                // Search chest for matching items.
+                var matching = new List<StardewValley.Item>();
+                foreach (var item in chest.Items)
+                {
+                    if (item != null && item.ItemId == st.WithdrawItemID)
+                        matching.Add(item);
+                }
+
+                if (matching.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/WithdrawItems] {npcName}: no {st.WithdrawItemID} in chest → Idle (withdrawn={st.WithdrawnTotal})",
+                        LogLevel.Info);
+                    npc.doEmote(16); // "!"
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                int taken = 0;
+                foreach (var item in matching)
+                {
+                    int canTake = Math.Min(item.Stack, remaining - taken);
+                    if (canTake <= 0) break;
+
+                    item.Stack -= canTake;
+                    taken += canTake;
+
+                    if (item.Stack <= 0)
+                        chest.Items.Remove(item);
+                }
+
+                if (taken > 0)
+                {
+                    st.WithdrawInventory.Add(npcName, st.WithdrawItemID, taken);
+                    st.WithdrawnTotal += taken;
+                    _log.Log(
+                        $"[FollowSystem/WithdrawItems] {npcName}: withdrew {taken}x {st.WithdrawItemID}, total={st.WithdrawnTotal}",
+                        LogLevel.Debug);
+                }
+
+                npc.doEmote(32); // happy
+                _log.Log(
+                    $"[FollowSystem/WithdrawItems] {npcName}: done, total withdrawn={st.WithdrawnTotal} → Idle",
+                    LogLevel.Info);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // ── Pathing phase ──────────────────────────────────────────
+            if ((!st.WithdrawPathed || npc.controller == null) && this.ShouldReplan(st))
+            {
+                Point ct = st.WithdrawChestTile;
+                Point[] candidates = {
+                    new(ct.X, ct.Y + 1),
+                    new(ct.X, ct.Y - 1),
+                    new(ct.X + 1, ct.Y),
+                    new(ct.X - 1, ct.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.WithdrawPathed = ok;
+                st.LastPathTick   = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
+                _log.Log(
+                    $"[FollowSystem/WithdrawItems] {npcName}: pathing to chest ({ct.X},{ct.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/WithdrawItems] {npcName}: giving up on chest ({ct.X},{ct.Y}) after {st.PathFailCount} failures → Idle",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    st.Mode = NpcBehaviorMode.Idle;
+                }
+            }
+        }
+
+        private void TickBreakResource(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.BreakResourceQueue is null || st.BreakResourceInventory is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            ResourceTarget rt = st.BreakResourceTarget;
+            Point target = rt.Tile;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            // Arrival check: ≤ 1.5 tiles and path finished.
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Destroy phase ─────────────────────────────────────
+                bool destroyed = false;
+                npc.faceDirection(2); // face down
+
+                if (rt.IsTree)
+                {
+                    // Remove tree from terrainFeatures.
+                    if (location.terrainFeatures.TryGetValue(targetV2, out var tf)
+                        && tf is StardewValley.TerrainFeatures.Tree)
+                    {
+                        location.terrainFeatures.Remove(targetV2);
+                        AddTreeDrops(st.BreakResourceInventory, npcName, rt.TreeType, rt.IsStump, s_rng);
+                        destroyed = true;
+                        _log.Log(
+                            $"[FollowSystem/BreakResource] {npcName}: broke {rt.TreeType} tree at ({target.X},{target.Y})",
+                            LogLevel.Debug);
+                    }
+                }
+                else
+                {
+                    // Remove stone from Objects.
+                    if (location.Objects.TryGetValue(targetV2, out var obj) && obj is not null)
+                    {
+                        location.Objects.Remove(targetV2);
+                        AddStoneDrops(st.BreakResourceInventory, npcName, rt.StoneIndex, s_rng);
+                        destroyed = true;
+                        _log.Log(
+                            $"[FollowSystem/BreakResource] {npcName}: broke stone (PSI={rt.StoneIndex}) at ({target.X},{target.Y})",
+                            LogLevel.Debug);
+                    }
+                }
+
+                if (destroyed)
+                {
+                    st.BreakResourceCount++;
+                    npc.doEmote(20); // heart — got item
+                    _ = _broadcastEvent?.Invoke("resource_broken", new
+                    {
+                        npc       = npcName,
+                        tile_x    = target.X,
+                        tile_y    = target.Y,
+                        is_tree   = rt.IsTree,
+                        tree_type = rt.IsTree ? rt.TreeType : null,
+                        location  = location.Name ?? "",
+                    });
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/BreakResource] {npcName}: target at ({target.X},{target.Y}) already gone",
+                        LogLevel.Debug);
+                }
+
+                // Advance to next target.
+                if (st.BreakResourceQueue.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/BreakResource] {npcName}: done, broken={st.BreakResourceCount} → Idle",
+                        LogLevel.Info);
+                    npc.doEmote(32); // happy
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.BreakResourceTarget = st.BreakResourceQueue.Dequeue();
+                st.BreakResourcePathed = false;
+                st.LastPathTick        = 0;
+                return;
+            }
+
+            // ── Pathing phase ──────────────────────────────────────────
+            if ((!st.BreakResourcePathed || npc.controller == null) && this.ShouldReplan(st))
+            {
+                // Walk adjacent to the target (try 4 directions).
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.BreakResourcePathed = ok;
+                st.LastPathTick        = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
+                _log.Log(
+                    $"[FollowSystem/BreakResource] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/BreakResource] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.BreakResourceQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.BreakResourceTarget = st.BreakResourceQueue.Dequeue();
+                    st.BreakResourcePathed = false;
+                    st.LastPathTick        = 0;
+                }
             }
         }
 
@@ -1360,6 +2573,172 @@ namespace SmartNPC.Bridge
             if (dy != 0)
                 return dy > 0 ? 2 : 0;
             return -1;
+        }
+
+        private void TickFertilize(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.FertilizeQueue is null || st.FertilizeInventory is null || st.FertilizeID is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Point target = st.FertilizeTarget;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            // Verify HoeDirt still exists and is empty + unfertilized.
+            location.terrainFeatures.TryGetValue(targetV2, out var tf);
+            HoeDirt? dirt = tf as HoeDirt;
+            bool canFertilize = dirt != null
+                             && dirt.crop == null
+                             && string.IsNullOrEmpty(dirt.fertilizer.Value);
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                if (canFertilize)
+                {
+                    try
+                    {
+                        npc.faceDirection(2);
+                        dirt!.fertilizer.Value = st.FertilizeID;
+                        // Consume from inventory if available.
+                        var items = st.FertilizeInventory.GetItems(npcName);
+                        bool hasIt = items.Any(s => s.ItemId == st.FertilizeID && s.Count > 0);
+                        if (hasIt)
+                            st.FertilizeInventory.Take(npcName, st.FertilizeID, 1);
+                        st.FertilizedCount++;
+
+                        _log.Log(
+                            $"[FollowSystem/Fertilize] {npcName}: applied {st.FertilizeID} at ({target.X},{target.Y})",
+                            LogLevel.Debug);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/Fertilize] {npcName}: fertilize ({target.X},{target.Y}) failed: {ex.Message}",
+                            LogLevel.Warn);
+                    }
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/Fertilize] {npcName}: tile ({target.X},{target.Y}) no longer fertilizable, skipping",
+                        LogLevel.Debug);
+                }
+
+                if (st.FertilizeQueue.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/Fertilize] {npcName}: done, fertilized={st.FertilizedCount} → Idle",
+                        LogLevel.Info);
+                    npc.doEmote(32);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.FertilizeTarget = st.FertilizeQueue.Dequeue();
+                st.FertilizePathed = false;
+                st.LastPathTick    = 0;
+                return;
+            }
+
+            if ((!st.FertilizePathed || npc.controller == null) && this.ShouldReplan(st))
+            {
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.FertilizePathed = ok;
+                st.LastPathTick    = _tickCounter;
+                if (ok) { st.PathFailCount = 0; } else { st.PathFailCount++; }
+                _log.Log(
+                    $"[FollowSystem/Fertilize] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/Fertilize] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.FertilizeQueue.Count == 0) { st.Mode = NpcBehaviorMode.Idle; return; }
+                    st.FertilizeTarget = st.FertilizeQueue.Dequeue();
+                    st.FertilizePathed = false;
+                    st.LastPathTick    = 0;
+                }
+            }
+        }
+
+        // ── resource drop helpers ──────────────────────────────────────
+
+        /// <summary>Add tree-felling drops to the NPC inventory based on tree type.</summary>
+        internal static void AddTreeDrops(NpcInventory inventory, string npcName, string treeType, bool isStump, Random rng)
+        {
+            if (isStump)
+            {
+                inventory.Add(npcName, "(O)709", rng.Next(2, 5)); // Hardwood
+                return;
+            }
+
+            switch (treeType.ToLowerInvariant())
+            {
+                case "oak":
+                    inventory.Add(npcName, "(O)388", rng.Next(10, 21)); // Wood
+                    inventory.Add(npcName, "(O)92",  rng.Next(3, 6));  // Sap
+                    if (rng.Next(2) == 0) inventory.Add(npcName, "(O)309", 1); // Acorn
+                    break;
+                case "maple":
+                    inventory.Add(npcName, "(O)388", rng.Next(10, 21));
+                    inventory.Add(npcName, "(O)92",  rng.Next(3, 6));
+                    if (rng.Next(2) == 0) inventory.Add(npcName, "(O)310", 1); // Maple Seed
+                    break;
+                case "pine":
+                    inventory.Add(npcName, "(O)388", rng.Next(10, 21));
+                    inventory.Add(npcName, "(O)92",  rng.Next(3, 6));
+                    if (rng.Next(2) == 0) inventory.Add(npcName, "(O)311", 1); // Pine Cone
+                    break;
+                case "mahogany":
+                    inventory.Add(npcName, "(O)709", rng.Next(8, 13));  // Hardwood
+                    inventory.Add(npcName, "(O)92",  rng.Next(2, 5));
+                    if (rng.Next(3) == 0) inventory.Add(npcName, "(O)292", 1); // Mahogany Seed
+                    break;
+                case "mushroom":
+                    inventory.Add(npcName, "(O)420", rng.Next(1, 4));  // Red Mushroom
+                    if (rng.Next(2) == 0) inventory.Add(npcName, "(O)422", rng.Next(1, 3));
+                    break;
+                case "palm":
+                    inventory.Add(npcName, "(O)388", rng.Next(6, 11));
+                    inventory.Add(npcName, "(O)92",  rng.Next(1, 4));
+                    break;
+                default:
+                    inventory.Add(npcName, "(O)388", rng.Next(5, 11));
+                    inventory.Add(npcName, "(O)92",  rng.Next(2, 5));
+                    break;
+            }
+        }
+
+        /// <summary>Add stone-breaking drops to the NPC inventory.</summary>
+        internal static void AddStoneDrops(NpcInventory inventory, string npcName, int psi, Random rng)
+        {
+            int stone = psi >= 56 ? rng.Next(6, 13) : rng.Next(3, 9);
+            inventory.Add(npcName, "(O)390", stone); // Stone
+            if (rng.Next(4) == 0) inventory.Add(npcName, "(O)382", 1); // Coal (25%)
+            // Small chance of a gem from larger stones.
+            if (psi >= 50 && rng.Next(10) == 0)
+                inventory.Add(npcName, "(O)80", 1); // Quartz
         }
 
         /// <summary>Point along (from→to) capped at <paramref name="maxSteps"/> tiles.</summary>
