@@ -14,8 +14,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SmartNPC — 星露谷物语 AI NPC 系统，基于 MCP 构建：
 
-> 本文件面向 Claude Code。其他 AI 工具入口：[AGENTS.md](AGENTS.md)（agent 工作流 SOP）、[CODEBUDDY.md](CODEBUDDY.md)（CodeBuddy 视角）。
-
 **正式链路（Hermes-first）：**
 ```
 SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ──MCP HTTP── 6× Hermes Agent Profile
@@ -33,7 +31,7 @@ SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ─�
 
 ## Windows 环境
 
-- Shell 是 PowerShell；跨盘：`cd D:\path; <cmd>`
+- Shell 是 `cmd.exe`；跨盘：`d: && cd d:\path && <cmd>`；禁止 PowerShell 语法
 - Go：`GOROOT=C:\Program Files\Go`，`GOPATH=C:\Users\synchen\go`
 - Task 路径：`C:\Users\synchen\go\bin\task.exe`
 - WDAC：不要预设拦截，实测 `bin\xxx.exe --version`；截至 2026-04-30 不再拦截
@@ -42,11 +40,10 @@ SMAPI Mod (C# .NET 6) ──ws :18745── smartnpc-mcp (Go, --http :3000) ─�
 
 ## 常用命令
 
-```powershell
+```cmd
 C:\Users\synchen\go\bin\task.exe ci              # profiles:verify + lint + test + build（完整 CI）
 C:\Users\synchen\go\bin\task.exe ci-fast         # profiles:verify + lint + test
 C:\Users\synchen\go\bin\task.exe mcp:build       # 构建 mcp
-C:\Users\synchen\go\bin\task.exe mcp:test-race   # 带 -race 的测试
 C:\Users\synchen\go\bin\task.exe mcp:stop        # 杀掉本机运行中的 mcp 进程
 C:\Users\synchen\go\bin\task.exe mcp:health      # 探测 /healthz（确认 mcp 在线）
 C:\Users\synchen\go\bin\task.exe mod:install     # 编译+部署 mod 到游戏目录
@@ -60,13 +57,13 @@ C:\Users\synchen\go\bin\task.exe --list          # 列出所有可用 task
 ```
 
 **运行单个测试：**
-```powershell
-cd D:\SmartNPC\smartnpc-mcp; go test -run TestPing ./pkg/agentbridge/...
-cd D:\SmartNPC\smartnpc-mcp; go test -run TestChatSay ./adapters/stardew/tools/...
+```cmd
+cd D:\SmartNPC\smartnpc-mcp && go test -run TestPing ./pkg/agentbridge/...
+cd D:\SmartNPC\smartnpc-mcp && go test -run TestChatSay ./adapters/stardew/tools/...
 ```
 
 **Echo 模式（不接 LLM，验证游戏往返）：** 请求直接回声返回，用于验证 ws 连接 + MCP 工具注册是否正常，无需 Hermes/LLM 在线。
-```powershell
+```cmd
 C:\Users\synchen\go\bin\task.exe mcp:run-echo
 ```
 
@@ -82,20 +79,11 @@ hermes gateway run --accept-hooks
 
 **一键启动（推荐）：** 仓库根 `run.bat` 自动 build mod + 起 hermes + 启动 mcp HTTP。日常调试优先走它，避免漏步骤。
 
-> ⚠️ `run.bat` 必须 CRLF 行尾。改完后自检：
-> ```powershell
-> $b = [IO.File]::ReadAllBytes('D:\SmartNPC\run.bat'); $b[9..10] -join ','
-> ```
-> 第 9 字节应为 `13`（CR），不是 `10`（LF）。若是 LF 立即转 CRLF：
-> ```powershell
-> $p = 'D:\SmartNPC\run.bat'; $t = [IO.File]::ReadAllText($p); $t = $t -replace "`r`n", "`n" -replace "`n", "`r`n"; [IO.File]::WriteAllText($p, $t, [Text.UTF8Encoding]::new($false))
-> ```
-
 **启动 MCP HTTP 模式（Hermes-first 链路）：**
-```powershell
+```cmd
 cd D:\SmartNPC\smartnpc-mcp
-bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws `
-  --hermes-config D:\SmartNPC\hermes\runtime-config.yaml `
+bin\smartnpc-mcp.exe --http :3000 --ws-url ws://127.0.0.1:18745/ws ^
+  --hermes-config D:\SmartNPC\hermes\runtime-config.yaml ^
   --log-level debug
 ```
 此模式下 mcp 同时暴露 Streamable HTTP 给 Hermes 做 MCP 客户端，并通过 hermesrelay 将游戏事件转发给 Hermes Gateway。
@@ -172,8 +160,6 @@ smartnpc-mcp/
 - `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
 - `smapi-mod/NPC/` — 多 NPC 路由（`AudibleNPCResolver.cs` + `TurnQueue.cs`）
 - `smapi-mod/{Query,Perception,Movement,Mail,Chat,UI}/` — 按 domain 拆分的游戏侧 handler
-- `smapi-mod/Behavior/` — NPC 世界行为 handler（DepositItems / ClearDebris 等）；跨模块数据流：C# FollowSystem 触发 → ws action → MCP tool → Go handler → ws response → C# Tick 执行。**行为可实现性规划**详见 [`report-behavior.md`](report-behavior.md)（20 个 NPC 行为 + 三层优先级）。已实现：`npc_wander` / `npc_clear_debris` / `npc_deposit_items` / `npc_deliver_items` / `npc_till_soil` / `npc_approach_and_speak` / `npc_forage_collect`
-- `smapi-mod/Debug/` — 游戏内调试命令入口（`smartnpc_deposit_items` 等）
 - `smapi-mod/assets/xiami/` — NPC sprite 资产 + 构建脚本
 - `scripts/` — Hermes 管理脚本：`render_profiles.sh`（渲染模板）、`start_hermes_profiles.sh`（启动指定 NPC gateway）、`detect_wsl_ips.sh`（自动探测 WSL/Windows IP）、`apply_hermes_tuning.sh`（调参）、`lib/npc_registry.sh`（从 `hermes/npcs.yaml` 读 NPC 列表的公共库）
 - `deploy/hermes/` — Docker Compose 部署方案（Dockerfile + docker-compose.yml + Langfuse 可选）；`deploy/hermes/profiles/` 是旧版 profile 备份，日常开发以 `hermes/profiles/` 为准
@@ -199,7 +185,7 @@ XiaMi_spritesheet.png (64×416, 4列×13行, 每帧 16×32, RGBA 透明)
 **WebSocket 协议（`docs/protocol.md`）：**
 - `ws://127.0.0.1:18745/ws`，JSON 文本帧
 - 消息类型：`request`（有 `id`）/ `response`（关联 `id`）/ `event`（push）
-- 已实现 actions：`chat_say` / `mail_send` / `game_*` / `friendship_get` / `npc_*` / `player_get_status` / `npc_inventory_*` / `npc_deposit_items` / `npc_clear_debris`
+- 已实现 actions：`chat_say` / `mail_send` / `game_*` / `friendship_get` / `npc_*` / `player_get_status`
 - 已实现 events：`chat_message` / `chat_received` / `npc_interact` / `group_create`（详见 `docs/events.md`）
 
 ## Hermes 部署模式
@@ -214,20 +200,6 @@ XiaMi_spritesheet.png (64×416, 4列×13行, 每帧 16×32, RGBA 透明)
 **NPC Gateway 端口**（源自 `hermes/npcs.yaml`）：xiami=8642, abigail=8643, haley=8644, harvey=8645, penny=8646, sebastian=8647
 
 **`deploy/` 目录**包含 Docker Compose 编排、Dockerfile、profile 同步脚本、Langfuse 可选集成。日常本地开发用 `local` 模式更快；CI/远程部署走 `docker` 模式。
-
-## 跨平台 / Linux 接入注意
-
-Go 部分在 Windows/Linux 均可运行；C# mod 仅 Windows（依赖 SMAPI + SDV）。若 Linux 接入需注意：
-
-| 位置 | 问题 |
-|------|------|
-| `smapi-mod/StardewMCPBridge.csproj` `<GamePath>` | 硬编码 Windows 本地路径，Linux 需 `<GamePath Condition="...">$(SMARTNPC_GAME_PATH)</GamePath>` |
-| `smapi-mod/Taskfile.yml` `GAME_PATH`、`DOTNET` | 硬编码 `D:\...` 和 `C:\Program Files\dotnet\dotnet.exe` |
-| `Taskfile.yml` hooks 子命令 | 只写了 `powershell`，Linux 需 `platforms:` 分支 |
-| `smartnpc-mcp/Taskfile.yml` `mcp:run` | `cmd /c start ...` 仅 Windows |
-| `smapi-mod/Taskfile.yml` `mod:install` | `powershell Copy-Item` 仅 Windows |
-
-**集中配置：** 仓库根 `.env.example`（git 追踪）+ `.env`（`.gitignore`），根 `Taskfile.yml` `dotenv: ['.env']` 全局加载。新机器 `cp .env.example .env` 后按本机改值。
 
 ## 代码规范
 
@@ -270,8 +242,8 @@ Go 部分在 Windows/Linux 均可运行；C# mod 仅 Windows（依赖 SMAPI + SD
 - 不主动 commit（除非用户明确要求）
 
 **发版：** push semver tag → `release.yml` 自动构建 windows/linux Go 二进制 + GitHub Release
-```powershell
-git tag v0.x.0; git push origin v0.x.0
+```cmd
+git tag v0.x.0 && git push origin v0.x.0
 ```
 
 ## CI 反馈循环
@@ -303,5 +275,15 @@ git tag v0.x.0; git push origin v0.x.0
 
 ## M5 (Hermes-first) 落地清单
 
-全部代码已就绪；5.6 / 5.7（实机端到端）待用户验证。关键路径见上方「agent-bridge 框架分层」。
-详见 [`REFACTOR.md`](REFACTOR.md)、[`docs/architecture.md`](docs/architecture.md)、[ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md)。
+全部代码已就绪；5.6 / 5.7（实机端到端）待用户验证。详见 [`REFACTOR.md`](REFACTOR.md)、[`docs/architecture.md`](docs/architecture.md)、[ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md)。
+
+关键路径参考（ADR-0004 重构后实际路径）：
+
+| 内容 | 实际路径 |
+|------|---------|
+| MCP 工具（tool description） | `adapters/stardew/tools/*.go` |
+| inter-NPC 工具 | `adapters/stardew/tools/npc_message.go` |
+| 事件 typed structs | `adapters/stardew/events/` |
+| Hermes relay Backend | `pkg/relay/hermes/` |
+| NPC profile + skills | `hermes/profiles/<npc>/` |
+| SMAPI 多 NPC 路由 | `smapi-mod/NPC/AudibleNPCResolver.cs` + `TurnQueue.cs` |

@@ -7,7 +7,6 @@
 // should still use PumpOnGameTick elsewhere).
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
@@ -34,12 +33,7 @@ namespace SmartNPC.Bridge
         private const string CmdTillSoil     = "smartnpc_till_soil";
         private const string CmdApproach     = "smartnpc_approach_speak";
         private const string CmdForage       = "smartnpc_forage_collect";
-        private const string CmdPlantSeeds   = "smartnpc_plant_seeds";
-        private const string CmdWaterCrops   = "smartnpc_water_crops";
-        private const string CmdHarvestCrops = "smartnpc_harvest_crops";
-        private const string CmdInspect      = "smartnpc_inspect_object";
         private const string CmdGiveChest    = "smartnpc_give_chest";
-        private const string CmdGet          = "smartnpc_get";
 
         private static readonly Random s_rng = new();
         private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(5) };
@@ -189,66 +183,13 @@ namespace SmartNPC.Bridge
                 callback: (_, args) => HandleForage(args, log, inventory, follow));
 
             commands.Add(
-                name: CmdPlantSeeds,
-                documentation:
-                    "Force an NPC to plant seeds on empty tilled soil within a radius.\n" +
-                    "Seeds must be in the NPC's backpack (use smartnpc_give_chest first, then\n" +
-                    "put seeds in). Seed ID is a qualified SDV item id.\n" +
-                    $"Usage:\n" +
-                    $"  {CmdPlantSeeds} <NpcName> <seed_id>                  radius=5 max=5\n" +
-                    $"  {CmdPlantSeeds} <NpcName> <seed_id> <radius> <max>  e.g. XiaMi (O)472 5 8",
-                callback: (_, args) => HandlePlantSeeds(args, log, inventory, follow));
-
-            commands.Add(
-                name: CmdWaterCrops,
-                documentation:
-                    "Force an NPC to water unwatered crops within a radius.\n" +
-                    $"Usage:\n" +
-                    $"  {CmdWaterCrops} <NpcName>                    radius=5 max=5\n" +
-                    $"  {CmdWaterCrops} <NpcName> <radius> <max>    e.g. XiaMi 8 10",
-                callback: (_, args) => HandleWaterCrops(args, log, follow));
-
-            commands.Add(
-                name: CmdHarvestCrops,
-                documentation:
-                    "Force an NPC to harvest mature crops within a radius.\n" +
-                    $"Usage:\n" +
-                    $"  {CmdHarvestCrops} <NpcName>                    radius=5 max=5\n" +
-                    $"  {CmdHarvestCrops} <NpcName> <radius> <max>    e.g. XiaMi 8 10",
-                callback: (_, args) => HandleHarvestCrops(args, log, inventory, follow));
-
-            commands.Add(
-                name: CmdInspect,
-                documentation:
-                    "NPC scans the surrounding area and reports crops/objects/terrain.\n" +
-                    "Specify --what to filter: crops | objects | terrain (default: all).\n" +
-                    $"Usage:\n" +
-                    $"  {CmdInspect} <NpcName>                        single tile at NPC position\n" +
-                    $"  {CmdInspect} <NpcName> <radius>               scan radius (max 10)\n" +
-                    $"  {CmdInspect} <NpcName> <radius> <what>        filter by type",
-                callback: (_, args) => HandleInspect(args, log));
-
-            commands.Add(
                 name: CmdGiveChest,
                 documentation:
                     "Give the player a Chest (item ID 130) directly into their inventory.\n" +
                     $"Usage: {CmdGiveChest}",
                 callback: (_, args) => HandleGiveChest(log));
 
-            commands.Add(
-                name: CmdGet,
-                documentation:
-                    "Spawn an item by name. Supports case-insensitive substring matching on\n" +
-                    "item DisplayName. Use --npc <name> to add to an NPC's backpack instead\n" +
-                    "of the player's inventory.\n" +
-                    $"Usage:\n" +
-                    $"  {CmdGet} <item_name>                Give 1 to player.\n" +
-                    $"  {CmdGet} <item_name> <count>        Give N to player (1..999).\n" +
-                    $"  {CmdGet} --npc XiaMi <item_name>    Give 1 to XiaMi's backpack.\n" +
-                    $"  {CmdGet} --npc Abigail <name> <N>   Give N to Abigail's backpack.",
-                callback: (_, args) => HandleGet(args, log, inventory));
-
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}, {CmdWander}, {CmdClearDebris}, {CmdDeposit}, {CmdDeliver}, {CmdTillSoil}, {CmdApproach}, {CmdForage}, {CmdPlantSeeds}, {CmdWaterCrops}, {CmdInspect}, {CmdGiveChest}, {CmdGet}", LogLevel.Trace);
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}, {CmdWander}, {CmdClearDebris}, {CmdDeposit}, {CmdDeliver}, {CmdTillSoil}, {CmdApproach}, {CmdForage}, {CmdGiveChest}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -1142,168 +1083,6 @@ namespace SmartNPC.Bridge
                 LogLevel.Info);
         }
 
-        // ── smartnpc_plant_seeds ─────────────────────────────────────────
-
-        // Usage:
-        //   smartnpc_plant_seeds <NpcName> <seed_id>                 radius=5 max=5
-        //   smartnpc_plant_seeds <NpcName> <seed_id> <radius> <max>  e.g. XiaMi (O)472 5 8
-        private static void HandlePlantSeeds(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
-        {
-            if (!Context.IsWorldReady)
-            {
-                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
-                return;
-            }
-            if (args.Length < 2)
-            {
-                log.Log($"usage: {CmdPlantSeeds} <NpcName> <seed_id> [radius] [max_count]", LogLevel.Error);
-                return;
-            }
-
-            string name   = args[0];
-            string seedId = args[1];
-
-            NPC? npc = Game1.getCharacterFromName(name);
-            if (npc is null)
-            {
-                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
-                return;
-            }
-
-            int radius   = args.Length > 2 && int.TryParse(args[2], out int pr) ? Math.Clamp(pr, 1, 10) : 5;
-            int maxCount = args.Length > 3 && int.TryParse(args[3], out int pm) ? Math.Clamp(pm, 1, 10) : 5;
-
-            using var doc = JsonDocument.Parse(
-                $"{{\"npc\":\"{name}\",\"seed_id\":\"{seedId}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new PlantSeedsHandler(log, () => false, inventory, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
-            log.Log($"[smartnpc_plant_seeds] triggered for {name} seed={seedId} radius={radius} max={maxCount}", LogLevel.Info);
-        }
-
-        // ── smartnpc_water_crops ─────────────────────────────────────────
-
-        // Usage:
-        //   smartnpc_water_crops <NpcName>                 radius=5 max=5
-        //   smartnpc_water_crops <NpcName> <radius> <max>  e.g. XiaMi 8 10
-        private static void HandleWaterCrops(string[] args, IMonitor log, FollowSystem follow)
-        {
-            if (!Context.IsWorldReady)
-            {
-                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
-                return;
-            }
-            if (args.Length < 1)
-            {
-                log.Log($"usage: {CmdWaterCrops} <NpcName> [radius] [max_count]", LogLevel.Error);
-                return;
-            }
-
-            string name = args[0];
-            NPC? npc = Game1.getCharacterFromName(name);
-            if (npc is null)
-            {
-                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
-                return;
-            }
-
-            int radius   = args.Length > 1 && int.TryParse(args[1], out int pr) ? Math.Clamp(pr, 1, 10) : 5;
-            int maxCount = args.Length > 2 && int.TryParse(args[2], out int pm) ? Math.Clamp(pm, 1, 20) : 5;
-
-            using var doc = JsonDocument.Parse(
-                $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new WaterCropsHandler(log, () => false, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
-            log.Log($"[smartnpc_water_crops] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
-        }
-
-        // ── smartnpc_harvest_crops ─────────────────────────────────────────
-
-        // Usage:
-        //   smartnpc_harvest_crops <NpcName>                    radius=5 max=5
-        //   smartnpc_harvest_crops <NpcName> <radius> <max>    e.g. XiaMi 8 10
-        private static void HandleHarvestCrops(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
-        {
-            if (!Context.IsWorldReady)
-            {
-                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
-                return;
-            }
-            if (args.Length < 1)
-            {
-                log.Log($"usage: {CmdHarvestCrops} <NpcName> [radius] [max_count]", LogLevel.Error);
-                return;
-            }
-
-            string name = args[0];
-            NPC? npc = Game1.getCharacterFromName(name);
-            if (npc is null)
-            {
-                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
-                return;
-            }
-
-            int radius   = args.Length > 1 && int.TryParse(args[1], out int pr) ? Math.Clamp(pr, 1, 10) : 5;
-            int maxCount = args.Length > 2 && int.TryParse(args[2], out int pm) ? Math.Clamp(pm, 1, 10) : 5;
-
-            using var doc = JsonDocument.Parse(
-                $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new HarvestCropsHandler(log, () => false, inventory, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
-            log.Log($"[smartnpc_harvest_crops] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
-        }
-
-        // ── smartnpc_inspect_object ───────────────────────────────────────
-
-        // Usage:
-        //   smartnpc_inspect_object <NpcName>                      single tile at NPC position
-        //   smartnpc_inspect_object <NpcName> <radius>              scan radius (max 10)
-        //   smartnpc_inspect_object <NpcName> <radius> <what>      filter: crops/objects/terrain
-        private static void HandleInspect(string[] args, IMonitor log)
-        {
-            if (!Context.IsWorldReady)
-            {
-                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
-                return;
-            }
-            if (args.Length < 1)
-            {
-                log.Log($"usage: {CmdInspect} <NpcName> [radius] [what]", LogLevel.Error);
-                return;
-            }
-
-            string name = args[0];
-            NPC? npc = Game1.getCharacterFromName(name);
-            if (npc is null)
-            {
-                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
-                return;
-            }
-
-            int radius = 0;
-            if (args.Length >= 2 && (!int.TryParse(args[1], out radius) || radius < 0 || radius > 10))
-            {
-                log.Log($"invalid radius '{args[1]}' (0..10)", LogLevel.Error);
-                return;
-            }
-
-            string what = "all";
-            if (args.Length >= 3)
-                what = args[2].ToLowerInvariant();
-            if (what != "crops" && what != "objects" && what != "terrain" && what != "all")
-            {
-                log.Log($"invalid what '{args[2]}' (crops|objects|terrain|all)", LogLevel.Error);
-                return;
-            }
-
-            using var doc = JsonDocument.Parse(
-                $"{{\"npc\":\"{name}\",\"radius\":{radius},\"what\":\"{what}\"}}");
-            var handler = new InspectObjectHandler(log, () => false);
-            var result = handler.ExecuteDebug(npc, name, doc.RootElement);
-            string json = System.Text.Json.JsonSerializer.Serialize(result,
-                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            log.Log($"[smartnpc_inspect_object] {name} radius={radius} what={what}:\n{json}", LogLevel.Info);
-        }
-
         // ── smartnpc_give_chest ────────────────────────────────────────────
 
         private static void HandleGiveChest(IMonitor log)
@@ -1320,146 +1099,6 @@ namespace SmartNPC.Bridge
                 log.Log("[smartnpc_give_chest] Chest added to player inventory.", LogLevel.Info);
             else
                 log.Log("[smartnpc_give_chest] Inventory full — chest dropped at player's feet.", LogLevel.Warn);
-        }
-
-        // ── smartnpc_get ──────────────────────────────────────────────
-
-        private static List<(string QualifiedId, string Name)>? s_itemCache;
-
-        private static void HandleGet(string[] args, IMonitor log, NpcInventory inventory)
-        {
-            if (!Context.IsWorldReady)
-            {
-                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
-                return;
-            }
-
-            // Parse --npc <name> flag.
-            string? npcName = null;
-            int argOffset = 0;
-            if (args.Length >= 2 &&
-                string.Equals(args[0], "--npc", StringComparison.OrdinalIgnoreCase))
-            {
-                npcName = args[1];
-                argOffset = 2;
-            }
-            else if (args.Length >= 1 && args[0].StartsWith("--npc=", StringComparison.OrdinalIgnoreCase))
-            {
-                npcName = args[0].Substring("--npc=".Length);
-                argOffset = 1;
-            }
-
-            if (args.Length - argOffset < 1)
-            {
-                log.Log($"usage: {CmdGet} [--npc <name>] <item_name> [count]", LogLevel.Error);
-                return;
-            }
-
-            string search = args[argOffset];
-            int count = 1;
-            if (args.Length - argOffset >= 2 && (!int.TryParse(args[argOffset + 1], out count) || count < 1 || count > 999))
-            {
-                log.Log($"invalid count '{args[argOffset + 1]}' (1..999)", LogLevel.Error);
-                return;
-            }
-
-            // Build lookup cache on first use.
-            if (s_itemCache is null)
-            {
-                s_itemCache = new();
-                try
-                {
-                    if (Game1.objectData is { } objects)
-                    {
-                        foreach (var kvp in objects)
-                        {
-                            string qid = $"(O){kvp.Key}";
-                            string? name = ItemRegistry.GetData(qid)?.DisplayName;
-                            if (!string.IsNullOrWhiteSpace(name))
-                                s_itemCache.Add((qid, name));
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    log.Log($"warning: failed to load object data: {ex.Message}", LogLevel.Warn);
-                }
-
-                try
-                {
-                    var bcData = Game1.content.Load<Dictionary<string, string>>("Data/BigCraftables");
-                    foreach (var kvp in bcData)
-                    {
-                        string qid = $"(BC){kvp.Key}";
-                        string? name = ItemRegistry.GetData(qid)?.DisplayName;
-                        if (!string.IsNullOrWhiteSpace(name))
-                            s_itemCache.Add((qid, name));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    log.Log($"warning: failed to load big craftable data: {ex.Message}", LogLevel.Warn);
-                }
-            }
-
-            // Substring match (case-insensitive, ordinal).
-            var matches = s_itemCache
-                .Where(i => i.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (matches.Count == 0)
-            {
-                log.Log($"no items matching '{search}' found.", LogLevel.Warn);
-                return;
-            }
-
-            if (matches.Count > 1)
-            {
-                log.Log($"Multiple matches for '{search}' ({matches.Count} items):", LogLevel.Info);
-                int show = Math.Min(matches.Count, 20);
-                for (int i = 0; i < show; i++)
-                {
-                    var m = matches[i];
-                    log.Log($"  {m.Name} {m.QualifiedId}", LogLevel.Info);
-                }
-                if (matches.Count > 20)
-                    log.Log($"  ... and {matches.Count - 20} more.", LogLevel.Info);
-                log.Log("Use a more specific name.", LogLevel.Info);
-                return;
-            }
-
-            // Single match — give the item.
-            var match = matches[0];
-            try
-            {
-                var item = ItemRegistry.Create(match.QualifiedId, count);
-                if (item is null)
-                {
-                    log.Log($"failed to create item {match.QualifiedId}", LogLevel.Error);
-                    return;
-                }
-
-                if (npcName is not null)
-                {
-                    // Give to NPC backpack.
-                    int newTotal = inventory.Add(npcName, match.QualifiedId, count, quality: 0);
-                    log.Log($"[smartnpc_get] Added {match.Name} {match.QualifiedId} x{count} to {npcName}'s backpack (now {newTotal}).", LogLevel.Info);
-                }
-                else
-                {
-                    // Give to player inventory.
-                    bool placed = Game1.player.addItemToInventoryBool(item);
-                    if (placed)
-                        log.Log($"[smartnpc_get] Added {match.Name} {match.QualifiedId} x{count} to player inventory.", LogLevel.Info);
-                    else
-                        log.Log($"[smartnpc_get] Inventory full — {match.Name} dropped at player's feet.", LogLevel.Warn);
-                }
-            }
-            catch (Exception ex)
-            {
-                log.Log($"error creating item {match.QualifiedId}: {ex.Message}", LogLevel.Error);
-            }
         }
     }
 }

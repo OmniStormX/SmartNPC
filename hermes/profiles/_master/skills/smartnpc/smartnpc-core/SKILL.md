@@ -31,15 +31,12 @@ this has already been done.
 |---|---|---|
 | `[private_chat npc="..."] ...` | none | Fast-path `chat_say` (§2) |
 | `[group_chat group_id="..."] ...` | `smartnpc-group-chat` | `chat_say` with channel/group_id per that skill |
-| `[inter_npc_message ...]` / `npc_message` (kind=behavioral, farm task from manager) | `smartnpc-farm-worker` | Execute assigned farm task per §A/§B, reply with result |
-| `[inter_npc_message ...]` / `npc_message` (other) | `smartnpc-inter-npc` | Inbox flow, usually no player speech |
+| `[inter_npc_message ...]` / `npc_message` | `smartnpc-inter-npc` | Inbox flow, usually no player speech |
 | player asks for item/gift/buy | `smartnpc-gift` | Match SOUL.md → `npc_give_item` → `chat_say` |
 | player clicks you (`npc_interact`) | `smartnpc-greeting` | Read hearts → one `chat_say` |
 | cron/proactive visit | `smartnpc-visit` | Decide silently, maybe visit |
 | `A new day begins` (`day_started`) | `smartnpc-schedule` | **Must call `npc_plan_day`** |
-| `[schedule_trigger]` action=`farm_manager_round` | `smartnpc-farm-manager` | (manager only) Inspect farm → plan tasks → dispatch to workers via `npc_send_message` |
-| `[schedule_trigger]` action=`farm_round` | `smartnpc-farm-worker` | (Workers) Autonomous fallback round — inspect + up to 2 role actions |
-| `[schedule_trigger]` (other actions) | `smartnpc-schedule` | Execute or skip the planned action |
+| `[schedule_trigger]` | `smartnpc-schedule` | Execute or skip the planned action |
 | player references past facts | `smartnpc-memory` | Read/write compact memory only if needed |
 
 When this table names a skill, load it with `skill_view` before acting. Do not

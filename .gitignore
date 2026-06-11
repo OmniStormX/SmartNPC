@@ -51,5 +51,3 @@ deploy/hermes/docker-compose.yml
 deploy/hermes/.env
 # Claude Code (keep commands, ignore local settings)
 .claude/settings.local.json
-
-node_modules

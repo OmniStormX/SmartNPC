@@ -51,13 +51,6 @@ namespace SmartNPC.Bridge
         }
 
         /// <summary>
-        /// Override to return custom response data instead of the default ack.
-        /// Called immediately after Execute on the game thread.
-        /// </summary>
-        protected virtual object? GetResult(NPC npc, string npcName, JsonElement @params)
-            => null;
-
-        /// <summary>
         /// Resolve the bubble text shown above the NPC's head.
         /// Default: "[short_name] reason/text" or just "[short_name]".
         /// Override for actions like npc_show_text_bubble that use params.text directly.
@@ -139,9 +132,8 @@ namespace SmartNPC.Bridge
                     }
 
                     Execute(npc, captured, capturedParams);
-                    object? custom = GetResult(npc, captured, capturedParams);
 
-                    tcs.TrySetResult(Response.Success(id, custom ?? new
+                    tcs.TrySetResult(Response.Success(id, new
                     {
                         ok = true,
                         npc = captured,
