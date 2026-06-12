@@ -27,22 +27,26 @@ Do NOT skip. Do NOT output text. Call the tools in order:
 
 1. `game_get_time` — confirm day, season, and year.
 2. `game_get_weather` — check conditions.
-3. `npc_plan_day` — submit 10-15 entries spanning the full day.
+3. `npc_plan_day` — submit **12-15** entries spanning the full day. Never submit fewer than 12.
 
 ### Plan shape
 
 Each entry is only `{game_hour, action, reason}`. Do not include tool
 parameters — choose them live when the entry fires (§B).
 
-Space entries 0.5-1.5 hours apart. The goal is a rich, varied schedule that
-makes the NPC feel alive and productive throughout the day.
+Space entries 0.5-1.0 hours apart (prefer 0.5). The goal is a dense, varied
+schedule that makes the NPC feel alive and productive throughout the day.
 
 ### Action categories
 
 Pick actions from each category every day. Mix them up — don't repeat the
 same pattern daily.
 
-**🌾 Farm work (4-5 entries):**
+**🌾 Farm work (5-7 entries — the core of every day):**
+- This is the NPC's main job. Always make farm work the largest category.
+- On days with less outdoor availability (rain/winter), drop to 3-4 outdoor
+  actions and add 2-3 indoor farm-adjacent tasks (inventory sorting, tool
+  organizing, barn upkeep, delivering items, inspecting storage).
 - `farm_manager_round` — managers only: inspect farm and dispatch worker tasks
 - `farm_maintenance` — **recommended**: example-driven maintenance workflow (clear→till→plant→water→fertilize, adapts to situation)
 - `farm_harvest` — **recommended**: example-driven harvest workflow (harvest→deposit→replant, adapts to situation)
@@ -54,63 +58,77 @@ same pattern daily.
 - `npc_clear_debris` — clear weeds, twigs, stones (standalone)
 - `npc_fertilize` — apply fertilizer to tilled soil (standalone)
 
-**🪓 Resource gathering (2-3 entries):**
+**🪓 Resource gathering (2-4 entries):**
 - `npc_break_resource` — chop trees, break stones, collect drops
 - `npc_forage_collect` — pick up spawned forage items (berries, shells, mushrooms)
 - `npc_inspect_object` — survey area and note what's there
 
-**💬 Social & expression (3-4 entries):**
+**💬 Social & expression (2-3 entries):**
 - `npc_approach_and_speak` — walk to player, greet or share news
 - `npc_express_emotion` — perform an emotional expression
 - `npc_dance_happy` — celebrate good news or weather
 - `npc_react_surprise` — react to something unexpected
 - `npc_show_text_bubble` — mutter a brief thought
 
-**🚶 Movement & idle (2-3 entries):**
-- `npc_wander` — roam the map with optional zone constraints
-- `opportunistic_work` — wander to an area, observe surroundings, and IF something needs doing (debris, dry crops, mature crops), dynamically start a maintenance or harvest workflow. If nothing needs doing, skip silently.
-- `npc_idle_activity` — perform an idle animation (farming gesture, resting, looking around)
-- `npc_pace_anxiously` — pace back and forth nervously
+**🚶 Movement & idle (1-2 entries — brief only):**
+- These are **transition fillers**, never the point of an hour. Use sparingly —
+  a short rest between work blocks or moving between distant zones.
+- `npc_wander` — move to a specific new work area (always with a zone target, not aimless roaming)
+- `opportunistic_work` — **preferred over wander/idle**: move to an area, observe surroundings, and IF something needs doing (debris, dry crops, mature crops), dynamically start a maintenance or harvest workflow. If nothing needs doing, fall back to `npc_inspect_object` to survey for future work — do NOT fall back to idle.
+- `npc_idle_activity` — brief rest between heavy work blocks (max 1 per day, skip if there's work to do)
+- `npc_pace_anxiously` — avoid unless personality strongly demands it
 
-**📦 Inventory & utility (1-2 entries):**
+**📦 Inventory & utility (2-3 entries):**
 - `npc_deposit_items` — store collected items in a chest
 - `npc_deliver_items` — hand items to the player
 
-**🐾 Other (1 entry, if applicable):**
+**🐾 Other (0-1 entries):**
 - `npc_pet_animal` — pet a farm animal
 - `npc_shy_retreat` — step away when overwhelmed
 
-### Sample day template (12 entries)
+### Sample day template (15 entries, work-heavy)
 
 ```
-06:00  npc_express_emotion   Mood check — start the day with feeling
-07:00  farm_maintenance      Morning farm check: inspect → maintain what's needed
-08:00  npc_water_crops       Water any remaining dry crops
-09:00  npc_clear_debris      Tidy up the farm perimeter
-10:00  npc_forage_collect    Walk and gather wild items
-11:00  npc_break_resource    Chop wood in the forest
-12:00  npc_deposit_items     Drop off morning haul
-13:00  opportunistic_work    Wander near farm, observe, act if needed
-14:00  npc_wander            Explore the valley
-15:00  npc_inspect_object    Survey a new area
-16:00  npc_idle_activity     Take a short rest
-17:00  npc_approach_and_speak  Greet the player in the evening
-18:00  farm_harvest          Evening harvest round: pick mature crops + deposit
-19:00  npc_dance_happy       Celebrate if day went well
-20:00  npc_deliver_items     Give harvested items to player
-21:00  farm_maintenance      Evening maintenance: water + fertilize for tomorrow
-22:00  npc_express_emotion   Wind down — reflect on the day
+06:00  npc_express_emotion   Quick stretch — time to work
+06:30  npc_inspect_object    Survey the farm, note what needs doing
+07:00  farm_maintenance      Morning maintenance: clear → till → plant → water
+08:00  npc_clear_debris      Clear remaining debris from farm edges
+09:00  npc_forage_collect    Gather wild forage around the farm
+10:00  npc_break_resource    Chop wood / break stones for materials
+11:00  npc_deposit_items     Store morning haul in chests
+12:00  farm_harvest          Midday harvest — pick mature crops
+13:00  opportunistic_work    Scout south field, work if anything needs doing
+14:00  npc_deliver_items     Hand goods to the player
+15:00  npc_till_soil         Prep new plots for tomorrow
+16:00  npc_approach_and_speak  Brief word with the farmer
+17:00  farm_maintenance      Evening maintenance: water + fertilize
+18:00  farm_harvest          Last harvest sweep before dark
+19:00  npc_deposit_items     Final cleanup — everything in its place
 ```
 
 ### Planning rules
 
+- **Productive-first principle:** The NPC is here to help the farmer. Every
+  schedule should be 70%+ productive work (farm work + resource gathering +
+  inventory/utility). Idle, wander, dance, and pure expression should be rare
+  exceptions — a 30-second breather between work blocks, not a scheduled
+  activity. If you're unsure whether to add a work entry or a leisure entry,
+  choose work.
 - **Farm manager NPCs:** Include 2 `farm_manager_round` entries (morning + afternoon).
   Other NPCs use `farm_round` as fallback.
 - **Weather adaptation:** On rainy/stormy days, skip outdoor actions
   (water_crops, till_soil, forage_collect, break_resource, wander) and replace
-  with indoor alternatives (inspect, idle, express_emotion, pace).
+  with **productive indoor alternatives**: inventory sorting, delivering items,
+  inspecting buildings (barn/coop/shed), organizing chests, tool maintenance.
+  Do NOT fill the gap with idle, pace, or dance — the NPC should still be
+  working. **Still produce 12-15 entries.**
 - **Winter adaptation:** Many outdoor actions unavailable; lean heavier on
-  social, expression, movement, and indoor activities.
+  animal care (pet, feed), indoor building maintenance, inventory management,
+  and crafting-related tasks. Social and expression are secondary. **Keep
+  total ≥ 12** — add extra indoor productive slots, not idle.
+- **Entry count floor:** Every day's plan must have **at least 12 entries**,
+  regardless of weather, season, or NPC role. Before calling `npc_plan_day`,
+  count your entries. If below 12, add more from any underrepresented category.
 - **Personality match:** Let SOUL.md guide which social/expression actions feel
   natural for this NPC. A shy NPC uses `shy_retreat` instead of `approach_and_speak`.
   A cheerful NPC uses `dance_happy` more often.
@@ -125,6 +143,9 @@ same pattern daily.
 - Do not call `chat_say` — the player has not spoken.
 - Do not call `npc_plan_day` again if today's plan already exists.
 - Do not plan for other NPCs unless the system explicitly asks for `npc="*"`.
+- **Count check:** Before calling `npc_plan_day`, count your entries. If
+  fewer than 12, go back and add more from underrepresented categories.
+  Do not submit a plan with fewer than 12 entries.
 
 ---
 

@@ -33,7 +33,7 @@ type NpcPlanDayInput struct {
 	Day     int                    `json:"day"              jsonschema:"game day 1-28"`
 	Season  string                 `json:"season"           jsonschema:"spring/summer/fall/winter"`
 	Year    int                    `json:"year,omitempty"   jsonschema:"game year (default 1)"`
-	Entries []NpcPlanDayInputEntry `json:"entries"          jsonschema:"list of scheduled activities for today (max 20 entries)"`
+	Entries []NpcPlanDayInputEntry `json:"entries"          jsonschema:"12-15 scheduled activities for today (min 12, max 20)"`
 }
 
 // NpcPlanDayOutput acknowledges the schedule was stored.
@@ -85,8 +85,8 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler, br *bridge.W
 			"only the TIME and the TOOL NAME are committed; parameters are decided " +
 			"later when the action fires.\n\n" +
 			"When to call: at the START of each new game day — before doing anything " +
-			"else. This is your plan for the day. You can have 1-20 entries spread " +
-			"across hours 6-25.\n\n" +
+			"else. This is your plan for the day. Aim for 12-15 entries spread " +
+			"across hours 6-25 (max 20). Never submit fewer than 12.\n\n" +
 			"Execution: when the scheduled hour arrives, you (the NPC's LLM) will be " +
 			"woken with a `schedule_trigger` event carrying the action name and your " +
 			"original reason. You then call the tool with concrete parameters chosen " +
@@ -103,10 +103,11 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler, br *bridge.W
 			"day_started event. If you already planned today, do NOT call again. " +
 			"Use npc_get_schedule to check your existing plan.\n\n" +
 			"Tips for good schedules:\n" +
-			"- Space entries 2-3 hours apart to feel natural\n" +
-			"- Include at least one social action (approach_and_speak, express_emotion)\n" +
-			"- Adapt to weather: skip water_crops on rainy days\n" +
-			"- Leave gaps — you'll react to events in real-time too\n\n" +
+			"- Space entries 0.5-1.0 hours apart for a dense, productive day\n" +
+			"- Aim for 12-15 entries: 6+ farm work, 2-4 resource gathering, 2-3 inventory/delivery, 1-2 social\n" +
+			"- Focus on productive work (maintenance, harvest, clear debris, forage, deliver items). Minimize idle/wander.\n" +
+			"- Adapt to weather: skip outdoor-only actions on rainy days, replace with indoor productive alternatives\n" +
+			"- Count your entries before submitting. If fewer than 12, add more work.\n\n" +
 			"Side-effect: WRITE (stores schedule in memory, cleared daily).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in NpcPlanDayInput) (*mcp.CallToolResult, NpcPlanDayOutput, error) {
 		slog.Info("npc_plan_day called",
@@ -173,6 +174,10 @@ func registerNpcSchedule(s *mcp.Server, sched *scheduler.Scheduler, br *bridge.W
 		logToolCall("npc_plan_day", in)
 
 		msg := fmt.Sprintf("schedule stored: %d entries for %d NPC(s), day %d %s", len(entries), len(targets), in.Day, in.Season)
+		if len(entries) < 12 {
+			msg += fmt.Sprintf("\n\n⚠️ WARNING: Only %d entries submitted. The schedule should have 12-15 entries. "+
+				"Consider calling npc_plan_day again with a fuller schedule.", len(entries))
+		}
 		if len(duplicates) > 0 {
 			msg += fmt.Sprintf("\n\n⚠️ WARNING: You already submitted a schedule today for: %s. "+
 				"The old plan has been replaced with this new one. "+

@@ -2052,53 +2052,55 @@ namespace SmartNPC.Bridge
                         npc.faceDirection(2); // face down
                         // crop.harvest() without a JunimoHarvester adds produce
                         // directly to the player's inventory. To put it in the NPC
-                        // backpack instead, snapshot the player inventory BEFORE
-                        // the call, then move only the newly added items.
-                        var playerBefore = new Dictionary<string, int>();
-                        foreach (var pi in Game1.player.Items)
+                        // backpack instead, snapshot each slot BEFORE the call,
+                        // then move only the newly added items per slot.
+                        // Per-slot tracking avoids the key-collision bug of a
+                        // Dictionary<string,int> when multiple stacks share the
+                        // same ItemId+Quality.
+                        int maxItems = Game1.player.MaxItems;
+                        var slotBefore = new (string? itemId, int quality, int count)[maxItems];
+                        for (int i = 0; i < maxItems; i++)
                         {
-                            if (pi != null)
-                            {
-                                string key = pi.ItemId + "|" + pi.Quality;
-                                playerBefore[key] = pi.Stack;
-                            }
+                            var item = Game1.player.Items[i];
+                            if (item != null)
+                                slotBefore[i] = (item.ItemId, item.Quality, item.Stack);
                         }
 
                         bool harvested = dirt!.crop.harvest((int)targetV2.X, (int)targetV2.Y, dirt);
                         if (harvested)
                         {
-                            // Find what changed in player inventory after harvest().
-                            var toMove = new List<(string itemId, int quality, int count)>();
-                            foreach (var pi in Game1.player.Items)
+                            // Per-slot delta: compare each slot's before/after directly.
+                            for (int i = 0; i < maxItems; i++)
                             {
-                                if (pi != null)
+                                var item = Game1.player.Items[i];
+                                var before = slotBefore[i];
+
+                                int delta = 0;
+                                if (item != null && before.itemId != null
+                                    && item.ItemId == before.itemId && item.Quality == before.quality)
                                 {
-                                    string key = pi.ItemId + "|" + pi.Quality;
-                                    playerBefore.TryGetValue(key, out int beforeCount);
-                                    int delta = pi.Stack - beforeCount;
-                                    if (delta > 0)
-                                        toMove.Add((pi.ItemId, pi.Quality, delta));
+                                    // Same item+quality in same slot — stack grew.
+                                    delta = item.Stack - before.count;
+                                }
+                                else if (item != null && before.itemId == null)
+                                {
+                                    // Slot was empty before, now has an item — all from harvest.
+                                    delta = item.Stack;
+                                }
+                                // else: slot changed to different item or emptied — skip.
+
+                                if (delta > 0)
+                                {
+                                    int take = Math.Min(item!.Stack, delta);
+                                    item.Stack -= take;
+                                    if (item.Stack <= 0)
+                                        Game1.player.Items[i] = null;
+                                    st.HarvestInventory.Add(npcName, item.ItemId, take, item.Quality);
+                                    st.HarvestedCount += take;
                                 }
                             }
-                            // Take the new items from player inventory → NPC backpack.
-                            foreach (var mv in toMove)
-                            {
-                                for (int i = Game1.player.Items.Count - 1; i >= 0; i--)
-                                {
-                                    var pi = Game1.player.Items[i];
-                                    if (pi != null && pi.ItemId == mv.itemId && pi.Quality == mv.quality)
-                                    {
-                                        int take = Math.Min(pi.Stack, mv.count);
-                                        pi.Stack -= take;
-                                        if (pi.Stack <= 0)
-                                            Game1.player.Items[i] = null;
-                                        st.HarvestInventory.Add(npcName, mv.itemId, take, mv.quality);
-                                        st.HarvestedCount += take;
-                                        break;
-                                    }
-                                }
-                            }
-                            // Clean up Debris that harvest() spawned.
+                            // Collect debris that harvest() spawned (e.g. when player
+                            // inventory is full and items drop to the ground).
                             foreach (var d in location.debris.ToList())
                             {
                                 if (d?.item is not null && d.Chunks.Count > 0)
@@ -2107,13 +2109,21 @@ namespace SmartNPC.Bridge
                                         (int)(d.Chunks[0].position.X / Game1.tileSize),
                                         (int)(d.Chunks[0].position.Y / Game1.tileSize));
                                     if (chunkTile == targetV2)
+                                    {
+                                        // Collect debris item into NPC inventory instead of deleting.
+                                        var debrisItem = d.item;
+                                        st.HarvestInventory.Add(npcName, debrisItem.ItemId, debrisItem.Stack, debrisItem.Quality);
+                                        st.HarvestedCount += debrisItem.Stack;
                                         location.debris.Remove(d);
+                                    }
                                 }
                             }
-                            // For single-harvest crops, harvest() doesn't clear the
-                            // crop from HoeDirt — the plant sprite stays visible.
-                            // Manually clear it so the tile returns to bare dirt.
-                            dirt.crop = null;
+                            // Clear dead crop from HoeDirt if harvest() left it behind.
+                            // Single-harvest crops: harvest() sets dead=true + soil.crop=null.
+                            // Multi-harvest crops: harvest() resets regrow state, crop alive.
+                            // Only null out if the crop is actually dead.
+                            if (dirt.crop != null && dirt.crop.dead.Value)
+                                dirt.crop = null;
                             npc.doEmote(20);
                             _log.Log(
                                 $"[FollowSystem/HarvestCrops] {npcName}: harvested at ({target.X},{target.Y}), " +
