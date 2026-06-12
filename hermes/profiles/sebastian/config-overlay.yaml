@@ -70,6 +70,8 @@ mcp_servers:
         - npc_till_soil
         - npc_inspect_object
         - npc_place_object
+        - npc_break_resource
+        - npc_fertilize
         # social actions
         - npc_approach_and_speak
         - npc_express_emotion

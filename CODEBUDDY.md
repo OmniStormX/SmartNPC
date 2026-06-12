@@ -54,9 +54,9 @@ task mod:install           # 构建并拷贝 DLL 到 <GAME_PATH>\Mods\StardewMCP
 单测运行：
 ```bash
 # 单个包
-cd smartnpc-mcp && go test ./internal/tools -run TestPing_EchoesMessage
+cd smartnpc-mcp && go test ./adapters/stardew/tools/... -run TestPing_EchoesMessage
 # 单个 package -race
-cd smartnpc-mcp && go test -race -count=1 ./internal/bridge
+cd smartnpc-mcp && go test -race -count=1 ./adapters/stardew/bridge/...
 ```
 
 CI 本地复现：`task ci`（**任何提交前必须通过**；失败禁止说"完成了"；3 次修不好停下问用户）。
@@ -65,7 +65,7 @@ CI 本地复现：`task ci`（**任何提交前必须通过**；失败禁止说"
 
 ### MCP 工具注册
 
-所有工具放 `smartnpc-mcp/internal/tools/`，一个 domain 一个文件，在 `registry.go` 的 `RegisterAll` 里统一挂载。新增工具的硬约束（缺一不可）：
+所有工具放 `smartnpc-mcp/adapters/stardew/tools/`，一个 domain 一个文件，在 `registry.go` 的 `RegisterAll` 里统一挂载。新增工具的硬约束（缺一不可）：
 
 - 命名 `<domain>_<verb>` 全小写下划线
 - Input/Output struct 必须带 `json` + `jsonschema` tag
@@ -85,7 +85,7 @@ CI 本地复现：`task ci`（**任何提交前必须通过**；失败禁止说"
 
 ### ws 桥
 
-`smartnpc-mcp/internal/bridge/ws_client.go` 是到 SMAPI mod 的 ws 客户端。默认地址 `ws://127.0.0.1:18745/ws`（`DefaultWSURL` 常量），带自动重连。事件通过 `EventHandler` 回调，`main.go` 里的 `makeRouter` 把事件转发给 MCP logging notification + hermesrelay outbound POST，同时支持 `--echo-mode` 原地回应 `chat_say`。
+`smartnpc-mcp/adapters/stardew/bridge/ws_client.go` 是到 SMAPI mod 的 ws 客户端。默认地址 `ws://127.0.0.1:18745/ws`（`DefaultWSURL` 常量），带自动重连。事件通过 `EventHandler` 回调，`main.go` 里的 `makeRouter` 把事件转发给 MCP logging notification + hermesrelay outbound POST，同时支持 `--echo-mode` 原地回应 `chat_say`。
 
 ### Hermes Profile 运行时
 
@@ -196,7 +196,7 @@ hermes -p <npc_name> gateway run --accept-hooks
 |------|------|---------|
 | `smapi-mod/StardewMCPBridge.csproj` `<GamePath>` | 硬编码机器本地 SDV 安装路径 | 改用 env var：`<GamePath Condition="'$(GamePath)' == ''">$(SMARTNPC_GAME_PATH)</GamePath>`；缺省留空让 `ModBuildConfig` 自动探测 |
 | `smapi-mod/Taskfile.yml` `GAME_PATH`、`DOTNET` | Windows 盘符 `D:\Stardew Valley`、`C:\Program Files\dotnet\dotnet.exe` | Taskfile 已支持 `{{default "..." .VAR}}`，优先读环境变量 `SMARTNPC_GAME_PATH` / `DOTNET`；Linux 下 `dotnet` 在 PATH 上即可 |
-| `smartnpc-mcp/internal/bridge/ws_client.go` `DefaultWSURL`、`ModEntry.cs` `ListenPrefix` | `127.0.0.1:18745` 硬编码 | 保留常量作 default，但都支持命令行 flag / mod 配置文件覆盖；mod 侧加 `config.json` 用 SMAPI 标准 `helper.ReadConfig<T>()` 读 `Host` / `Port` |
+| `smartnpc-mcp/adapters/stardew/bridge/ws_client.go` `DefaultWSURL`、`ModEntry.cs` `ListenPrefix` | `127.0.0.1:18745` 硬编码 | 保留常量作 default，但都支持命令行 flag / mod 配置文件覆盖；mod 侧加 `config.json` 用 SMAPI 标准 `helper.ReadConfig<T>()` 读 `Host` / `Port` |
 | `Taskfile.yml` hooks 子命令 | 只写了 `powershell -NoProfile`，Linux 直接报错 | 按 `platforms: [windows]` 拆；Linux 下用 `echo` 等价输出 |
 | `smartnpc-mcp/Taskfile.yml` `mcp:run` | `cmd /c start ...` 新窗口，只 Windows 能跑 | 加 `platforms: [linux, darwin]` 分支：`nohup ./bin/smartnpc-mcp --http :{{.PORT}} ... &` 或直接前台跑 |
 | `smapi-mod/Taskfile.yml` `mod:install` | `powershell Copy-Item`、`New-Item` | Linux / macOS 加 `cp -f ... $HOME/.local/share/Steam/steamapps/common/Stardew Valley/Mods/StardewMCPBridge/` 的 `platforms: [linux, darwin]` 分支 |

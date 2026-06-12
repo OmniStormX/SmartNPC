@@ -89,6 +89,12 @@ const (
 	ActionNpcTillSoil      = "npc_till_soil"
 	ActionNpcInspectObject = "npc_inspect_object"
 	ActionNpcPlaceObject   = "npc_place_object"
+	ActionNpcBreakResource = "npc_break_resource"
+	ActionNpcFertilize     = "npc_fertilize"
+
+	// ── NPC inventory transfer ────────────────────────────────────
+	ActionNpcWithdrawItems = "npc_withdraw_from_chest"
+	ActionNpcTransferItem  = "npc_transfer_item"
 
 	// ── NPC inventory ────────────────────────────────────────────
 	ActionNpcInventoryGet  = "npc_inventory_get"

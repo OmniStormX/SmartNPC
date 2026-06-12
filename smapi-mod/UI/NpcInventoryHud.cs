@@ -19,13 +19,12 @@ namespace SmartNPC.Bridge
         // Icon dimensions in screen pixels (pre-scale).
         private const int IconW = 18;
         private const int IconH = 18;
-        // Pixel offset above the NPC's name tag.
+        // Pixel offset above the NPC's name tag (in screen/UI pixels).
         private const int OffsetYAboveHead = 80;
 
-        // SDV Cursors sheet coords for the small backpack icon:
-        // row=3, col=6 in the 16×16 grid → source rect (96, 48, 16, 16)
-        // (This is the "inventory bag" mini-icon used in tooltips.)
-        private static readonly Rectangle BackpackSrc = new(96, 48, 16, 16);
+        // SDV Cursors sheet: the gold coin / bag icon at (280, 411, 16, 16).
+        // This is the "money bag" icon used in the shop UI — confirmed visible.
+        private static readonly Rectangle BackpackSrc = new(280, 411, 16, 16);
 
         private readonly NpcInventory       _inventory;
         private readonly Action<string>     _openPanel;
@@ -56,18 +55,22 @@ namespace SmartNPC.Bridge
                 NPC? npc = Game1.getCharacterFromName(npcName);
                 if (npc is null || npc.currentLocation != location) continue;
 
-                // Convert world position → screen position.
+                // Convert world pixel position → screen/UI pixel position.
+                // OnRenderedHud SpriteBatch uses UI coordinates (1px = 1 screen px),
+                // so we subtract viewport origin only — do NOT multiply by zoomLevel.
                 Vector2 npcWorldPos = npc.Position;
-                float screenX = (npcWorldPos.X - Game1.viewport.X) * Game1.options.zoomLevel;
-                float screenY = (npcWorldPos.Y - Game1.viewport.Y - OffsetYAboveHead) * Game1.options.zoomLevel;
+                float screenX = npcWorldPos.X - Game1.viewport.X;
+                float screenY = npcWorldPos.Y - Game1.viewport.Y - OffsetYAboveHead;
 
-                // Skip if off screen.
-                if (screenX < -IconW * 2 || screenX > Game1.graphics.GraphicsDevice.Viewport.Width + IconW) continue;
-                if (screenY < -IconH * 2 || screenY > Game1.graphics.GraphicsDevice.Viewport.Height) continue;
+                // Skip if clearly off screen.
+                int vpW = Game1.graphics.GraphicsDevice.Viewport.Width;
+                int vpH = Game1.graphics.GraphicsDevice.Viewport.Height;
+                if (screenX < -IconW * 4 || screenX > vpW + IconW * 4) continue;
+                if (screenY < -IconH * 4 || screenY > vpH + IconH) continue;
 
-                float scale = Game1.options.zoomLevel * 2f;
-                int drawW = (int)(IconW * scale);
-                int drawH = (int)(IconH * scale);
+                // Draw at 2× scale for visibility.
+                int drawW = IconW * 2;
+                int drawH = IconH * 2;
                 int drawX = (int)(screenX - drawW / 2f);
                 int drawY = (int)(screenY - drawH);
 
