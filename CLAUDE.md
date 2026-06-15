@@ -163,16 +163,16 @@ smartnpc-mcp/
 **关键目录（详细）：**
 - `smartnpc-mcp/pkg/agentbridge/` — 组合根 `Server`、`EventSource`/`Backend` 接口、`ToolGroup` 注册、`meta.go`（ping tool）
 - `smartnpc-mcp/pkg/relay/hermes/` — Hermes Gateway Backend：runtime-config 加载、事件路由、group 逻辑
-- `smartnpc-mcp/adapters/stardew/tools/` — MCP 工具实现（chat / game_query / mail / npc_behavior / npc_movement / npc_perception / npc_message / player_query）；`registry.go` → `RegisterAll`
+- `smartnpc-mcp/adapters/stardew/tools/` — MCP 工具实现（chat / game_query / mail / npc_behavior / npc_movement / npc_perception / npc_message / player_query / npc_inventory）；`registry.go` → `RegisterAll`
 - `smartnpc-mcp/adapters/stardew/bridge/` — ws 客户端 + testserver mock
 - `smartnpc-mcp/adapters/stardew/events/` — 游戏事件 typed structs（`ChatMessage` / `NpcInteract` 等）+ format 工具
 - `hermes/npcs.yaml` — **NPC 元数据唯一真相源**（id / game_name / display_name / gateway_port / peer 关系）。增删 NPC 必须从这个文件开始，`render_profiles.sh` 和 `runtime-config.yaml` 都从它生成。
-- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `critical-policy.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。Skills：`smartnpc-core` / `smartnpc-gift` / `smartnpc-greeting` / `smartnpc-group-chat` / `smartnpc-inter-npc` / `smartnpc-memory` / `smartnpc-schedule` / `smartnpc-visit`。
+- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `critical-policy.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。Skills：`smartnpc-core` / `smartnpc-farm` / `smartnpc-farm-harvest` / `smartnpc-farm-maintenance` / `smartnpc-farm-manager` / `smartnpc-farm-worker` / `smartnpc-gift` / `smartnpc-greeting` / `smartnpc-group-chat` / `smartnpc-inter-npc` / `smartnpc-memory` / `smartnpc-schedule` / `smartnpc-visit`。
 - `hermes/profiles/<npc>/` — 单个 NPC profile。`SOUL.md` 手写保留，`critical-policy.md` 手写保留，其余由 `_master/` 渲染生成。6 个 NPC：`xiami` / `abigail` / `haley` / `harvey` / `penny` / `sebastian`。
 - `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
 - `smapi-mod/NPC/` — 多 NPC 路由（`AudibleNPCResolver.cs` + `TurnQueue.cs`）
 - `smapi-mod/{Query,Perception,Movement,Mail,Chat,UI}/` — 按 domain 拆分的游戏侧 handler
-- `smapi-mod/Behavior/` — NPC 世界行为 handler（DepositItems / ClearDebris 等）；跨模块数据流：C# FollowSystem 触发 → ws action → MCP tool → Go handler → ws response → C# Tick 执行。**行为可实现性规划**详见 [`report-behavior.md`](report-behavior.md)（20 个 NPC 行为 + 三层优先级）。已实现：`npc_wander` / `npc_clear_debris` / `npc_deposit_items` / `npc_deliver_items` / `npc_till_soil` / `npc_approach_and_speak` / `npc_forage_collect`
+- `smapi-mod/Behavior/` — NPC 世界行为 handler（`WorldActionHandlers.cs`：deposit / clear_debris / till_soil / forage_collect / wander 等；`SocialActionHandlers.cs`：deliver / approach_and_speak 等）。跨模块数据流：C# FollowSystem（`Movement/FollowSystem.cs`）触发 → ws action → MCP tool → Go handler → ws response → C# Tick 执行。**行为可实现性规划**详见 [`report-behavior.md`](report-behavior.md)（20 个 NPC 行为 + 三层优先级）。已实现：`npc_wander` / `npc_clear_debris` / `npc_deposit_items` / `npc_deliver_items` / `npc_till_soil` / `npc_approach_and_speak` / `npc_forage_collect`
 - `smapi-mod/Debug/` — 游戏内调试命令入口（`smartnpc_deposit_items` 等）
 - `smapi-mod/assets/xiami/` — NPC sprite 资产 + 构建脚本
 - `scripts/` — Hermes 管理脚本：`render_profiles.sh`（渲染模板）、`start_hermes_profiles.sh`（启动指定 NPC gateway）、`detect_wsl_ips.sh`（自动探测 WSL/Windows IP）、`apply_hermes_tuning.sh`（调参）、`lib/npc_registry.sh`（从 `hermes/npcs.yaml` 读 NPC 列表的公共库）
