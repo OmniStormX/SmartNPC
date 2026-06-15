@@ -40,8 +40,12 @@ type NpcWanderOutput struct {
 
 type NpcClearDebrisInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius to scan (default 5, max 10)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius to scan (default 5, max 30); ignored when bbox is set"`
 	MaxCount int    `json:"max_count,omitempty" jsonschema:"max items to clear (default 3, max 10)"`
+	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcClearDebrisOutput struct {
@@ -55,8 +59,12 @@ type NpcClearDebrisOutput struct {
 
 type NpcWaterCropsInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 10)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 30); ignored when bbox is set"`
 	MaxCount int    `json:"max_count,omitempty" jsonschema:"max crops to water (default 5, max 20)"`
+	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcWaterCropsOutput struct {
@@ -70,8 +78,12 @@ type NpcWaterCropsOutput struct {
 
 type NpcHarvestCropsInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 10)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 30); ignored when bbox is set"`
 	MaxCount int    `json:"max_count,omitempty" jsonschema:"max crops to harvest (default 5, max 10)"`
+	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcHarvestCropsOutput struct {
@@ -118,8 +130,12 @@ type NpcDeliverItemsOutput struct {
 
 type NpcForageCollectInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 8, max 15)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 8, max 30); ignored when bbox is set"`
 	MaxCount int    `json:"max_count,omitempty" jsonschema:"max items to collect (default 3, max 10)"`
+	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcForageCollectOutput struct {
@@ -163,8 +179,12 @@ type NpcPlantSeedsOutput struct {
 
 type NpcTillSoilInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 3, max 8)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 3, max 30); ignored when bbox is set"`
 	MaxCount int    `json:"max_count,omitempty" jsonschema:"max tiles to till (default 5, max 15)"`
+	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcTillSoilOutput struct {
@@ -180,8 +200,8 @@ type NpcInspectObjectInput struct {
 	NPC    string `json:"npc"             jsonschema:"NPC internal name"`
 	X      int    `json:"x,omitempty"     jsonschema:"center tile X (default: NPC's current tile)"`
 	Y      int    `json:"y,omitempty"     jsonschema:"center tile Y (default: NPC's current tile)"`
-	Radius int    `json:"radius,omitempty" jsonschema:"scan radius in tiles, 0 = single tile at (x,y) (default 0, max 10)"`
-	What   string `json:"what,omitempty"  jsonschema:"filter: crops, objects, terrain, or all (default: all)"`
+	Radius int    `json:"radius,omitempty" jsonschema:"scan radius in tiles, 0 = single tile at (x,y) (default 0, max 30)"`
+	What   string `json:"what,omitempty"  jsonschema:"filter: crops, objects, terrain, all, or farm_actions (default: all). farm_actions returns aggregated action groups (harvest/water/clear/till/forage/plant) each with a count and bbox suitable to feed back to behavior tools."`
 }
 
 type JsonTile struct {
@@ -209,20 +229,51 @@ type JsonTileType struct {
 	Type string `json:"type"`
 }
 
+// BBox is an axis-aligned rectangle covering all tiles in an action group.
+// Coordinates are inclusive on both ends. Pass these values back to the
+// matching behavior tool's x1/y1/x2/y2 fields.
+type BBox struct {
+	X1 int `json:"x1" jsonschema:"left edge (inclusive)"`
+	Y1 int `json:"y1" jsonschema:"top edge (inclusive)"`
+	X2 int `json:"x2" jsonschema:"right edge (inclusive)"`
+	Y2 int `json:"y2" jsonschema:"bottom edge (inclusive)"`
+}
+
+// CropSummary aggregates how many of a single crop kind are present in
+// a group's bbox. Used by the harvest action group to give the agent a
+// hint about what species are about to be picked.
+type CropSummary struct {
+	ID    string `json:"id"    jsonschema:"qualified item id, e.g. (O)24"`
+	Name  string `json:"name"  jsonschema:"display name"`
+	Count int    `json:"count" jsonschema:"how many tiles of this crop"`
+}
+
+// ActionGroup is one of 6 farm-action categories
+// (harvest/water/clear/till/forage/plant) returned by the
+// `farm_actions` mode of npc_inspect_object. The bbox is the
+// axis-aligned envelope of all matching tiles; feed it back as
+// x1/y1/x2/y2 to the matching behavior tool.
+type ActionGroup struct {
+	Count int           `json:"count"            jsonschema:"how many tiles match this action"`
+	BBox  *BBox         `json:"bbox,omitempty"   jsonschema:"axis-aligned rectangle covering all matching tiles; nil when count=0"`
+	Crops []CropSummary `json:"crops,omitempty"  jsonschema:"per-species breakdown for the harvest action; omitted for other actions"`
+}
+
 type NpcInspectObjectOutput struct {
-	OK             bool           `json:"ok"                       jsonschema:"true on success"`
-	NPC            string         `json:"npc"                      jsonschema:"echo"`
-	Center         JsonTile       `json:"center"                   jsonschema:"scan center tile"`
-	Radius         int            `json:"radius"                   jsonschema:"scan radius used"`
-	TilesScanned   int            `json:"tiles_scanned"            jsonschema:"total tiles examined"`
-	Summary        string         `json:"summary"                  jsonschema:"one-line summary, e.g. '3 mature crops, 2 unwatered'"`
-	Location       string         `json:"location"                 jsonschema:"map name"`
-	Season         string         `json:"season"                   jsonschema:"current in-game season"`
-	MatureCrops    []JsonCrop     `json:"mature_crops,omitempty"  jsonschema:"mature crops ready to harvest"`
-	UnwateredCrops int            `json:"unwatered_crops,omitempty" jsonschema:"number of unwatered crop tiles"`
-	EmptyHoedirt   int            `json:"empty_hoedirt,omitempty"   jsonschema:"number of empty HoeDirt tiles"`
-	Objects        []JsonTileObj  `json:"objects,omitempty"      jsonschema:"objects on the ground"`
-	Terrain        []JsonTileType `json:"terrain,omitempty"     jsonschema:"non-HoeDirt terrain features"`
+	OK                bool                   `json:"ok"                       jsonschema:"true on success"`
+	NPC               string                 `json:"npc"                      jsonschema:"echo"`
+	Center            JsonTile               `json:"center"                   jsonschema:"scan center tile"`
+	Radius            int                    `json:"radius"                   jsonschema:"scan radius used"`
+	TilesScanned      int                    `json:"tiles_scanned"            jsonschema:"total tiles examined"`
+	Summary           string                 `json:"summary"                  jsonschema:"one-line summary, e.g. '3 mature crops, 2 unwatered'"`
+	Location          string                 `json:"location"                 jsonschema:"map name"`
+	Season            string                 `json:"season"                   jsonschema:"current in-game season"`
+	MatureCrops       []JsonCrop             `json:"mature_crops,omitempty"  jsonschema:"mature crops ready to harvest (legacy what=all/crops modes)"`
+	UnwateredCrops    int                    `json:"unwatered_crops,omitempty" jsonschema:"number of unwatered crop tiles (legacy)"`
+	EmptyHoedirt      int                    `json:"empty_hoedirt,omitempty"   jsonschema:"number of empty HoeDirt tiles (legacy)"`
+	Objects           []JsonTileObj          `json:"objects,omitempty"      jsonschema:"objects on the ground (legacy)"`
+	Terrain           []JsonTileType         `json:"terrain,omitempty"     jsonschema:"non-HoeDirt terrain features (legacy)"`
+	ActionsAvailable  map[string]ActionGroup `json:"actions_available,omitempty" jsonschema:"farm_actions mode: 6 keys (harvest/water/clear/till/forage/plant) → group with count+bbox; feed bbox back to the matching behavior tool"`
 }
 
 // ── npc_withdraw_from_chest ─────────────────────────────────────────
@@ -365,10 +416,13 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_clear_debris",
-		Description: "NPC clears debris (weeds, twigs, stones) around their position.\n\n" +
+		Description: "NPC clears debris (weeds, twigs, stones) within an area.\n\n" +
 			"When to call: NPC decides to help tidy the farm — typically morning routine " +
 			"or when the player asks for help cleaning.\n\n" +
-			"Constraints: radius max 10, max_count max 10. Only works on Farm-type maps.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
+			"falls back to a circular scan around the NPC of radius (default 5, max 30).\n\n" +
+			"Constraints: max_count max 10. Only works on Farm-type maps.\n\n" +
 			"Side-effect: WRITE (removes objects from the world).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcClearDebrisInput) (*mcp.CallToolResult, NpcClearDebrisOutput, error) {
 		if in.NPC == "" {
@@ -381,9 +435,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_water_crops",
-		Description: "NPC waters un-watered crops within radius.\n\n" +
+		Description: "NPC waters un-watered crops within an area.\n\n" +
 			"When to call: morning farm routine, or player explicitly asks NPC to water.\n\n" +
-			"Constraints: radius max 10, max_count max 20.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
+			"falls back to a circular scan around the NPC of radius (default 5, max 30).\n\n" +
+			"Constraints: max_count max 20.\n\n" +
 			"Side-effect: WRITE (modifies HoeDirt state).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcWaterCropsInput) (*mcp.CallToolResult, NpcWaterCropsOutput, error) {
 		if in.NPC == "" {
@@ -396,9 +453,12 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_harvest_crops",
-		Description: "NPC harvests mature crops within radius and stores them in internal inventory.\n\n" +
+		Description: "NPC harvests mature crops within an area and stores them in internal inventory.\n\n" +
 			"When to call: crops are ready and NPC decides to help, or player asks.\n\n" +
-			"Constraints: radius max 10, max_count max 10. Harvested items go to NPC backpack; " +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
+			"falls back to a circular scan around the NPC of radius (default 5, max 30).\n\n" +
+			"Constraints: max_count max 10. Harvested items go to NPC backpack; " +
 			"use npc_deposit_items or npc_deliver_items to transfer.\n\n" +
 			"Side-effect: WRITE (removes crops, adds to NPC inventory).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcHarvestCropsInput) (*mcp.CallToolResult, NpcHarvestCropsOutput, error) {
@@ -449,7 +509,10 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 		Name: "npc_forage_collect",
 		Description: "NPC picks up forageable items (spawned objects) in the area.\n\n" +
 			"When to call: NPC decides to gather berries, shells, mushrooms during a walk.\n\n" +
-			"Constraints: radius max 15, max_count max 10.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
+			"falls back to a circular scan around the NPC of radius (default 8, max 30).\n\n" +
+			"Constraints: max_count max 10.\n\n" +
 			"Side-effect: WRITE (removes spawn objects, adds to NPC backpack).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcForageCollectInput) (*mcp.CallToolResult, NpcForageCollectOutput, error) {
 		if in.NPC == "" {
@@ -500,7 +563,10 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 		Name: "npc_till_soil",
 		Description: "NPC tills empty ground to create HoeDirt for planting.\n\n" +
 			"When to call: preparing farmland before planting.\n\n" +
-			"Constraints: radius max 8, max_count max 15. Only on Farm-type maps.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
+			"falls back to a circular scan around the NPC of radius (default 3, max 30).\n\n" +
+			"Constraints: max_count max 15. Only on Farm-type maps.\n\n" +
 			"Side-effect: WRITE (creates terrain features).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcTillSoilInput) (*mcp.CallToolResult, NpcTillSoilOutput, error) {
 		if in.NPC == "" {
@@ -513,11 +579,21 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_inspect_object",
-		Description: "NPC walks to a tile and examines the object/crop/terrain there, " +
-			"returning a description to the LLM for decision-making.\n\n" +
-			"When to call: NPC wants to observe surroundings before acting — e.g. " +
-			"checking crop readiness, identifying an object, or investigating a noise.\n\n" +
-			"Side-effect: READ (no world mutation, but NPC visibly walks to target).",
+		Description: "NPC examines surroundings and returns a structured summary " +
+			"to feed back into decision-making.\n\n" +
+			"Modes (controlled by `what`):\n" +
+			"  • all (default) / crops / objects / terrain — legacy per-tile listing.\n" +
+			"  • farm_actions — aggregated farm-action plan: returns 6 groups " +
+			"(harvest, water, clear, till, forage, plant), each with a tile count " +
+			"and an axis-aligned bbox covering all matching tiles. Pass that bbox " +
+			"as x1/y1/x2/y2 to the matching behavior tool (npc_harvest_crops / " +
+			"npc_water_crops / npc_clear_debris / npc_till_soil / npc_forage_collect).\n\n" +
+			"When to call: NPC wants a coarse-grained snapshot of farm work " +
+			"available before deciding what to do (farm_actions mode), or wants " +
+			"per-tile detail for narrow inspection (legacy modes).\n\n" +
+			"Constraints: radius max 30 (was 10). Use larger radius (e.g. 25) " +
+			"with farm_actions to capture the whole farm in one call.\n\n" +
+			"Side-effect: READ (no world mutation; NPC may face the center tile).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcInspectObjectInput) (*mcp.CallToolResult, NpcInspectObjectOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcInspectObjectOutput{}, errNpcRequired

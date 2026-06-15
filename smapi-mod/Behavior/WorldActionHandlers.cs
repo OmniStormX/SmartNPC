@@ -116,20 +116,21 @@ namespace SmartNPC.Bridge
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
             return $"[清理] r={radius} max={maxCount}";
         }
 
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+            var (bboxOn, x1, y1, x2, y2) = ParseBBox(@params);
 
             var location = npc.currentLocation;
             if (location is null) return;
 
-            // 1. Scan for clearable objects within radius, sort by distance.
+            // 1. Scan for clearable objects within bbox or radius, sort by distance.
             var npcTile = npc.Tile;
             var targets = new List<(Microsoft.Xna.Framework.Vector2 tile, StardewValley.Object obj)>();
 
@@ -138,8 +139,15 @@ namespace SmartNPC.Bridge
                 var tile = kv.Key;
                 var obj  = kv.Value;
                 if (!IsDebris(obj)) continue;
-                float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
-                if (dist > radius) continue;
+                if (bboxOn)
+                {
+                    if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
+                }
+                else
+                {
+                    float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
+                    if (dist > radius) continue;
+                }
                 targets.Add((tile, obj));
             }
 
@@ -151,7 +159,8 @@ namespace SmartNPC.Bridge
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_clear_debris] {npcName}: no debris in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
+                Log.Log($"[npc_clear_debris] {npcName}: no debris in {scope}", LogLevel.Info);
                 return;
             }
 
@@ -189,6 +198,22 @@ namespace SmartNPC.Bridge
                 return System.Math.Clamp(v, min, max);
             return def;
         }
+
+        // Parse x1/y1/x2/y2 bbox from params. Returns (on, x1, y1, x2, y2).
+        // bbox is "on" only when all 4 fields are non-zero AND form a valid
+        // rectangle (x1 <= x2, y1 <= y2). Used by all behavior handlers to
+        // accept a bbox from npc_inspect_object's farm_actions output.
+        internal static (bool on, int x1, int y1, int x2, int y2) ParseBBox(JsonElement p)
+        {
+            int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            if (p.ValueKind != JsonValueKind.Object) return (false, 0, 0, 0, 0);
+            if (p.TryGetProperty("x1", out var e) && e.TryGetInt32(out int v)) x1 = v;
+            if (p.TryGetProperty("y1", out e) && e.TryGetInt32(out v)) y1 = v;
+            if (p.TryGetProperty("x2", out e) && e.TryGetInt32(out v)) x2 = v;
+            if (p.TryGetProperty("y2", out e) && e.TryGetInt32(out v)) y2 = v;
+            bool on = x1 != 0 && y1 != 0 && x2 != 0 && y2 != 0 && x1 <= x2 && y1 <= y2;
+            return (on, x1, y1, x2, y2);
+        }
     }
 
     internal sealed class WaterCropsHandler : NpcActionHandlerBase
@@ -209,23 +234,23 @@ namespace SmartNPC.Bridge
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 5, 1, 20);
             return $"[浇水] r={radius} max={maxCount}";
         }
 
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 5, 1, 20);
+            var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
 
             var location = npc.currentLocation;
             if (location is null) return;
 
-            // Scan for unwatered HoeDirt with crops within radius.
+            // Scan for unwatered HoeDirt with crops within bbox or radius.
             var npcTile = npc.Tile;
             var targets = new System.Collections.Generic.List<(Microsoft.Xna.Framework.Vector2 tile, float dist)>();
-            int scanRange = Math.Max(radius, 1);
 
             foreach (var kv in location.terrainFeatures.Pairs)
             {
@@ -234,8 +259,16 @@ namespace SmartNPC.Bridge
                 if (dirt.crop == null) continue;
                 if (!dirt.needsWatering()) continue;
 
+                if (bboxOn)
+                {
+                    if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
+                }
+                else
+                {
+                    float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
+                    if (dist > radius) continue;
+                }
                 float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
-                if (d > radius) continue;
                 targets.Add((tile, d));
             }
 
@@ -244,7 +277,8 @@ namespace SmartNPC.Bridge
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_water_crops] {npcName}: no unwatered crops in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
+                Log.Log($"[npc_water_crops] {npcName}: no unwatered crops in {scope}", LogLevel.Info);
                 return;
             }
 
@@ -284,20 +318,21 @@ namespace SmartNPC.Bridge
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 5, 1, 10);
             return $"[收获] r={radius} max={maxCount}";
         }
 
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 5, 1, 10);
+            var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
 
             var location = npc.currentLocation;
             if (location is null) return;
 
-            // Scan for mature crops on HoeDirt within radius.
+            // Scan for mature crops on HoeDirt within bbox or radius.
             var npcTile = npc.Tile;
             var targets = new System.Collections.Generic.List<(Microsoft.Xna.Framework.Vector2 tile, float dist)>();
 
@@ -313,8 +348,16 @@ namespace SmartNPC.Bridge
                 // crop.harvest() itself does the final fullyGrown gate.
                 if (dirt.crop.currentPhase.Value < dirt.crop.phaseDays.Count - 1) continue;
 
+                if (bboxOn)
+                {
+                    if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
+                }
+                else
+                {
+                    float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
+                    if (dist > radius) continue;
+                }
                 float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
-                if (d > radius) continue;
                 targets.Add((tile, d));
             }
 
@@ -323,7 +366,8 @@ namespace SmartNPC.Bridge
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_harvest_crops] {npcName}: no mature crops in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
+                Log.Log($"[npc_harvest_crops] {npcName}: no mature crops in {scope}", LogLevel.Info);
                 return;
             }
 
@@ -471,15 +515,16 @@ namespace SmartNPC.Bridge
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    8, 1, 15);
+            int radius   = ParseInt(@params, "radius",    8, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
             return $"[采集] r={radius} max={maxCount}";
         }
 
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    8, 1, 15);
+            int radius   = ParseInt(@params, "radius",    8, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+            var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -492,8 +537,16 @@ namespace SmartNPC.Bridge
                 var tile = kv.Key;
                 var obj  = kv.Value;
                 if (!obj.IsSpawnedObject) continue;
-                float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
-                if (dist > radius) continue;
+
+                if (bboxOn)
+                {
+                    if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
+                }
+                else
+                {
+                    float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
+                    if (dist > radius) continue;
+                }
                 targets.Add((tile, obj.ItemId, obj.DisplayName));
             }
 
@@ -505,7 +558,8 @@ namespace SmartNPC.Bridge
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_forage_collect] {npcName}: no forage in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
+                Log.Log($"[npc_forage_collect] {npcName}: no forage in {scope}", LogLevel.Info);
                 return;
             }
 
@@ -691,15 +745,16 @@ namespace SmartNPC.Bridge
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    3, 1, 8);
+            int radius   = ParseInt(@params, "radius",    3, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
             return $"[翻地] r={radius} max={maxCount}";
         }
 
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    3, 1, 8);
+            int radius   = ParseInt(@params, "radius",    3, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
+            var (bboxOn, bx1, by1, bx2, by2) = ClearDebrisHandler.ParseBBox(@params);
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -711,20 +766,31 @@ namespace SmartNPC.Bridge
                 return;
             }
 
-            // Scan for empty diggable tiles within radius.
+            // Scan for empty diggable tiles within bbox or radius.
             var npcTile = npc.Tile;
             var targets = new System.Collections.Generic.List<(Microsoft.Xna.Framework.Vector2 tile, float dist)>();
-            int scanRange = Math.Max(radius, 1);
 
-            for (int dx = -scanRange; dx <= scanRange; dx++)
+            int sx1, sy1, sx2, sy2;
+            if (bboxOn)
             {
-                for (int dy = -scanRange; dy <= scanRange; dy++)
+                sx1 = bx1; sy1 = by1; sx2 = bx2; sy2 = by2;
+            }
+            else
+            {
+                int scanRange = Math.Max(radius, 1);
+                sx1 = (int)npcTile.X - scanRange;
+                sy1 = (int)npcTile.Y - scanRange;
+                sx2 = (int)npcTile.X + scanRange;
+                sy2 = (int)npcTile.Y + scanRange;
+            }
+
+            for (int tx = sx1; tx <= sx2; tx++)
+            {
+                for (int ty = sy1; ty <= sy2; ty++)
                 {
-                    int tx = (int)npcTile.X + dx;
-                    int ty = (int)npcTile.Y + dy;
                     var tileV2 = new Microsoft.Xna.Framework.Vector2(tx, ty);
                     float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
-                    if (d > radius) continue;
+                    if (!bboxOn && d > radius) continue;
 
                     // Skip occupied tiles.
                     if (location.Objects.ContainsKey(tileV2)) continue;
@@ -745,7 +811,8 @@ namespace SmartNPC.Bridge
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_till_soil] {npcName}: no empty diggable tiles in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({bx1},{by1})-({bx2},{by2})" : $"radius={radius}";
+                Log.Log($"[npc_till_soil] {npcName}: no empty diggable tiles in {scope}", LogLevel.Info);
                 return;
             }
 
@@ -788,7 +855,7 @@ namespace SmartNPC.Bridge
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius = ParseInt(@params, "radius", 0, 0, 10);
+            int radius = ParseInt(@params, "radius", 0, 0, 30);
             string what = ParseWhat(@params);
             return radius > 0 ? $"[观察] {what} r={radius}" : "[观察]";
         }
@@ -806,14 +873,25 @@ namespace SmartNPC.Bridge
                 if (@params.TryGetProperty("y", out var ey) && ey.TryGetInt32(out int py)) cy = py;
             }
 
-            int radius    = ParseInt(@params, "radius", 0, 0, 10);
+            int radius    = ParseInt(@params, "radius", 0, 0, 30);
             string what   = ParseWhat(@params);
-            bool wantCrops   = what == "crops"   || what == "all";
-            bool wantObjects = what == "objects" || what == "all";
-            bool wantTerrain = what == "terrain" || what == "all";
 
             // Facade: NPC looks toward the center tile.
             npc.faceDirection(2);
+
+            // ── farm_actions mode ────────────────────────────────────
+            // Aggregated action-plan output: 6 groups, each with count + bbox.
+            // Designed for the agent to pick a high-level action and feed the
+            // bbox back to the matching behavior tool without needing per-tile
+            // coordinates.
+            if (what == "farm_actions")
+            {
+                return BuildFarmActionsResult(npc, npcName, location, cx, cy, radius);
+            }
+
+            bool wantCrops   = what == "crops"   || what == "all";
+            bool wantObjects = what == "objects" || what == "all";
+            bool wantTerrain = what == "terrain" || what == "all";
 
             // ── Scan ──────────────────────────────────────────────────
             int scanned = 0;
@@ -928,6 +1006,177 @@ namespace SmartNPC.Bridge
             return result;
         }
 
+        // ── farm_actions mode ────────────────────────────────────────
+        //
+        // Single sweep over the radius (or whole-tile rectangle) classifying
+        // every tile into one of 6 buckets:
+        //
+        //   harvest — HoeDirt with crop in its final growth phase
+        //   water   — HoeDirt with crop that needsWatering()
+        //   clear   — Object on tile that is debris (weeds/twig/litter/small stone)
+        //   till    — passable, Diggable=T, no Object, no terrain feature
+        //   forage  — Object with IsSpawnedObject=true
+        //   plant   — HoeDirt without a crop
+        //
+        // Each non-empty bucket gets a count + axis-aligned bbox the agent
+        // can feed back as x1/y1/x2/y2 to the matching behavior tool.
+        private object BuildFarmActionsResult(NPC npc, string npcName, GameLocation location,
+            int cx, int cy, int radius)
+        {
+            // Per-bucket aggregators: count + bbox bounds + (harvest only) per-crop tally.
+            var buckets = new Dictionary<string, (int count, int minX, int minY, int maxX, int maxY)>();
+            void Hit(string key, int x, int y)
+            {
+                if (buckets.TryGetValue(key, out var v))
+                {
+                    buckets[key] = (v.count + 1,
+                        Math.Min(v.minX, x), Math.Min(v.minY, y),
+                        Math.Max(v.maxX, x), Math.Max(v.maxY, y));
+                }
+                else
+                {
+                    buckets[key] = (1, x, y, x, y);
+                }
+            }
+
+            // Per-crop tally for the harvest bucket: id → (name, count).
+            var harvestCrops = new Dictionary<string, (string name, int count)>();
+
+            int scanned = 0;
+            int scanRange = Math.Max(radius, 0);
+            for (int dx = -scanRange; dx <= scanRange; dx++)
+            {
+                for (int dy = -scanRange; dy <= scanRange; dy++)
+                {
+                    int tx = cx + dx;
+                    int ty = cy + dy;
+                    float d = Microsoft.Xna.Framework.Vector2.Distance(
+                        new Vector2(cx, cy), new Vector2(tx, ty));
+                    if (radius > 0 && d > radius) continue;
+                    scanned++;
+
+                    var tileV2 = new Vector2(tx, ty);
+
+                    // ── HoeDirt: harvest / water / plant ─────────────
+                    if (location.terrainFeatures.TryGetValue(tileV2, out var tf)
+                        && tf is StardewValley.TerrainFeatures.HoeDirt dirt)
+                    {
+                        if (dirt.crop != null && !dirt.crop.dead.Value)
+                        {
+                            // Final phase = harvestable. Matches HarvestCropsHandler.
+                            if (dirt.crop.currentPhase.Value >= dirt.crop.phaseDays.Count - 1)
+                            {
+                                Hit("harvest", tx, ty);
+                                string cid = dirt.crop.indexOfHarvest.Value;
+                                var cd = ItemRegistry.GetData(cid);
+                                string cn = cd?.DisplayName ?? cid;
+                                if (harvestCrops.TryGetValue(cid, out var hv))
+                                    harvestCrops[cid] = (hv.name, hv.count + 1);
+                                else
+                                    harvestCrops[cid] = (cn, 1);
+                            }
+
+                            if (dirt.needsWatering())
+                                Hit("water", tx, ty);
+                        }
+                        else if (dirt.crop == null)
+                        {
+                            Hit("plant", tx, ty);
+                        }
+                    }
+
+                    // ── Objects: clear (debris) / forage (spawn) ─────
+                    if (location.Objects.TryGetValue(tileV2, out var obj) && obj != null)
+                    {
+                        if (IsDebrisObj(obj))
+                            Hit("clear", tx, ty);
+                        if (obj.IsSpawnedObject)
+                            Hit("forage", tx, ty);
+                    }
+
+                    // ── till: empty, passable, Diggable=T ────────────
+                    if (!location.Objects.ContainsKey(tileV2)
+                        && !location.terrainFeatures.ContainsKey(tileV2)
+                        && location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)
+                        && location.doesTileHaveProperty(tx, ty, "Diggable", "Back") == "T")
+                    {
+                        Hit("till", tx, ty);
+                    }
+                }
+            }
+
+            // ── Assemble actions_available map ─────────────────────────
+            var actions = new Dictionary<string, object>();
+            void AddActionGroup(string key)
+            {
+                if (!buckets.TryGetValue(key, out var v) || v.count == 0)
+                {
+                    // Always emit the key so the agent can see "0".
+                    actions[key] = new { count = 0 };
+                    return;
+                }
+                var bbox = new { x1 = v.minX, y1 = v.minY, x2 = v.maxX, y2 = v.maxY };
+                if (key == "harvest" && harvestCrops.Count > 0)
+                {
+                    var crops = harvestCrops
+                        .Select(kv => new { id = kv.Key, name = kv.Value.name, count = kv.Value.count })
+                        .OrderByDescending(c => c.count)
+                        .ToList();
+                    actions[key] = new { count = v.count, bbox, crops };
+                }
+                else
+                {
+                    actions[key] = new { count = v.count, bbox };
+                }
+            }
+
+            AddActionGroup("harvest");
+            AddActionGroup("water");
+            AddActionGroup("clear");
+            AddActionGroup("till");
+            AddActionGroup("forage");
+            AddActionGroup("plant");
+
+            // ── Summary ────────────────────────────────────────────────
+            var parts = new List<string>();
+            foreach (var key in new[] { "harvest", "water", "clear", "till", "forage", "plant" })
+            {
+                if (buckets.TryGetValue(key, out var v) && v.count > 0)
+                    parts.Add($"{key}={v.count}");
+            }
+            string summary = parts.Count > 0 ? string.Join(" ", parts) : "no farm work available";
+
+            var result = new Dictionary<string, object>
+            {
+                ["ok"]                = true,
+                ["npc"]               = npcName,
+                ["center"]            = new { x = cx, y = cy },
+                ["radius"]            = radius,
+                ["tiles_scanned"]     = scanned,
+                ["summary"]           = summary,
+                ["location"]          = location.Name ?? "",
+                ["season"]            = Game1.currentSeason ?? "",
+                ["actions_available"] = actions,
+            };
+
+            Log.Log(
+                $"[npc_inspect_object] {npcName}: farm_actions center=({cx},{cy}) r={radius} scanned={scanned} → {summary}",
+                LogLevel.Info);
+
+            return result;
+        }
+
+        // Local debris classifier — mirrors ClearDebrisHandler.IsDebris so
+        // farm_actions counts match what npc_clear_debris would actually
+        // act on.
+        private static bool IsDebrisObj(StardewValley.Object obj)
+        {
+            if (obj is null) return false;
+            return obj.IsWeeds() || obj.IsTwig()
+                || (obj.Category == StardewValley.Object.litterCategory)
+                || (obj.Name == "Stone" && obj.ParentSheetIndex >= 0 && obj.ParentSheetIndex < 44);
+        }
+
         private static object Error(string code, string message)
             => new { ok = false, error_code = code, message };
 
@@ -938,7 +1187,7 @@ namespace SmartNPC.Bridge
                 w.ValueKind == JsonValueKind.String)
             {
                 string s = w.GetString() ?? "";
-                if (s == "crops" || s == "objects" || s == "terrain") return s;
+                if (s == "crops" || s == "objects" || s == "terrain" || s == "farm_actions") return s;
             }
             return "all";
         }
