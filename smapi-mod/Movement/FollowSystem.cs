@@ -2052,51 +2052,63 @@ namespace SmartNPC.Bridge
                         npc.faceDirection(2); // face down
                         // crop.harvest() without a JunimoHarvester adds produce
                         // directly to the player's inventory. To put it in the NPC
-                        // backpack instead, snapshot each slot BEFORE the call,
-                        // then move only the newly added items per slot.
-                        // Per-slot tracking avoids the key-collision bug of a
-                        // Dictionary<string,int> when multiple stacks share the
-                        // same ItemId+Quality.
+                        // backpack instead, snapshot total counts per (ItemId,Quality)
+                        // BEFORE the call, then move the delta after.
+                        // Total-count tracking is immune to slot reorganisation by
+                        // Game1.player.addItemToInventory() (stack merging, re-sorting,
+                        // etc.) — we don't care which slot the items landed in.
                         int maxItems = Game1.player.MaxItems;
-                        var slotBefore = new (string? itemId, int quality, int count)[maxItems];
+                        var countsBefore = new Dictionary<(string itemId, int quality), int>();
                         for (int i = 0; i < maxItems; i++)
                         {
                             var item = Game1.player.Items[i];
-                            if (item != null)
-                                slotBefore[i] = (item.ItemId, item.Quality, item.Stack);
+                            if (item == null) continue;
+                            var key = (item.ItemId, item.Quality);
+                            countsBefore.TryGetValue(key, out int c);
+                            countsBefore[key] = c + item.Stack;
                         }
 
                         bool harvested = dirt!.crop.harvest((int)targetV2.X, (int)targetV2.Y, dirt);
                         if (harvested)
                         {
-                            // Per-slot delta: compare each slot's before/after directly.
+                            // Build after-harvest total counts.
+                            var countsAfter = new Dictionary<(string itemId, int quality), int>();
                             for (int i = 0; i < maxItems; i++)
                             {
                                 var item = Game1.player.Items[i];
-                                var before = slotBefore[i];
+                                if (item == null) continue;
+                                var key = (item.ItemId, item.Quality);
+                                countsAfter.TryGetValue(key, out int c);
+                                countsAfter[key] = c + item.Stack;
+                            }
 
-                                int delta = 0;
-                                if (item != null && before.itemId != null
-                                    && item.ItemId == before.itemId && item.Quality == before.quality)
-                                {
-                                    // Same item+quality in same slot — stack grew.
-                                    delta = item.Stack - before.count;
-                                }
-                                else if (item != null && before.itemId == null)
-                                {
-                                    // Slot was empty before, now has an item — all from harvest.
-                                    delta = item.Stack;
-                                }
-                                // else: slot changed to different item or emptied — skip.
+                            // Compute delta per (ItemId,Quality) and transfer to NPC.
+                            foreach (var kv in countsAfter)
+                            {
+                                var key = kv.Key;
+                                int afterCount = kv.Value;
+                                countsBefore.TryGetValue(key, out int beforeCount);
+                                int delta = afterCount - beforeCount;
+                                if (delta <= 0) continue;
 
-                                if (delta > 0)
+                                // Remove delta items from player inventory (search any slot).
+                                int remaining = delta;
+                                for (int i = 0; i < maxItems && remaining > 0; i++)
                                 {
-                                    int take = Math.Min(item!.Stack, delta);
+                                    var item = Game1.player.Items[i];
+                                    if (item == null || item.ItemId != key.itemId || item.Quality != key.quality)
+                                        continue;
+                                    int take = Math.Min(item.Stack, remaining);
                                     item.Stack -= take;
+                                    remaining -= take;
                                     if (item.Stack <= 0)
                                         Game1.player.Items[i] = null;
-                                    st.HarvestInventory.Add(npcName, item.ItemId, take, item.Quality);
-                                    st.HarvestedCount += take;
+                                }
+                                int transferred = delta - remaining;
+                                if (transferred > 0)
+                                {
+                                    st.HarvestInventory.Add(npcName, key.itemId, transferred, key.quality);
+                                    st.HarvestedCount += transferred;
                                 }
                             }
                             // Collect debris that harvest() spawned (e.g. when player
