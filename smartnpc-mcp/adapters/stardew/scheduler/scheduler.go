@@ -11,8 +11,6 @@
 package scheduler
 
 import (
-	"fmt"
-	"os"
 	"sync"
 	"time"
 )
@@ -26,18 +24,18 @@ import (
 // committing to numbers ahead of time. This both shrinks plan-time
 // prompts and lets reactions stay context-aware.
 type Entry struct {
-	GameHour int       `json:"game_hour"`         // 6-25 (SDV time: 6am to 2am next day shown as 25/26)
-	Action   string    `json:"action"`            // MCP tool name, e.g. "npc_water_crops"
-	Reason   string    `json:"reason,omitempty"`  // LLM's reasoning (for debugging / display)
-	Fired    bool      `json:"fired"`             // set true once dispatched
+	GameHour int       `json:"game_hour"`        // 6-25 (SDV time: 6am to 2am next day shown as 25/26)
+	Action   string    `json:"action"`           // MCP tool name, e.g. "npc_water_crops"
+	Reason   string    `json:"reason,omitempty"` // LLM's reasoning (for debugging / display)
+	Fired    bool      `json:"fired"`            // set true once dispatched
 	FiredAt  time.Time `json:"fired_at,omitempty"`
 }
 
 // DaySchedule holds one NPC's plan for one game day.
 type DaySchedule struct {
 	NPC     string  `json:"npc"`
-	Day     int     `json:"day"`     // 1-28
-	Season  string  `json:"season"`  // spring/summer/fall/winter
+	Day     int     `json:"day"`    // 1-28
+	Season  string  `json:"season"` // spring/summer/fall/winter
 	Year    int     `json:"year"`
 	Entries []Entry `json:"entries"`
 }
@@ -124,7 +122,7 @@ func (s *Scheduler) ClearAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.schedules = make(map[string]*DaySchedule)
-	fmt.Fprintln(os.Stderr, "\033[34m[schedule]: =========clear =========\033[0m")
+	// fmt.Fprintln(os.Stderr, "\033[34m[schedule]: =========clear =========\033[0m")
 }
 
 // ClearNPC removes the schedule for a specific NPC.

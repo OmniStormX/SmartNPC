@@ -3,7 +3,6 @@ package hermesrelay
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -105,9 +104,12 @@ func TestLoadConfigFile_NoProfiles(t *testing.T) {
 	if err := os.WriteFile(path, []byte("profiles: []\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	_, err := LoadConfigFile(path)
-	if err == nil || !strings.Contains(err.Error(), "empty") {
-		t.Errorf("want empty-profile error, got %v", err)
+	cfgs, err := LoadConfigFile(path)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(cfgs) != 0 {
+		t.Errorf("want empty configs, got %d", len(cfgs))
 	}
 }
 

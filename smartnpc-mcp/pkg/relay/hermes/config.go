@@ -73,7 +73,7 @@ func LoadConfigFile(path string) ([]Config, error) {
 		return nil, fmt.Errorf("hermesrelay: parse %q: %w", path, err)
 	}
 	if len(file.Profiles) == 0 {
-		return nil, fmt.Errorf("hermesrelay: %q has empty profiles list", path)
+		return []Config{}, nil
 	}
 	payloadLogger, payloadEnabled, err := payloadLoggerFromEnv()
 	if err != nil {

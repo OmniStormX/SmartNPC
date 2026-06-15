@@ -21,11 +21,11 @@ type Group struct {
 // NewGroup constructs one Relay per Config and wraps them in a Group. Returns
 // an error when configs is empty or any constituent Relay fails to construct.
 func NewGroup(configs []Config, logger *slog.Logger) (*Group, error) {
-	if len(configs) == 0 {
-		return nil, fmt.Errorf("hermesrelay: NewGroup requires at least one config")
-	}
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if len(configs) == 0 {
+		return &Group{relays: nil, logger: logger}, nil
 	}
 	relays := make([]*Relay, 0, len(configs))
 	for i, cfg := range configs {

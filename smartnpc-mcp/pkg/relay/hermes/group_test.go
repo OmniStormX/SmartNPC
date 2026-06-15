@@ -114,8 +114,14 @@ func TestGroup_BroadcastEventReachesAll(t *testing.T) {
 
 func TestNewGroup_EmptyConfigs(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, err := NewGroup(nil, logger)
-	if err == nil {
-		t.Error("want error on nil configs, got nil")
+	g, err := NewGroup(nil, logger)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if g == nil {
+		t.Fatal("want non-nil group for empty configs")
+	}
+	if len(g.Relays()) != 0 {
+		t.Errorf("want 0 relays, got %d", len(g.Relays()))
 	}
 }

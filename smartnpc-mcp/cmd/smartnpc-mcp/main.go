@@ -1,4 +1,4 @@
-// Command smartnpc-mcp is the MCP server bridging the Stardew Valley SMAPI mod
+﻿// Command smartnpc-mcp is the MCP server bridging the Stardew Valley SMAPI mod
 // to MCP clients (Claude Desktop, Hermes, ...).
 //
 // Two transports are supported:
@@ -10,7 +10,7 @@
 //     so a client on a different host (e.g. Hermes inside WSL while SDV +
 //     mcp run on the Windows host) can connect remotely.
 //
-// IMPORTANT: in stdio mode, never write logs to stdout — it would corrupt
+// IMPORTANT: in stdio mode, never write logs to stdout 鈥?it would corrupt
 // the MCP stream. All logging goes through stderr.
 package main
 
@@ -118,9 +118,9 @@ func main() {
 	}, &mcp.ServerOptions{Logger: logger})
 
 	// Build the hermes event handler. Precedence:
-	//   1. --hermes-config (multi-profile) — preferred for production
-	//   2. --hermes-url + sibling flags     — legacy single-target
-	//   3. neither                           — relay disabled
+	//   1. --hermes-config (multi-profile) 鈥?preferred for production
+	//   2. --hermes-url + sibling flags     鈥?legacy single-target
+	//   3. neither                           鈥?relay disabled
 	var hermesHandler bridge.EventHandler
 	var hermesRelays []*hermesrelay.Relay // collected for /status reporting
 	switch {
@@ -137,8 +137,12 @@ func main() {
 		}
 		hermesHandler = group.HandleEvent
 		hermesRelays = group.Relays()
-		logger.Info("hermes relay enabled (multi-profile)",
-			"config", *hermesConfig, "profiles", len(group.Relays()))
+			if len(hermesRelays) == 0 {
+				logger.Warn("hermes relay loaded but no profiles enabled — events will not be forwarded")
+			} else {
+				logger.Info("hermes relay enabled (multi-profile)",
+					"config", *hermesConfig, "profiles", len(hermesRelays))
+			}
 	case *hermesURL != "":
 		payloadLogger, payloadEnabled, err := hermesrelay.PayloadLoggerFromEnv()
 		if err != nil {
@@ -178,7 +182,7 @@ func main() {
 
 	// Wire the ws bridge. Construction order:
 	//   1. Create WSClient (no handler yet)
-	//   2. RegisterAll → returns dayScheduler (needs br for tool handlers)
+	//   2. RegisterAll 鈫?returns dayScheduler (needs br for tool handlers)
 	//   3. makeRouter (needs br, dayScheduler, hermesHandler)
 	//   4. SetEventHandler + Connect
 	var br *bridge.WSClient
@@ -325,7 +329,7 @@ func makeRouter(
 	// before being interrupted by a concurrent tick turn.
 	var suppressTickRelayUntil time.Time
 
-	// ── Per-NPC persistent worker goroutines ────────────────────────────
+	// 鈹€鈹€ Per-NPC persistent worker goroutines 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 	// One goroutine per known agent NPC, each consuming from its own
 	// buffered channel. This guarantees:
 	//   - Bounded goroutine count (no fire-and-forget explosion)
@@ -344,7 +348,7 @@ func makeRouter(
 	}
 
 	return func(ctx context.Context, name string, data json.RawMessage) {
-		// Persistent event trace → logs/mcp/events.log
+		// Persistent event trace 鈫?logs/mcp/events.log
 		tools.LogEvent(name, data)
 
 		// Refresh chat_say budgets before the relay fires so the recipient
@@ -356,7 +360,7 @@ func makeRouter(
 		// MCP clients always see the raw event stream.
 		forward(ctx, name, data)
 
-		// ── day_started: clear all NPC schedules + rotate session ──────
+		// 鈹€鈹€ day_started: clear all NPC schedules + rotate session 鈹€鈹€鈹€鈹€鈹€鈹€
 		if name == bridge.EventDayStarted {
 			// Rotate Hermes conversation so each game day starts a fresh
 			// session. Parse the event to build a meaningful suffix.
@@ -380,7 +384,7 @@ func makeRouter(
 			suppressTickRelayUntil = time.Now().Add(5 * time.Second)
 		}
 
-		// ── game_time_tick: check scheduler and fire triggers ───────────
+		// 鈹€鈹€ game_time_tick: check scheduler and fire triggers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 		if name == bridge.EventGameTimeTick && sched != nil {
 
 			var tick struct {
@@ -396,7 +400,7 @@ func makeRouter(
 				}
 				// Persist a human-readable record of what fired this tick to
 				// <logDir>/mcp/schedule_triggers.log. No-op when nothing
-				// fired. Console output stays out of the way — slog already
+				// fired. Console output stays out of the way 鈥?slog already
 				// emits a structured "scheduler: firing schedule_trigger"
 				// line below for each entry.
 				tools.LogScheduleTriggers(tick.Hour, fired)
@@ -432,7 +436,7 @@ func makeRouter(
 								"npc", entry.NPC, "action", entry.Action)
 						}
 					} else {
-						// NPC not in pre-registered list — fall back to inline.
+						// NPC not in pre-registered list 鈥?fall back to inline.
 						logger.Warn("scheduler: no worker for NPC, inline dispatch",
 							"npc", entry.NPC, "action", entry.Action)
 						if schedDebug && br != nil {
@@ -481,7 +485,7 @@ func makeRouter(
 		if err := json.Unmarshal(data, &p); err != nil || p.Text == "" {
 			return
 		}
-		// Don't echo our own messages back (defense in depth — the mod
+		// Don't echo our own messages back (defense in depth 鈥?the mod
 		// already filters info messages, but be safe).
 		if p.Source == speaker {
 			return
@@ -531,7 +535,7 @@ func dispatchSchedDebug(
 ) {
 	msg := fmt.Sprintf("[schedule] %s", action)
 	if reason != "" {
-		msg = fmt.Sprintf("%s — %s", msg, reason)
+		msg = fmt.Sprintf("%s 鈥?%s", msg, reason)
 	}
 	logger.Debug("schedDebug: dispatching",
 		"npc", npc, "msg", msg)
@@ -590,7 +594,7 @@ type statusProfile struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// statusSnapshot is the body of the /status response — a single read-only
+// statusSnapshot is the body of the /status response 鈥?a single read-only
 // view of mcp's runtime state. Generated on demand; not cached.
 type statusSnapshot struct {
 	Version        string          `json:"version"`
