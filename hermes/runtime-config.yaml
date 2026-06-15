@@ -7,44 +7,9 @@
 # at startup, falling back to $WSL_IP and then 127.0.0.1.
 
 profiles:
-  - name: xiami
-    npc_filter: XiaMi
-    gateway_url: http://${SMARTNPC_HERMES_GATEWAY_HOST}:8642
-    conversation: xiami
-    model: hermes-agent
-    api_key_env: SMARTNPC_HERMES_KEY
-
   - name: abigail
     npc_filter: Abigail
     gateway_url: http://${SMARTNPC_HERMES_GATEWAY_HOST}:8643
     conversation: abigail
-    model: hermes-agent
-    api_key_env: SMARTNPC_HERMES_KEY
-
-  - name: haley
-    npc_filter: Haley
-    gateway_url: http://${SMARTNPC_HERMES_GATEWAY_HOST}:8644
-    conversation: haley
-    model: hermes-agent
-    api_key_env: SMARTNPC_HERMES_KEY
-
-  - name: harvey
-    npc_filter: Harvey
-    gateway_url: http://${SMARTNPC_HERMES_GATEWAY_HOST}:8645
-    conversation: harvey
-    model: hermes-agent
-    api_key_env: SMARTNPC_HERMES_KEY
-
-  - name: penny
-    npc_filter: Penny
-    gateway_url: http://${SMARTNPC_HERMES_GATEWAY_HOST}:8646
-    conversation: penny
-    model: hermes-agent
-    api_key_env: SMARTNPC_HERMES_KEY
-
-  - name: sebastian
-    npc_filter: Sebastian
-    gateway_url: http://${SMARTNPC_HERMES_GATEWAY_HOST}:8647
-    conversation: sebastian
     model: hermes-agent
     api_key_env: SMARTNPC_HERMES_KEY

@@ -12,6 +12,7 @@ smartnpc_strip_quotes() {
 
 smartnpc_registry_reset() {
   SMARTNPC_NPCS=()
+  SMARTNPC_ALL_NPCS=()
   declare -gA SMARTNPC_NPC_GAME_NAME=()
   declare -gA SMARTNPC_NPC_DISPLAY_NAME=()
   declare -gA SMARTNPC_NPC_GATEWAY_PORT=()
@@ -62,14 +63,15 @@ smartnpc_load_registry() {
   while IFS= read -r n; do
     n="${n%$'\r'}"
     [ -n "$n" ] || continue
+    SMARTNPC_ALL_NPCS+=("$n")
     if [ "${SMARTNPC_NPC_ENABLED[$n]:-true}" = "true" ]; then
       SMARTNPC_NPCS+=("$n")
     fi
   done < <(sed -n 's/^[[:space:]]*-[[:space:]]id:[[:space:]]*//p' "$registry" | tr -d '\r' | awk '{print $1}')
 
-  [ "${#SMARTNPC_NPCS[@]}" -gt 0 ] || { echo "registry has no enabled NPCs" >&2; return 1; }
+  [ "${#SMARTNPC_NPCS[@]}" -gt 0 ] || { echo "WARNING: registry has no enabled NPCs" >&2; }
 
-  for n in "${SMARTNPC_NPCS[@]}"; do
+  for n in "${SMARTNPC_ALL_NPCS[@]}"; do
     [ -n "${SMARTNPC_NPC_GAME_NAME[$n]:-}" ] || { echo "registry missing game_name for $n" >&2; return 1; }
     [ -n "${SMARTNPC_NPC_DISPLAY_NAME[$n]:-}" ] || { echo "registry missing display_name for $n" >&2; return 1; }
     [ -n "${SMARTNPC_NPC_GATEWAY_PORT[$n]:-}" ] || { echo "registry missing gateway_port for $n" >&2; return 1; }

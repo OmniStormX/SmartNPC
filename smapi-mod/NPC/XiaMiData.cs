@@ -57,7 +57,6 @@ namespace SmartNPC.Bridge
         {
             events.Content.AssetRequested += this.OnAssetRequested;
             events.GameLoop.SaveLoaded += this.OnSaveLoaded;
-            events.GameLoop.DayStarted += this.OnDayStarted;
         }
 
         // ── Spawn / Day logic ──────────────────────────────────────────
@@ -65,20 +64,6 @@ namespace SmartNPC.Bridge
         private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
         {
             this.SpawnNpc();
-        }
-
-        private void OnDayStarted(object? sender, DayStartedEventArgs e)
-        {
-            // Re-position at spawn point each morning (simple schedule).
-            if (_npc != null)
-            {
-                var farm = Game1.getFarm();
-                if (!farm.characters.Contains(_npc))
-                    farm.addCharacter(_npc);
-
-                _npc.Position = SpawnTile * 64f;
-                _npc.faceDirection(2); // face down
-            }
         }
 
         private void SpawnNpc()
@@ -111,7 +96,6 @@ namespace SmartNPC.Bridge
             _npc.IsWalkingTowardPlayer = false;
 
             farm.addCharacter(_npc);
-            AgentNpcRegistry.Register(NpcName);
 
             // Ensure the player has a friendship record for this custom NPC so
             // that friendship_get returns meaningful data and the console command

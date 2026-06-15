@@ -7,7 +7,7 @@ npcs:
     game_name: XiaMi
     display_name: 夏弥
     gateway_port: 8642
-    enabled: true
+    enabled: false
     kind: custom
     peer_a_name: Penny
     peer_a_display: 潘妮
@@ -29,7 +29,7 @@ npcs:
     game_name: Haley
     display_name: 黑利
     gateway_port: 8644
-    enabled: true
+    enabled: false
     kind: vanilla
     peer_a_name: Penny
     peer_a_display: 潘妮
@@ -40,7 +40,7 @@ npcs:
     game_name: Harvey
     display_name: 哈维
     gateway_port: 8645
-    enabled: true
+    enabled: false
     kind: vanilla
     peer_a_name: Penny
     peer_a_display: 潘妮
@@ -51,7 +51,7 @@ npcs:
     game_name: Penny
     display_name: 潘妮
     gateway_port: 8646
-    enabled: true
+    enabled: false
     kind: vanilla
     peer_a_name: Abigail
     peer_a_display: 阿比盖尔
@@ -62,7 +62,7 @@ npcs:
     game_name: Sebastian
     display_name: 塞巴斯蒂安
     gateway_port: 8647
-    enabled: true
+    enabled: false
     kind: vanilla
     peer_a_name: Abigail
     peer_a_display: 阿比盖尔

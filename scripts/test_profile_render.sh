@@ -109,7 +109,10 @@ load_registry() {
     fi
   done < <(sed -n 's/^[[:space:]]*-[[:space:]]id:[[:space:]]*//p' "$REGISTRY" | tr -d '\r' | awk '{print $1}')
 
-  [ "${#NPCS[@]}" -gt 0 ] || fail "registry has no enabled NPCs"
+  if [ "${#NPCS[@]}" -eq 0 ]; then
+    yellow "registry has no enabled NPCs — nothing to verify"
+    exit 0
+  fi
 
   for n in "${NPCS[@]}"; do
     [ -n "${NPC_NAME[$n]:-}" ] || fail "registry missing game_name for $n"

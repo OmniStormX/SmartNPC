@@ -50,7 +50,7 @@ tasks:
       # Windows: kill game process if running, then deploy
       - cmd: powershell -NoProfile -Command "Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 500"
         platforms: [windows]
-      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' | Out-Null; Copy-Item -Force -Path '{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.dll','{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.deps.json','{{.BUILD_OUT_WIN}}\manifest.json' -Destination '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}\'; Write-Host '[mod] installed to {{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' -ForegroundColor Green"
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' | Out-Null; Copy-Item -Force -Path '{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.dll','{{.BUILD_OUT_WIN}}\{{.MOD_NAME}}.deps.json','{{.BUILD_OUT_WIN}}\manifest.json' -Destination '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}\'; if (Test-Path '{{.BUILD_OUT_WIN}}\assets') { Copy-Item -Force -Recurse -Path '{{.BUILD_OUT_WIN}}\assets\*' -Destination '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}\assets\' }; Write-Host '[mod] installed to {{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}' -ForegroundColor Green"
         platforms: [windows]
       # Unblock DLL so WDAC / SmartScreen does not block SMAPI from loading it (0x800711C7).
       - cmd: powershell -NoProfile -Command "Get-ChildItem -Path '{{.SMARTNPC_GAME_PATH}}\Mods\{{.MOD_NAME}}\' -Recurse | Unblock-File; Write-Host '[mod] unblocked DLL' -ForegroundColor Green"
