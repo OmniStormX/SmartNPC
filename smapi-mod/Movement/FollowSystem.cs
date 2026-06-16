@@ -49,6 +49,7 @@ namespace SmartNPC.Bridge
         WithdrawItems,
         BreakResource,
         Fertilize,
+        PetAnimal,
     }
 
     /// <summary>Describes a single resource target (tree, stump, or large stone).</summary>
@@ -126,6 +127,12 @@ namespace SmartNPC.Bridge
         // ApproachAndSpeak: walk to player and emote.
         public string? ApproachReason { get; set; }
         public bool    ApproachPathed { get; set; }
+
+        // PetAnimal: walk to the current player pet (cat/dog/turtle) and pet it.
+        // Pet identity is captured at start time so a player switching maps mid-action
+        // doesn't desync the target. Path uses 4-neighbour adjacency like ApproachAndSpeak.
+        public string? PetAnimalName    { get; set; }
+        public bool    PetAnimalPathed  { get; set; }
 
         // PlantSeeds: walk to empty HoeDirt tiles and plant seeds from inventory.
         public Queue<Point>? PlantSeedQueue     { get; set; }
@@ -253,6 +260,24 @@ namespace SmartNPC.Bridge
             st.Mode = NpcBehaviorMode.Idle;
 
             // Cancel any in-flight pathing so the NPC actually stops.
+            NPC? npc = Game1.getCharacterFromName(npcName);
+            if (npc != null)
+            {
+                try { npc.Halt(); } catch { /* non-fatal */ }
+                if (npc.controller != null) npc.controller = null;
+            }
+        }
+
+        /// <summary>
+        /// Force this NPC's FollowSystem state back to Idle, cancelling any
+        /// in-flight pathing. Used by the action-queue dispatcher when a
+        /// preemptable mode (currently: Wander) yields to a queued
+        /// long-running action.
+        /// </summary>
+        public void Stop(string npcName)
+        {
+            if (!_states.TryGetValue(npcName, out var st)) return;
+            st.Mode = NpcBehaviorMode.Idle;
             NPC? npc = Game1.getCharacterFromName(npcName);
             if (npc != null)
             {
@@ -560,6 +585,36 @@ namespace SmartNPC.Bridge
                 LogLevel.Debug);
         }
 
+        // ── StartPetAnimal ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Walk NPC to the player's farm pet (cat/dog/turtle) and pet it.
+        /// Returns true if a pet was found and queued, false if there is no
+        /// pet or it is on a different map than the NPC. The handler should
+        /// surface the false case as MarkNothingToDo so the agent re-plans.
+        /// </summary>
+        public bool StartPetAnimal(string npcName, NPC npc)
+        {
+            // SDV 1.6: Game1.player.getPet() returns the active Pet
+            // (StardewValley.Characters.Pet — Cat/Dog/Turtle subclasses).
+            // Returns null when the player has no pet selected yet.
+            var pet = Game1.player?.getPet();
+            if (pet is null) return false;
+            if (npc.currentLocation is null || pet.currentLocation is null) return false;
+            if (npc.currentLocation != pet.currentLocation) return false;
+
+            var st = this.GetOrCreate(npcName);
+            st.PetAnimalName   = pet.Name;
+            st.PetAnimalPathed = false;
+            st.Mode            = NpcBehaviorMode.PetAnimal;
+            st.LastPathTick    = 0;
+
+            _log.Log(
+                $"[FollowSystem/PetAnimal] {npcName}: started, target={pet.Name} at {pet.Tile}",
+                LogLevel.Debug);
+            return true;
+        }
+
         // ── StartPlantSeeds ─────────────────────────────────────────────
 
         /// <summary>
@@ -853,6 +908,9 @@ namespace SmartNPC.Bridge
                             break;
                         case NpcBehaviorMode.Fertilize:
                             this.TickFertilize(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.PetAnimal:
+                            this.TickPetAnimal(npc, name, st);
                             break;
                     }
                 }
@@ -1773,6 +1831,124 @@ namespace SmartNPC.Bridge
             }
         }
 
+        // Walk NPC to the player's currently-active farm pet (cat/dog/turtle)
+        // and trigger the "was petted" interaction. Pet position is re-read
+        // every tick because pets walk around on their own.
+        private void TickPetAnimal(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            // Re-resolve pet on every tick — the player may switch pets,
+            // the pet may warp between maps (rare but possible), or the
+            // save may unload mid-action. Bail to Idle silently if any
+            // edge case triggers.
+            var pet = Game1.player?.getPet();
+            if (pet is null
+                || pet.currentLocation is null
+                || npc.currentLocation is null
+                || pet.currentLocation != npc.currentLocation)
+            {
+                _log.Log(
+                    $"[FollowSystem/PetAnimal] {npcName}: pet unavailable or not on same map → Idle",
+                    LogLevel.Debug);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            var location = npc.currentLocation;
+            Point petTile = pet.Tile.ToPoint();
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(petTile.X, petTile.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // ── Arrived ─────────────────────────────────────────────
+                // Face the pet (not the player) — we computed the
+                // adjacency tile from the pet position above. Use a
+                // direct delta calc instead of FacePlayerDir, which
+                // assumes a non-null Farmer.
+                int facing = 2; // default: face down
+                Vector2 d = new Vector2(petTile.X, petTile.Y) - npc.Tile;
+                if (Math.Abs(d.X) > Math.Abs(d.Y))
+                    facing = d.X > 0 ? 1 : 3;
+                else
+                    facing = d.Y > 0 ? 2 : 0;
+                npc.faceDirection(facing);
+
+                // SDV 1.6 doesn't expose a clean public method to "have an
+                // NPC pet the pet" — `Pet.checkAction(...)` is the player
+                // interaction entry and routes through tile/farmer state
+                // we don't have. Direct field writes are simpler and
+                // capture the gameplay intent: bump friendship a small
+                // amount and play a heart emote on both sides. Idempotent
+                // within a tick; safe to call multiple times per day.
+                try
+                {
+                    pet.friendshipTowardFarmer.Value = Math.Min(
+                        pet.friendshipTowardFarmer.Value + 6,
+                        1000);
+                    pet.doEmote(20); // pet shows a heart back
+                }
+                catch (Exception ex)
+                {
+                    _log.Log(
+                        $"[FollowSystem/PetAnimal] {npcName}: pet interaction failed: {ex.Message}",
+                        LogLevel.Warn);
+                }
+
+                npc.showTextAboveHead($"[摸摸 {pet.Name}]");
+                npc.doEmote(20); // NPC heart emote
+
+                _log.Log(
+                    $"[FollowSystem/PetAnimal] {npcName}: petted {pet.Name} at " +
+                    $"({petTile.X},{petTile.Y}) → Idle",
+                    LogLevel.Info);
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            // ── Pathing phase ──────────────────────────────────────────
+            // Pets move every few seconds, so we replan on the same cadence
+            // as ApproachAndSpeak — re-target the live pet tile each replan.
+            if (!st.PetAnimalPathed || npc.controller == null || this.ShouldReplan(st))
+            {
+                Point[] candidates = {
+                    new(petTile.X,     petTile.Y + 1),
+                    new(petTile.X,     petTile.Y - 1),
+                    new(petTile.X + 1, petTile.Y),
+                    new(petTile.X - 1, petTile.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.PetAnimalPathed = ok;
+                st.LastPathTick    = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
+                _log.Log(
+                    $"[FollowSystem/PetAnimal] {npcName}: pathing to pet ({petTile.X},{petTile.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/PetAnimal] {npcName}: giving up after {st.PathFailCount} failures → Idle",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    st.Mode = NpcBehaviorMode.Idle;
+                }
+            }
+        }
+
         private void TickPlantSeeds(NPC npc, string npcName, NpcBehaviorState st)
         {
             var location = npc.currentLocation;
@@ -1916,9 +2092,17 @@ namespace SmartNPC.Bridge
             var targetV2 = new Vector2(target.X, target.Y);
 
             // Check if HoeDirt still has a crop that needs watering.
+            // Authoritative gate: state.Value != HoeDirt.watered (constant=1).
+            // We don't rely on dirt.needsWatering() alone — its semantics
+            // shifted between SDV minor versions; reading the state field
+            // keeps observe / select / execute consistent with what
+            // WaterCropsHandler scans for.
             location.terrainFeatures.TryGetValue(targetV2, out var tf);
             HoeDirt? dirt = tf as HoeDirt;
-            bool needsWater = dirt != null && dirt.crop != null && dirt.needsWatering();
+            bool needsWater = dirt != null
+                              && dirt.crop != null
+                              && !dirt.crop.dead.Value
+                              && dirt.state.Value != HoeDirt.watered;
 
             float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
             bool pathDone = npc.controller == null
@@ -1935,7 +2119,19 @@ namespace SmartNPC.Bridge
                         // No native watering animation on this NPC sprite —
                         // use a text bubble as visual feedback instead.
                         npc.showTextAboveHead("这是一个浇水动画");
-                        dirt!.state.Value = 1; // 1 = watered
+                        dirt!.state.Value = HoeDirt.watered;
+                        // Verify the write actually stuck. If we still see
+                        // state != watered after the assignment, something
+                        // else (a paddy-crop hook, an auto-watered patch,
+                        // a NetField proxy) is intercepting; log it loud
+                        // so we can spot it in SMAPI traces.
+                        if (dirt.state.Value != HoeDirt.watered)
+                        {
+                            _log.Log(
+                                $"[FollowSystem/WaterCrops] {npcName}: state.Value write at " +
+                                $"({target.X},{target.Y}) DID NOT STICK (still {dirt.state.Value})",
+                                LogLevel.Warn);
+                        }
                         st.WaterCropCount++;
 
                         _log.Log(
@@ -2030,13 +2226,15 @@ namespace SmartNPC.Bridge
             Point target = st.HarvestTarget;
             var targetV2 = new Vector2(target.X, target.Y);
 
-            // Verify the crop is still harvestable.
+            // Verify the crop is still harvestable. Mirrors the gate
+            // HarvestCropsHandler.IsCropHarvestable uses for target
+            // selection — phase==final + fullyGrown + !dead. Multi-harvest
+            // crops in their regrow window have phase==final but
+            // fullyGrown=false, so this correctly skips them.
             location.terrainFeatures.TryGetValue(targetV2, out var tf);
             HoeDirt? dirt = tf as HoeDirt;
             bool canHarvest = dirt != null
-                           && dirt.crop != null
-                           && !dirt.crop.dead.Value
-                           && dirt.crop.currentPhase.Value >= dirt.crop.phaseDays.Count - 1;
+                           && HarvestCropsHandler.IsCropHarvestable(dirt.crop);
 
             float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
             bool pathDone = npc.controller == null
@@ -2130,11 +2328,23 @@ namespace SmartNPC.Bridge
                                     }
                                 }
                             }
-                            // Clear dead crop from HoeDirt if harvest() left it behind.
-                            // Single-harvest crops: harvest() sets dead=true + soil.crop=null.
-                            // Multi-harvest crops: harvest() resets regrow state, crop alive.
-                            // Only null out if the crop is actually dead.
-                            if (dirt.crop != null && dirt.crop.dead.Value)
+                            // Clean up the HoeDirt's crop reference after a successful harvest.
+                            //   Single-harvest crops (RegrowDays <= 0, e.g. parsnip, potato,
+                            //     pumpkin): SDV's Crop.harvest() returns true but does NOT
+                            //     null the soil's crop or set dead — the player's harvest
+                            //     path is responsible for `soil.crop = null`. Without this
+                            //     we leave a stale "ready to harvest" crop on the tile,
+                            //     which is why pumpkins / parsnips visually persist after
+                            //     the NPC reaps them.
+                            //   Multi-harvest crops (RegrowDays > 0, e.g. blueberry, coffee,
+                            //     hops): harvest() resets the regrow state in place; keep
+                            //     crop reference so it can grow back.
+                            //   Dead crops: harvest() returned false above; we won't reach here.
+                            //   GetData() returns null for unknown ids — treat as single-harvest.
+                            var cropData = dirt.crop?.GetData();
+                            bool singleHarvest = cropData == null || cropData.RegrowDays <= 0;
+                            if (dirt.crop != null
+                                && (dirt.crop.dead.Value || singleHarvest))
                                 dirt.crop = null;
                             npc.doEmote(20);
                             _log.Log(
@@ -2142,13 +2352,16 @@ namespace SmartNPC.Bridge
                                 $"total={st.HarvestedCount}",
                                 LogLevel.Debug);
 
-                            _ = _broadcastEvent?.Invoke("crop_harvested", new
-                            {
-                                npc      = npcName,
-                                tile_x   = target.X,
-                                tile_y   = target.Y,
-                                location = location.Name ?? "",
-                            });
+                            // Note: we deliberately do NOT broadcast a
+                            // `crop_harvested` ws event here. The Agent is
+                            // the one who issued npc_harvest_crops; firing a
+                            // generic event back per tile re-enters the
+                            // Agent every ~1 s, pollutes its turn history
+                            // with anonymous "Game event \"crop_harvested\"
+                            // occurred." messages, and observably caused
+                            // the model to confuse player chat with its own
+                            // ongoing harvest. The harvest tool's response
+                            // already carries the per-call totals.
                         }
                         else
                         {
@@ -2526,6 +2739,24 @@ namespace SmartNPC.Bridge
 
         private bool TryStartPath(NPC npc, GameLocation location, Point endPoint)
         {
+            // Reject endpoints occupied by a placeable Object (chest, machine,
+            // furniture, fence, etc.). PathFindController happily plots a
+            // path INTO such tiles; the NPC's tick step then collides with
+            // the object's bounding box, which the engine renders as a
+            // "kick" animation. The agent never asked to interact with that
+            // object — it's purely an artifact of standing-room selection.
+            // Skip and let the caller try the next candidate tile.
+            if (location?.Objects != null
+                && location.Objects.TryGetValue(new Vector2(endPoint.X, endPoint.Y), out var blocker)
+                && blocker != null
+                && !blocker.isPassable())
+            {
+                _log.Log(
+                    $"[FollowSystem] path {npc.Name}→({endPoint.X},{endPoint.Y}) blocked by {blocker.Name}; skipping",
+                    LogLevel.Trace);
+                return false;
+            }
+
             try
             {
                 npc.controller = new PathFindController(

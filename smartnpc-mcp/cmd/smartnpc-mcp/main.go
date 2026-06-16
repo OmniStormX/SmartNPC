@@ -384,39 +384,50 @@ func makeRouter(
 			suppressTickRelayUntil = time.Now().Add(5 * time.Second)
 		}
 
-		// 鈹€鈹€ game_time_tick: check scheduler and fire triggers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+		// ── game_time_tick: check scheduler and fire triggers ─────────
 		if name == bridge.EventGameTimeTick && sched != nil {
 
 			var tick struct {
-				Hour int `json:"hour"`
+				Hour    int `json:"hour"`
+				Minute  int `json:"minute"`
+				Minutes int `json:"minutes"`
 			}
 			if err := json.Unmarshal(data, &tick); err == nil && tick.Hour >= 6 {
-				fired := sched.Tick(tick.Hour)
+				// Newer mod payloads send `minutes` (hour*60+minute, total
+				// minutes from midnight). Older callers / tests may only
+				// send `hour`, so fall back to hour*60 to keep them working.
+				gameMinutes := tick.Minutes
+				if gameMinutes == 0 {
+					gameMinutes = tick.Hour*60 + tick.Minute
+				}
+				fired := sched.Tick(gameMinutes)
 				// When schedule entries fire, suppress the game_time_tick
 				// relay so the LLM doesn't receive two concurrent turns
-				// (schedule_trigger + tick) for the same hour.
+				// (schedule_trigger + tick) for the same instant.
 				if len(fired) > 0 {
 					suppressTickRelayUntil = time.Now().Add(5 * time.Second)
 				}
 				// Persist a human-readable record of what fired this tick to
 				// <logDir>/mcp/schedule_triggers.log. No-op when nothing
-				// fired. Console output stays out of the way 鈥?slog already
+				// fired. Console output stays out of the way — slog already
 				// emits a structured "scheduler: firing schedule_trigger"
 				// line below for each entry.
 				tools.LogScheduleTriggers(tick.Hour, fired)
 				for _, entry := range fired {
 					triggerData, err := json.Marshal(map[string]any{
-						"npc":       entry.NPC,
-						"game_hour": entry.GameHour,
-						"action":    entry.Action,
-						"reason":    entry.Reason,
+						"npc":          entry.NPC,
+						"game_hour":    entry.GameHour,
+						"game_minute":  entry.GameMinute,
+						"game_minutes": entry.GameMinutes,
+						"action":       entry.Action,
+						"reason":       entry.Reason,
 					})
 					if err != nil {
 						logger.Warn("scheduler: marshal trigger failed", "npc", entry.NPC, "err", err)
 						continue
 					}
 					logger.Info("scheduler: firing schedule_trigger",
-						"npc", entry.NPC, "hour", entry.GameHour, "action", entry.Action)
+						"npc", entry.NPC, "hour", entry.GameHour, "minute", entry.GameMinute, "action", entry.Action)
 					// Forward to MCP clients for observability.
 					forward(ctx, bridge.EventScheduleTrigger, triggerData)
 

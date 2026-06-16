@@ -162,13 +162,13 @@ func FormatForHermes(name string, data json.RawMessage) string {
 			// Falls back to bare hour format for older mod payloads.
 			if p.Season != "" && p.Day > 0 {
 				return fmt.Sprintf(
-					"%s %s %d (Y%d) — %d:00. "+
+					"%s %s %d (Y%d) — %02d:00. "+
 						"This is a time-of-day tick; it is NOT a new day. "+
 						"If you already called npc_plan_day today, do NOT plan again — "+
 						"use npc_get_schedule if you need to check.",
 					capitalize(p.Season), p.DayOfWeek, p.Day, p.Year, p.Hour)
 			}
-			return fmt.Sprintf("The time is now %d:00 (game hour %d). "+
+			return fmt.Sprintf("The time is now %02d:00 (game hour %d). "+
 				"If you already planned your day (npc_plan_day), do NOT plan again — "+
 				"check with npc_get_schedule if unsure.", p.Hour, p.Hour)
 		}
@@ -180,7 +180,7 @@ func FormatForHermes(name string, data json.RawMessage) string {
 				hint = fmt.Sprintf(" (reason: %s)", p.Reason)
 			}
 			return fmt.Sprintf(
-				"[schedule_trigger] It is now %d:00 — your planned activity is: `%s`%s.\n\n"+
+				"[schedule_trigger] It is now %02d:%02d — your planned activity is: `%s`%s.\n\n"+
 					"If unsure of the procedure, call `skill_view` to load "+
 					"`smartnpc-schedule`.\n\n"+
 					"Call `%s` NOW with concrete arguments you choose based on live "+
@@ -191,7 +191,7 @@ func FormatForHermes(name string, data json.RawMessage) string {
 					"player is mid-conversation, you're not where you'd need to "+
 					"be) you may adapt the parameters, swap to a related tool, "+
 					"or skip — but briefly note why in your reasoning.",
-				p.GameHour, p.Action, hint, p.Action)
+				p.GameHour, p.GameMinute, p.Action, hint, p.Action)
 		}
 	case bridge.EventDebugProactiveTrigger:
 		var p DebugProactiveTrigger
@@ -211,5 +211,12 @@ func FormatForHermes(name string, data json.RawMessage) string {
 		}
 	}
 
-	return fmt.Sprintf("Game event %q occurred.", name)
+	// Unknown events are NOT forwarded to the agent: a generic
+	// "Game event \"X\" occurred." line carries no actionable context, and
+	// experimentally caused the model to project the event onto the player
+	// (e.g. interpreting NPC-internal `crop_harvested` echoes as "the
+	// player is harvesting"). Returning empty signals the relay to skip.
+	// Add a typed case above when a new event genuinely belongs in the
+	// agent's turn history.
+	return ""
 }

@@ -16,11 +16,13 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_approach_and_speak";
+        protected override bool RefuseWhileBusy => true;
 
         public ApproachAndSpeakHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
             : base(log, showBubble)
         {
             _follow = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>

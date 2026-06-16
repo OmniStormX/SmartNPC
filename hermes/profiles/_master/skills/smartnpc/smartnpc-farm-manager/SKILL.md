@@ -151,8 +151,9 @@ Pick up to 4 tasks based on the macro picture. Priority order:
 |----------|---------|--------|-----------|
 | 1 | `mature_crops` count > 0 | Harvest all mature crops in zone | Abigail |
 | 2 | `unwatered_crops` > 0 | Water dry crops in zone | Harvey |
-| 3 | `empty_hoedirt` > 0 AND seeds available | Plant seeds on empty tilled tiles | Penny |
-| 4 | Zone gaps / weeds visible | Clear debris in zone | Abigail |
+| 3 | `empty_hoedirt` > 0 | Plant seeds on empty tilled tiles. **Free-plant mode applies** — `npc_plant_seeds` runs even when the worker has no matching seeds in their backpack, so do NOT gate this on inventory. | Penny |
+| 4 | empty diggable ground inside the zone | Till new soil to extend the field | Penny |
+| 5 | Zone gaps / weeds visible | Clear debris in zone | Abigail |
 
 If mature crop count ≥ 5, split harvest into 2 sub-tasks (e.g. "north half"
 and "south half" of the zone) so Abigail doesn't get overwhelmed.
@@ -161,10 +162,9 @@ If `empty_hoedirt` = 0 and `mature_crops` = 0 and `unwatered_crops` = 0,
 the zone is in good shape — only dispatch the Survey task below.
 
 Always dispatch one Survey task:
-> "Survey: npc_inspect_object radius=15 what=crops. Macro survey of active
-> farm zone. Look for: crops nearing maturity (2+ days away), any missed
-> weeds, irrigation gaps, soil that should be re-tilled. Reply with a
-> structured summary."
+> "Survey: npc_inspect_object radius=15 what=farm_actions. Macro survey of
+> active farm zone. Reply with the bucket counts (harvest / water / clear /
+> till / forage / plant / break) and any gap or anomaly worth noting."
 
 ## P2.5 Dispatch tasks
 

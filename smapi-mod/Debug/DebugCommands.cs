@@ -641,14 +641,17 @@ namespace SmartNPC.Bridge
             // dispatch, or schedule submitted mid-day) is picked up
             // immediately instead of having to wait for the next natural
             // integer-hour rollover.
-            int currentHour = after / 100;
+            int currentHour    = after / 100;
+            int currentMinutes = currentHour * 60 + (after % 100);
             try
             {
                 _ = ws.BroadcastEvent("game_time_tick", new
                 {
-                    hour = currentHour,
-                    time = after,
-                    forced = true,
+                    hour    = currentHour,
+                    minute  = after % 100,
+                    minutes = currentMinutes,
+                    time    = after,
+                    forced  = true,
                 });
             }
             catch (Exception ex)

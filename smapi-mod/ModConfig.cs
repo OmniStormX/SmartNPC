@@ -51,5 +51,20 @@ namespace SmartNPC.Bridge
         /// Default <c>true</c>.
         /// </summary>
         public bool DebugShowBubble { get; set; } = true;
+
+        /// <summary>
+        /// When <c>true</c>, draw axis-aligned debug rectangles in the world
+        /// to visualize coarse-grained tool decisions:
+        ///   - red box   : the area an <c>npc_inspect_object</c> call
+        ///                 (farm_actions mode) just scanned. Auto-fades a
+        ///                 few seconds after the observation finishes.
+        ///   - yellow box: the bbox a behavior tool (harvest/water/clear/
+        ///                 till/forage) is currently acting in. Cleared
+        ///                 when the NPC's FollowSystem returns to Idle.
+        /// Only the local player's current map is rendered; off-map NPCs
+        /// do not draw. Default <c>false</c> to avoid surprising players
+        /// who didn't opt in.
+        /// </summary>
+        public bool DebugShowBBoxOverlay { get; set; } = false;
     }
 }

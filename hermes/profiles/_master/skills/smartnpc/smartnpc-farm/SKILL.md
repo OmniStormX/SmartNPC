@@ -1,7 +1,7 @@
 ---
 name: smartnpc-farm
-description: (DEPRECATED) Legacy farm round skill. {{NPC_NAME}} should prefer smartnpc-farm-maintenance or smartnpc-farm-harvest for richer example-driven workflows. This skill remain as fallback for existing schedule entries with action="farm_round".
-version: 0.1.0-deprecated
+description: (DEPRECATED) Legacy farm round skill. {{NPC_NAME}} should prefer smartnpc-farm-maintenance or smartnpc-farm-harvest for richer example-driven workflows. This skill remains as a thin shim for existing schedule entries with action="farm_round".
+version: 0.2.0-deprecated
 author: SmartNPC Project
 license: MIT
 metadata:
@@ -15,53 +15,34 @@ metadata:
 > ⚠️ **This skill is deprecated.** Use `smartnpc-farm-maintenance` for
 > maintenance work (clear→till→plant→water→fertilize) and
 > `smartnpc-farm-harvest` for harvest work (harvest→deposit→replant).
-> These new skills are example-driven: they provide flexible patterns, not
-> fixed priority lists.
+> These new skills are example-driven and adapt to live game state.
 >
-> This skill remains as a fallback for existing `schedule_trigger` entries
-> with `action="farm_round"`. When this skill is triggered, prefer to
-> delegate to the new skills instead of following the old priority list.
+> This skill remains only as a delegate. Older priority lists were
+> removed because they implicitly demoted till/plant/fertilize to low
+> priority and added incorrect "seeds in backpack" preconditions —
+> both factors that biased the agent away from soil expansion. Do
+> NOT bring back a priority table here.
 
-Triggered when a `schedule_trigger` fires with `action="farm_round"`. This is
-the LEGACY path — new schedules should use `action="farm_maintenance"` or
-`action="farm_harvest"`.
+Triggered when a `schedule_trigger` fires with `action="farm_round"`.
 
-## Quick delegate
+## What to do
 
-When this skill fires, do ONE of the following based on a quick observation:
+1. Call `npc_inspect_object(radius=12, what="farm_actions")`.
+2. Read the response. Identify the bucket with the highest non-zero count
+   that fits the situation:
 
-1. Call `npc_inspect_object(radius=10, what="crops")`.
-2. Decide:
-   - **Debris, empty land, or dry crops dominate** → load `smartnpc-farm-maintenance` and follow its decision flow.
-   - **Mature crops dominate** → load `smartnpc-farm-harvest` and follow its decision flow.
-   - **Nothing to do** → `npc_show_text_bubble` brief summary, write memory, stop.
+   | Bucket non-zero | Delegate to |
+   |---|---|
+   | `harvest.count > 0` | Load `smartnpc-farm-harvest` and follow it from there. |
+   | `till.count > 0` OR `plant.count > 0` OR `clear.count > 0` OR `water.count > 0` | Load `smartnpc-farm-maintenance` and follow it from there. |
+   | All buckets 0 | One short `npc_show_text_bubble` ("[今天没什么要弄的]"), write `farm_round: <date> nothing` to memory, stop. |
 
-## Legacy priority flow (only if skill_view of new skills fails)
-
-### 1. Weather gate
-Call `game_get_weather`. If rainy or stormy, stop silently.
-
-### 2. Inspect
-Call `npc_inspect_object` with your NPC name, `radius=15`, `what="crops"`.
-
-### 3. Decide actions (max 3, pick by priority)
-
-| Priority | Condition | Action |
-|----------|-----------|--------|
-| 1 | `mature_crops` is non-empty | `npc_harvest_crops` then `npc_deposit_items` |
-| 2 | `unwatered_crops > 0` | `npc_water_crops` |
-| 3 | ground has debris/weeds nearby | `npc_clear_debris` |
-| 4 | seeds in backpack AND `empty_hoedirt > 0` | `npc_plant_seeds` |
-| 5 | `empty_hoedirt > 0` AND season-appropriate | `npc_till_soil` |
-| 6 | fertilizer in backpack AND `empty_hoedirt > 0` | `npc_fertilize` |
-
-### 4. Wrap up
-- `npc_show_text_bubble` with brief summary.
-- Write `farm_round: last_date=<season><day> round=<N>` to memory.
-- Stop.
+3. Do NOT execute farm tools directly from this skill. Always delegate.
 
 ## Guardrails
-- Max 4 tool calls per round.
-- Never call `npc_plan_day` from this skill.
-- On rainy/stormy days, stop immediately.
-- Do not touch other NPCs' schedules or bags.
+
+- Do not call `chat_say` — this is a schedule trigger, not a player turn.
+- Do not call `npc_plan_day` from this skill.
+- On rainy/stormy days, stop immediately and write a skip-reason memory
+  line. The new skills handle weather themselves; only the wholesale
+  skip belongs here.

@@ -41,7 +41,7 @@ type NpcWanderOutput struct {
 type NpcClearDebrisInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
 	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius to scan (default 5, max 30); ignored when bbox is set"`
-	MaxCount int    `json:"max_count,omitempty" jsonschema:"max items to clear (default 3, max 10)"`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"radius-mode safety cap (default 3). IGNORED in bbox mode — the bbox itself is the area cap."`
 	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
 	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
 	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
@@ -60,7 +60,7 @@ type NpcClearDebrisOutput struct {
 type NpcWaterCropsInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
 	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 30); ignored when bbox is set"`
-	MaxCount int    `json:"max_count,omitempty" jsonschema:"max crops to water (default 5, max 20)"`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"radius-mode safety cap (default 5). IGNORED in bbox mode — the bbox itself is the area cap."`
 	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
 	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
 	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
@@ -79,7 +79,7 @@ type NpcWaterCropsOutput struct {
 type NpcHarvestCropsInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
 	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 30); ignored when bbox is set"`
-	MaxCount int    `json:"max_count,omitempty" jsonschema:"max crops to harvest (default 5, max 10)"`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"radius-mode safety cap (default 5). IGNORED in bbox mode — the bbox itself is the area cap."`
 	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
 	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
 	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
@@ -131,7 +131,7 @@ type NpcDeliverItemsOutput struct {
 type NpcForageCollectInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
 	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 8, max 30); ignored when bbox is set"`
-	MaxCount int    `json:"max_count,omitempty" jsonschema:"max items to collect (default 3, max 10)"`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"radius-mode safety cap (default 3). IGNORED in bbox mode — the bbox itself is the area cap."`
 	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
 	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
 	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
@@ -148,15 +148,14 @@ type NpcForageCollectOutput struct {
 // ── npc_pet_animal ────────────────────────────────────────────────
 
 type NpcPetAnimalInput struct {
-	NPC        string `json:"npc"                   jsonschema:"NPC internal name"`
-	AnimalName string `json:"animal_name,omitempty" jsonschema:"specific animal name (default: nearest un-petted)"`
+	NPC string `json:"npc" jsonschema:"NPC internal name"`
 }
 
 type NpcPetAnimalOutput struct {
-	OK         bool   `json:"ok"                    jsonschema:"true if accepted"`
-	NPC        string `json:"npc"                   jsonschema:"echo"`
-	AnimalName string `json:"animal_name,omitempty" jsonschema:"animal actually petted"`
-	Message    string `json:"message,omitempty"     jsonschema:"status"`
+	OK      bool   `json:"ok"                jsonschema:"true if accepted"`
+	NPC     string `json:"npc"               jsonschema:"echo"`
+	PetName string `json:"pet_name,omitempty" jsonschema:"name of the pet that was petted"`
+	Message string `json:"message,omitempty" jsonschema:"status"`
 }
 
 // ── npc_plant_seeds ───────────────────────────────────────────────
@@ -164,8 +163,12 @@ type NpcPetAnimalOutput struct {
 type NpcPlantSeedsInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
 	SeedID   string `json:"seed_id"           jsonschema:"SDV qualified seed item id, e.g. \"(O)472\" for parsnip seeds"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 10)"`
-	MaxCount int    `json:"max_count,omitempty" jsonschema:"max seeds to plant (default 5, max 10)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 5, max 30); ignored when bbox is set"`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"radius-mode safety cap (default 5). IGNORED in bbox mode — the bbox itself is the area cap."`
+	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcPlantSeedsOutput struct {
@@ -179,19 +182,29 @@ type NpcPlantSeedsOutput struct {
 
 type NpcTillSoilInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 3, max 30); ignored when bbox is set"`
-	MaxCount int    `json:"max_count,omitempty" jsonschema:"max tiles to till (default 5, max 15)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius (default 3, max 30); ignored when bbox is set. Used as the search window inside which the planner places the patch."`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"DEPRECATED — patch size now drives total tile count via patch_w*patch_h. Ignored."`
 	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
 	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
 	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
 	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
+	PatchW   int    `json:"patch_w,omitempty" jsonschema:"width of the regular rectangular patch to till (default 10, max 12). The mod auto-tries (W,H) and (H,W) orientations and picks the better fit."`
+	PatchH   int    `json:"patch_h,omitempty" jsonschema:"height of the regular rectangular patch to till (default 6, max 12)"`
 }
 
 type NpcTillSoilOutput struct {
-	OK      bool   `json:"ok"                jsonschema:"true if accepted"`
-	NPC     string `json:"npc"               jsonschema:"echo"`
-	Tilled  int    `json:"tilled,omitempty"  jsonschema:"tiles tilled"`
-	Message string `json:"message,omitempty" jsonschema:"status"`
+	OK                 bool   `json:"ok"                   jsonschema:"true if accepted"`
+	NPC                string `json:"npc"                  jsonschema:"echo"`
+	Tilled             int    `json:"tilled,omitempty"     jsonschema:"tile count actually queued (= patch_w * patch_h on success)"`
+	NothingToDo        bool   `json:"nothing_to_do,omitempty" jsonschema:"true when no W×H rectangle fits adjacent to existing farmland in the search area; agent should re-evaluate this turn"`
+	Reason             string `json:"reason,omitempty"     jsonschema:"why nothing_to_do is set (when applicable)"`
+	PatchX1            int    `json:"patch_x1,omitempty"   jsonschema:"chosen patch left edge (inclusive)"`
+	PatchY1            int    `json:"patch_y1,omitempty"   jsonschema:"chosen patch top edge (inclusive)"`
+	PatchX2            int    `json:"patch_x2,omitempty"   jsonschema:"chosen patch right edge (inclusive)"`
+	PatchY2            int    `json:"patch_y2,omitempty"   jsonschema:"chosen patch bottom edge (inclusive)"`
+	AdjacentToExisting bool   `json:"adjacent_to_existing,omitempty" jsonschema:"true when the patch shares at least one edge tile with existing HoeDirt"`
+	AdjacencyEdge      int    `json:"adjacency_edge,omitempty" jsonschema:"# perimeter tiles touching existing HoeDirt (0..2*(W+H))"`
+	Message            string `json:"message,omitempty"    jsonschema:"status"`
 }
 
 // ── npc_inspect_object ────────────────────────────────────────────
@@ -321,8 +334,12 @@ type NpcTransferItemOutput struct {
 type NpcFertilizeInput struct {
 	NPC          string `json:"npc"                jsonschema:"NPC internal name"`
 	FertilizerID string `json:"fertilizer_id"      jsonschema:"SDV qualified fertilizer item id, e.g. \"(O)368\" for basic fertilizer"`
-	Radius       int    `json:"radius,omitempty"   jsonschema:"tile radius (default 5, max 10)"`
-	MaxCount     int    `json:"max_count,omitempty" jsonschema:"max tiles to fertilize (default 5, max 15)"`
+	Radius       int    `json:"radius,omitempty"   jsonschema:"tile radius (default 5, max 30); ignored when bbox is set"`
+	MaxCount     int    `json:"max_count,omitempty" jsonschema:"radius-mode safety cap (default 5). IGNORED in bbox mode — the bbox itself is the area cap."`
+	X1           int    `json:"x1,omitempty"       jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1           int    `json:"y1,omitempty"       jsonschema:"bbox top edge (inclusive)"`
+	X2           int    `json:"x2,omitempty"       jsonschema:"bbox right edge (inclusive)"`
+	Y2           int    `json:"y2,omitempty"       jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcFertilizeOutput struct {
@@ -337,9 +354,13 @@ type NpcFertilizeOutput struct {
 
 type NpcBreakResourceInput struct {
 	NPC      string `json:"npc"               jsonschema:"NPC internal name"`
-	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius to scan (default 6, max 15)"`
-	MaxCount int    `json:"max_count,omitempty" jsonschema:"max resources to break (default 3, max 10)"`
+	Radius   int    `json:"radius,omitempty"  jsonschema:"tile radius to scan (default 6, max 30); ignored when bbox is set"`
+	MaxCount int    `json:"max_count,omitempty" jsonschema:"radius-mode safety cap (default 3). IGNORED in bbox mode — the bbox itself is the area cap."`
 	What     string `json:"what,omitempty"    jsonschema:"filter: trees, stones, or all (default: all)"`
+	X1       int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle instead of radius"`
+	Y1       int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2       int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2       int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
 }
 
 type NpcBreakResourceOutput struct {
@@ -422,7 +443,9 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
 			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
 			"falls back to a circular scan around the NPC of radius (default 5, max 30).\n\n" +
-			"Constraints: max_count max 10. Only works on Farm-type maps.\n\n" +
+			"Constraints: max_count is a radius-mode safety cap only — in bbox " +
+				"mode the rectangle itself bounds the work, so leave max_count unset. " +
+				"Only works on Farm-type maps.\n\n" +
 			"Side-effect: WRITE (removes objects from the world).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcClearDebrisInput) (*mcp.CallToolResult, NpcClearDebrisOutput, error) {
 		if in.NPC == "" {
@@ -440,7 +463,8 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
 			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
 			"falls back to a circular scan around the NPC of radius (default 5, max 30).\n\n" +
-			"Constraints: max_count max 20.\n\n" +
+			"Constraints: max_count is a radius-mode safety cap only — in bbox " +
+				"mode the rectangle itself bounds the work, so leave max_count unset.\n\n" +
 			"Side-effect: WRITE (modifies HoeDirt state).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcWaterCropsInput) (*mcp.CallToolResult, NpcWaterCropsOutput, error) {
 		if in.NPC == "" {
@@ -458,7 +482,9 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
 			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
 			"falls back to a circular scan around the NPC of radius (default 5, max 30).\n\n" +
-			"Constraints: max_count max 10. Harvested items go to NPC backpack; " +
+			"Constraints: max_count is a radius-mode safety cap only — in bbox " +
+				"mode the rectangle itself bounds the work, so leave max_count unset. " +
+				"Harvested items go to NPC backpack; " +
 			"use npc_deposit_items or npc_deliver_items to transfer.\n\n" +
 			"Side-effect: WRITE (removes crops, adds to NPC inventory).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcHarvestCropsInput) (*mcp.CallToolResult, NpcHarvestCropsOutput, error) {
@@ -512,7 +538,8 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
 			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
 			"falls back to a circular scan around the NPC of radius (default 8, max 30).\n\n" +
-			"Constraints: max_count max 10.\n\n" +
+			"Constraints: max_count is a radius-mode safety cap only — in bbox " +
+				"mode the rectangle itself bounds the work, so leave max_count unset.\n\n" +
 			"Side-effect: WRITE (removes spawn objects, adds to NPC backpack).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcForageCollectInput) (*mcp.CallToolResult, NpcForageCollectOutput, error) {
 		if in.NPC == "" {
@@ -525,9 +552,25 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_pet_animal",
-		Description: "NPC pets a farm animal (increases friendship, sets wasPet).\n\n" +
-			"When to call: morning animal care routine, or NPC wants to interact with animals.\n\n" +
-			"Side-effect: WRITE (modifies animal friendship state).",
+		Description: "NPC walks to the player's farm pet (cat / dog / turtle) " +
+			"and pets it.\n\n" +
+			"Target: the player's currently-active pet, resolved automatically " +
+			"from `Game1.player.getPet()` — there is no `animal_name` argument. " +
+			"The mod handles which pet to approach so the agent doesn't need to " +
+			"know its name.\n\n" +
+			"Scope: pets only (cat / dog / turtle). Ranch animals (cows, " +
+			"chickens, etc.) are NOT covered by this tool — the engine's " +
+			"vanilla NPC paths handle ranch animals automatically when the " +
+			"NPC walks past them.\n\n" +
+			"When to call: typical morning / evening warm-up, or when the NPC " +
+			"wants a quick affectionate beat between work blocks. Friendship " +
+			"toward the player ticks up a small amount per call; calling " +
+			"multiple times the same day is safe but only the first call " +
+			"matters for daily friendship.\n\n" +
+			"No-op behavior: if the player has no pet, or the pet is not on " +
+			"this NPC's current map, the tool returns `nothing_to_do=true` " +
+			"and the agent should pick a different action this turn.\n\n" +
+			"Side-effect: WRITE (walks the NPC; bumps pet friendship; emote).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcPetAnimalInput) (*mcp.CallToolResult, NpcPetAnimalOutput, error) {
 		if in.NPC == "" {
 			return nil, NpcPetAnimalOutput{}, errNpcRequired
@@ -539,13 +582,18 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_plant_seeds",
-		Description: "NPC plants seeds on empty tilled soil within radius.\n\n" +
+		Description: "NPC plants seeds on empty tilled soil (HoeDirt) within an area.\n\n" +
 			"When to call: player asks NPC to plant, or NPC sees empty HoeDirt.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions on the " +
+			"`plant` group. Otherwise falls back to a circular scan around the NPC of " +
+			"radius (default 5, max 30).\n\n" +
 			"Seed consumption: if the NPC has seeds of the given seed_id in their backpack, " +
 			"one seed is consumed per tile planted. If the backpack has no matching seeds, " +
 			"planting still succeeds without consuming anything (free plant mode).\n\n" +
-			"Constraints: seed_id must be a valid SDV seed item; radius max 10, max_count max 10. " +
-			"Only plants on Farm-type maps.\n\n" +
+			"Constraints: seed_id must be a valid SDV seed item. max_count is a " +
+			"radius-mode safety cap only — in bbox mode the rectangle itself bounds " +
+			"the work, so leave max_count unset. Only plants on Farm-type maps.\n\n" +
 			"Side-effect: WRITE (creates crops on HoeDirt, optionally consumes seeds from NPC backpack).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcPlantSeedsInput) (*mcp.CallToolResult, NpcPlantSeedsOutput, error) {
 		if in.NPC == "" {
@@ -561,12 +609,27 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_till_soil",
-		Description: "NPC tills empty ground to create HoeDirt for planting.\n\n" +
-			"When to call: preparing farmland before planting.\n\n" +
-			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
-			"the bbox returned by `npc_inspect_object` with what=farm_actions. Otherwise " +
-			"falls back to a circular scan around the NPC of radius (default 3, max 30).\n\n" +
-			"Constraints: max_count max 15. Only on Farm-type maps.\n\n" +
+		Description: "NPC tills a regular rectangular patch of empty ground to create new HoeDirt.\n\n" +
+			"When to call: extending the farm — preparing a fresh field for planting.\n\n" +
+			"Patch shape: the mod always tills a clean `patch_w` × `patch_h` rectangle " +
+			"(default 10 × 6 = 60 tiles). It does NOT till every loose diggable tile — " +
+			"that produced ragged borders. Pass smaller `patch_w/patch_h` for a more " +
+			"casual extension, larger for a big push (max 12 × 12).\n\n" +
+			"Position: the mod scans your `x1/y1/x2/y2` (or radius window if bbox " +
+			"unset) for a position where the W×H rectangle fits, and prefers spots " +
+			"that share an edge with existing farmland — so the field grows as a " +
+			"clean adjacent extension instead of a scattered second island. The " +
+			"existing field can be irregular (multiple shapes, holes from machines, " +
+			"etc.); only the NEW patch is forced to be rectangular. The mod auto-tries " +
+			"both (W,H) and (H,W) orientations and picks the better fit.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 from `npc_inspect_object` with " +
+			"what=farm_actions, on the `till` group. Otherwise falls back to a " +
+			"circular scan around the NPC of radius (default 3, max 30).\n\n" +
+			"No-op: if no W×H rectangle fits anywhere in the search area, the call " +
+			"returns `nothing_to_do=true` with a `reason`. Re-evaluate this turn — " +
+			"either widen the bbox, drop patch size, or switch to plant/clear/water.\n\n" +
+			"Constraints: only on Farm-type maps. Cold-start (empty map) seeds the " +
+			"first patch near the NPC.\n\n" +
 			"Side-effect: WRITE (creates terrain features).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcTillSoilInput) (*mcp.CallToolResult, NpcTillSoilOutput, error) {
 		if in.NPC == "" {
@@ -674,15 +737,20 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "npc_fertilize",
-		Description: "NPC applies fertilizer to empty tilled soil within radius.\n\n" +
+		Description: "NPC applies fertilizer to empty tilled soil within an area.\n\n" +
 			"When to call: before planting, to improve soil quality for better crops.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions on the " +
+			"`plant` group. Otherwise falls back to a circular scan around the NPC of " +
+			"radius (default 5, max 30).\n\n" +
 			"Fertilizer consumption: if the NPC has the fertilizer in their backpack, " +
 			"one is consumed per tile. If the backpack has none, fertilizing still " +
 			"succeeds (free mode). Valid fertilizer_ids: \"(O)368\" (Basic), \"(O)369\" " +
 			"(Quality), \"(O)465\" (Speed-Gro), \"(O)466\" (Deluxe Speed-Gro), " +
 			"\"(O)370\" (Basic Retaining), \"(O)371\" (Quality Retaining).\n\n" +
-			"Constraints: radius max 10, max_count max 15. Only on Farm-type maps. " +
-			"Skips tiles that already have fertilizer or a crop.\n\n" +
+			"Constraints: max_count is a radius-mode safety cap only — in bbox mode " +
+			"the rectangle itself bounds the work, so leave max_count unset. Only on " +
+			"Farm-type maps. Skips tiles that already have fertilizer or a crop.\n\n" +
 			"Side-effect: WRITE (sets HoeDirt fertilizer, optionally consumes from NPC backpack).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcFertilizeInput) (*mcp.CallToolResult, NpcFertilizeOutput, error) {
 		if in.NPC == "" {
@@ -702,9 +770,15 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 			"the drops into their backpack.\n\n" +
 			"When to call: NPC is in a forest/mountain/quarry area and wants to gather wood, " +
 			"hardwood, stone, or other natural materials.\n\n" +
-			"Constraints: radius max 15, max_count max 10. Does NOT break player-placed objects " +
-			"or machines. Trees with tappers are skipped. Use `what` to filter: \"trees\" (trees " +
-			"+ stumps), \"stones\" (large stones only), or \"all\" (default).\n\n" +
+			"Targeting: pass x1/y1/x2/y2 (all 4 non-zero) to scan a rectangle — usually " +
+			"the bbox returned by `npc_inspect_object` with what=farm_actions on the " +
+			"`break` group. Otherwise falls back to a circular scan around the NPC of " +
+			"radius (default 6, max 30).\n\n" +
+			"Constraints: max_count is a radius-mode safety cap only — in bbox mode the " +
+			"rectangle itself bounds the work, so leave max_count unset. Does NOT break " +
+			"player-placed objects or machines. Trees with tappers are skipped. Use " +
+			"`what` to filter: \"trees\" (trees + stumps), \"stones\" (large stones only), " +
+			"or \"all\" (default).\n\n" +
 			"Side-effect: WRITE (removes terrain features / world objects, adds drops to NPC backpack).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcBreakResourceInput) (*mcp.CallToolResult, NpcBreakResourceOutput, error) {
 		if in.NPC == "" {

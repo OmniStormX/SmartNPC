@@ -134,10 +134,12 @@ type NpcBroadcast struct {
 // concrete params at fire time based on live game state (where it is,
 // who's nearby, weather, inventory, etc.).
 type ScheduleTrigger struct {
-	NPC      string `json:"npc"`              // target NPC
-	GameHour int    `json:"game_hour"`        // the hour that triggered
-	Action   string `json:"action"`           // planned MCP tool name
-	Reason   string `json:"reason,omitempty"` // LLM's original reasoning
+	NPC         string `json:"npc"`                       // target NPC
+	GameHour    int    `json:"game_hour"`                 // the hour that triggered
+	GameMinute  int    `json:"game_minute,omitempty"`     // minute within the hour (0/10/20/30/40/50)
+	GameMinutes int    `json:"game_minutes,omitempty"`    // absolute minute-of-day (hour*60+minute)
+	Action      string `json:"action"`                    // planned MCP tool name
+	Reason      string `json:"reason,omitempty"`          // LLM's original reasoning
 }
 
 // DebugProactiveTrigger — operator-initiated forced trigger of the

@@ -74,6 +74,7 @@ namespace SmartNPC.Bridge
             helper.Events.GameLoop.DayStarted     += this.OnDayStarted;
             helper.Events.GameLoop.TimeChanged    += this.OnTimeChanged;
             helper.Events.Display.RenderedHud     += this.OnRenderedHud;
+            helper.Events.Display.RenderedWorld   += this.OnRenderedWorld;
             helper.Events.Input.ButtonsChanged    += this.OnButtonsChanged;
             helper.Events.Input.ButtonPressed     += this.OnButtonPressed;
             helper.Events.Player.Warped           += this.OnPlayerWarped;
@@ -137,7 +138,7 @@ namespace SmartNPC.Bridge
                     new DepositItemsHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new DeliverItemsHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new ForageCollectHandler(this.Monitor, showBubble, _npcInventory, _follow),
-                    new PetAnimalHandler(this.Monitor, showBubble),
+                    new PetAnimalHandler(this.Monitor, showBubble, _follow),
                     new PlantSeedsHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new TillSoilHandler(this.Monitor, showBubble, _follow),
                     new InspectObjectHandler(this.Monitor, showBubble),
@@ -159,6 +160,27 @@ namespace SmartNPC.Bridge
                 _actionHandlers = actionHandlers;
                 foreach (var h in actionHandlers)
                     _router.Register(h.ActionNamePublic, h.Handle);
+
+                // Wire up the in-world bbox debug overlay. Reads the
+                // toggle from config each call so editing config.json
+                // and reloading takes effect without restarting.
+                BBoxOverlay.Instance.Init(
+                    enabled: () => this._config.DebugShowBBoxOverlay,
+                    follow: _follow);
+
+                // Per-NPC serial action queue: long-running tools (harvest/water/
+                // till/...) append here when the NPC is already mid-task, and
+                // drain to FollowSystem when GetMode() returns Idle. Configured
+                // once with the FollowSystem reference; the actual dispatcher
+                // runs each tick from OnUpdateTicked below.
+                NpcActionQueue.Configure(_follow);
+
+                // Per-NPC serial action queue: long-running tools (harvest/water/
+                // till/...) append here when the NPC is already mid-task, and
+                // drain to FollowSystem when GetMode() returns Idle. Configured
+                // once with the FollowSystem reference; the actual dispatcher
+                // runs each tick from OnUpdateTicked below.
+                NpcActionQueue.Configure(_follow);
 
                 string prefix = this._config.ListenPrefix();
                 _ws = new WebSocketServer(prefix, _router, this.Monitor);
@@ -220,6 +242,21 @@ namespace SmartNPC.Bridge
 
             // Tick toast lifetimes (~16 ms per tick at 60fps).
             _toast?.Update(1f / 60f);
+
+            // Expire observe entries and clear yellow boxes for idle NPCs.
+            BBoxOverlay.Instance.Tick();
+
+            // Drain any per-NPC serial action queue entries whose owners
+            // have just gone Idle. One pop per NPC per tick — backs of the
+            // queue stay sequential and each task gets a clean tick of
+            // FollowSystem state to settle into its new mode.
+            NpcActionQueue.DrainReadyTasks(this.Monitor);
+
+            // Drain any per-NPC serial action queue entries whose owners
+            // have just gone Idle. One pop per NPC per tick — backs of the
+            // queue stay sequential and each task gets a clean tick of
+            // FollowSystem state to settle into its new mode.
+            NpcActionQueue.DrainReadyTasks(this.Monitor);
         }
 
         /// <summary>
@@ -328,6 +365,14 @@ namespace SmartNPC.Bridge
             if (Game1.activeClickableMenu is ChatPanel) return;
             _toast?.Draw(e.SpriteBatch);
             _inventoryHud?.Draw(e.SpriteBatch);
+        }
+
+        private void OnRenderedWorld(object? sender, RenderedWorldEventArgs e)
+        {
+            // Bbox debug overlay: gated by ModConfig.DebugShowBBoxOverlay.
+            // Drawn AFTER the world so the rectangles sit on top of terrain
+            // but under HUD/menus.
+            BBoxOverlay.Instance.Draw(e.SpriteBatch);
         }
 
         /// <summary>Hotkey handler: F2 (panel + focus list), Tab (toggle), F3 (debug).</summary>
@@ -553,28 +598,41 @@ namespace SmartNPC.Bridge
         }
 
         /// <summary>
-        /// Emits a `game_time_tick` event every in-game hour (when the time
-        /// changes to XX:00). Go-side scheduler uses this to fire due schedule
-        /// entries and send schedule_trigger events to NPC Hermes profiles.
+        /// Emits a `game_time_tick` event every 20 in-game minutes (when
+        /// e.NewTime aligns to 0/20/40 of an hour: 600, 620, 640, 700, ...).
+        /// Go-side scheduler uses this to fire due schedule entries and
+        /// send schedule_trigger events to NPC Hermes profiles.
+        ///
+        /// Why 20-minute cadence: schedule entries can land on any 10-minute
+        /// boundary (e.g. 06:30) but TimeChanged fires every 10 in-game
+        /// minutes. Ticking every 20 halves relay/Hermes load while still
+        /// catching every entry at most 20 minutes late — scheduler.Tick
+        /// uses "&lt;= current time" semantics so a 06:30 entry fires at
+        /// the 06:40 tick if the 06:30 tick was skipped.
         /// </summary>
         private void OnTimeChanged(object? sender, TimeChangedEventArgs e)
         {
             if (_ws is null) return;
 
-            // Only fire on the hour (e.g. 600, 700, ..., 2500).
-            if (e.NewTime % 100 != 0) return;
+            // SDV time format: HHMM. Lower 2 digits = minutes (0/10/20/30/40/50).
+            // Fire when minutes-of-hour are 0/20/40, i.e. mod 20 == 0.
+            int minuteOfHour = e.NewTime % 100;
+            if (minuteOfHour % 20 != 0) return;
 
-            int hour = e.NewTime / 100;
+            int hour    = e.NewTime / 100;
+            int minutes = hour * 60 + minuteOfHour; // total minutes from midnight
             _ = _ws.BroadcastEvent("game_time_tick", new
             {
                 hour,
+                minute  = minuteOfHour,
+                minutes,
                 time = e.NewTime,
                 day = Game1.dayOfMonth,
                 season = Game1.currentSeason,
                 year = Game1.year,
                 day_of_week = Game1.shortDayNameFromDayOfSeason(Game1.dayOfMonth),
             });
-            this.Monitor.Log($"[Schedule] game_time_tick emitted: hour={hour} (raw={e.NewTime})", LogLevel.Trace);
+            this.Monitor.Log($"[Schedule] game_time_tick emitted: time={e.NewTime} minutes={minutes}", LogLevel.Trace);
         }
 
         // ── UI helpers ──────────────────────────────────────────────────────

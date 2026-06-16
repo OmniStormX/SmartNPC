@@ -131,8 +131,8 @@ func LogScheduleTriggers(hour int, fired []scheduler.FiredEntry) {
 	b = fmt.Appendf(b, "[Schedule] [%s] hour=%02d:00 fired=%d\n",
 		time.Now().Format("2006-01-02 15:04:05"), hour, len(fired))
 	for i, e := range fired {
-		b = fmt.Appendf(b, "  %2d  %-12s %02d:00  %-30s  %s\n",
-			i+1, e.NPC, e.GameHour, e.Action, e.Reason)
+		b = fmt.Appendf(b, "  %2d  %-12s %02d:%02d  %-30s  %s\n",
+			i+1, e.NPC, e.GameHour, e.GameMinute, e.Action, e.Reason)
 	}
 	if _, err := f.Write(b); err != nil {
 		slog.Default().Warn("schedule_triggers.log write failed", "err", err)
@@ -151,7 +151,7 @@ func logSchedule(npc string, day int, season string, year int, entries []schedul
 
 	lines := make([]string, 0, len(entries))
 	for i, e := range entries {
-		lines = append(lines, fmt.Sprintf("  [%2d] %02d:00  %-28s  %s\n", i+1, e.GameHour, e.Action, e.Reason))
+		lines = append(lines, fmt.Sprintf("  [%2d] %02d:%02d  %-28s  %s\n", i+1, e.GameHour, e.GameMinute, e.Action, e.Reason))
 	}
 	footer := "----------------------------------------------\n"
 

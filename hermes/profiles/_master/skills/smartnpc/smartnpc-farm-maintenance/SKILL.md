@@ -32,13 +32,23 @@ These are the building blocks. You choose which to use and in what order
 
 | Tool | What it does | Precondition |
 |------|-------------|--------------|
-| `npc_clear_debris` | Remove weeds, twigs, stones from ground | Objects exist within radius |
+| `npc_clear_debris` | Remove weeds, twigs, stones from ground | Objects exist within bbox |
 | `npc_till_soil` | Turn empty ground into farmable soil | Empty non-tilled tile, diggable, not winter |
-| `npc_plant_seeds` | Sow seeds on empty tilled soil | Empty tilled soil, seeds available |
-| `npc_water_crops` | Water dry crops / dry tilled soil | Dry HoeDirt within radius |
-| `npc_fertilize` | Apply fertilizer to tilled soil | Empty tilled soil, not already fertilized, fertilizer available |
+| `npc_plant_seeds` | Sow seeds on empty tilled soil | Empty tilled soil. **Seeds are NOT required** — when the backpack has none the tool plants in "free mode" anyway. |
+| `npc_water_crops` | Water dry crops / dry tilled soil | Dry HoeDirt within bbox |
+| `npc_fertilize` | Apply fertilizer to tilled soil. **Fertilizer is NOT required** (free mode). | Empty tilled soil, not already fertilized |
 | `npc_inspect_object` | Survey nearby land state | — (always available) |
 | `npc_show_text_bubble` | Show a brief in-character thought | — (always available) |
+
+> **Critical — till/plant are first-class actions, not optional follow-ups.**
+>
+> When inspect's `farm_actions.till.count > 0` you MUST run `npc_till_soil`.
+> When `farm_actions.plant.count > 0` you MUST run `npc_plant_seeds` (free
+> mode kicks in if you have no seeds — the tile still becomes a planted
+> crop). Skipping till/plant just because "you don't have seeds" or "it's
+> a quick round" is the most common failure mode and leaves the farm
+> permanently stagnant. Defaults to plant `(O)472` (parsnip) when you
+> don't know what season-fit seed to pick.
 
 ## Hard dependencies
 
@@ -55,8 +65,8 @@ water_crops  can happen at any point for dry tiles
 ```
 
 When in doubt: **clear → till → plant → water → fertilize** is the full chain.
-But you are NOT required to run the full chain — pick only the links that match
-what you observe.
+Run the FULL chain whenever inspect shows non-zero counts in those categories;
+only skip a link when its count is genuinely 0.
 
 ---
 
@@ -65,194 +75,229 @@ what you observe.
 Study these examples to understand the PATTERN of how to compose actions.
 Match your current situation to the closest example, then adapt.
 
+All examples drive parameters from `npc_inspect_object(what="farm_actions")`
+output, which gives 7 buckets (`harvest/water/clear/till/forage/plant/break`)
+each with a `count` and a `bbox`. Feed the bbox straight to the matching
+behavior tool's `x1/y1/x2/y2` — the rectangle IS the work area.
+
 ### Example A — 开垦新地 (Breaking new ground)
 
-**Situation:** Large patch of untouched land with weeds, twigs, and stones.
-No tilled soil in sight. You want to turn it into farmland.
+**Situation:** Inspect shows `till.count > 0` (lots of empty diggable land)
+and possibly `clear.count > 0` (debris on top). No tilled soil yet, or very
+little. You want to turn this area into farmland.
 
 **Typical sequence:**
 ```
-npc_inspect_object(radius=12, what="crops")
-  → confirms: lots of debris, no tilled soil
+npc_inspect_object(radius=15, what="farm_actions")
+  → see till.count high, clear.count maybe, plant.count low
 
-npc_clear_debris(radius=10, max_count=8)
-  → removes weeds + stones, ground is now clear
+[if clear.count > 0]
+  npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
+  → removes weeds + stones inside the farmland envelope
 
-npc_till_soil(radius=10, max_count=8)
+npc_till_soil(x1,y1,x2,y2 = till.bbox)
   → tills the cleared ground
 
-[if seeds in backpack] npc_plant_seeds(radius=10, max_count=8)
-  → plants on freshly tilled soil
+npc_plant_seeds(seed_id = season-fit seed, x1,y1,x2,y2 = till.bbox or plant.bbox)
+  → plants on freshly tilled soil. Free-plant mode if backpack is empty.
 
-[if planted] npc_water_crops(radius=10, max_count=10)
-  → waters the new seeds
+npc_water_crops(x1,y1,x2,y2 = plant.bbox)
+  → waters the new seeds (covers tiles you just planted)
 ```
 
 **Key decisions:**
-- If only a little debris: reduce clear_debris max_count or skip till first
-- If no seeds: stop after till (ground is ready for later)
-- If winter: this example is INVALID — skip entirely
+- Pick a `seed_id` matching the season:
+  - spring: `(O)472` parsnip / `(O)474` cauliflower / `(O)475` potato
+  - summer: `(O)485` red cabbage / `(O)487` corn / `(O)491` melon
+  - fall:   `(O)490` pumpkin / `(O)493` cranberry seeds / `(O)499` ancient
+  - winter: STOP — don't run this example
+- Run plant_seeds even with empty backpack. `(O)472` is a safe fallback.
+- After tilling, the area is fresh empty HoeDirt → re-inspect is NOT
+  needed; pass the same bbox to plant_seeds and water_crops.
 
 ---
 
 ### Example B — 日常养护 (Daily upkeep)
 
-**Situation:** Farm is already established. Crops are growing. Some tiles are
-dry, a few weeds have sprouted. Nothing major — just maintenance.
+**Situation:** Inspect shows `harvest.count` modest or zero,
+`water.count > 0`, `clear.count > 0` small, possibly `plant.count > 0`
+(some tiles still empty). Farm is established — just keep it running.
 
 **Typical sequence:**
 ```
-npc_inspect_object(radius=10, what="crops")
-  → confirms: some dry tiles (3-5), a couple weeds, everything else fine
+npc_inspect_object(radius=12, what="farm_actions")
 
-npc_water_crops(radius=10, max_count=6)
-  → waters the dry tiles
+[if water.count > 0]
+  npc_water_crops(x1,y1,x2,y2 = water.bbox)
+  → waters dry crops
 
-npc_clear_debris(radius=8, max_count=3)
-  → removes the few weeds that appeared
+[if clear.count > 0]
+  npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
+  → removes the weeds that appeared
 
-[if have fertilizer + unfertilized tiles] npc_fertilize(radius=8, max_count=3)
-  → spot-fertilize empty tiles
+[if plant.count > 0]   ← do NOT skip this even on a "light" round
+  npc_plant_seeds(seed_id = season-fit, x1,y1,x2,y2 = plant.bbox)
+  → fill empty tilled soil so the farm doesn't go fallow
+
+[if plant.count > 0 and you have no fertilizer concerns]
+  npc_fertilize(fertilizer_id="(O)368", x1,y1,x2,y2 = plant.bbox)
+  → spot-fertilize the empty tilled tiles you just planted on
 ```
 
 **Key decisions:**
-- Watering is priority 1 — dry crops die
-- If nothing is dry: skip water, just clear weeds
-- This is a LIGHT round — don't go overboard
+- Watering is priority 1 — dry crops die.
+- DO NOT skip plant_seeds when `plant.count > 0`. "It's a light round"
+  is the wrong reason to leave fallow tiles for tomorrow.
+- This is the most common round-shape; aim for it most days when no
+  big harvest is happening.
 
 ---
 
 ### Example C — 补种轮作 (Replanting after harvest)
 
-**Situation:** Crops were just harvested (by you or someone else). Empty tilled
-soil is available. You have seeds in your backpack. Time to replant.
+**Situation:** Crops were just harvested (by you or someone else).
+Inspect shows `plant.count` high, `harvest.count` ≈ 0, possibly some
+`clear.count`. You're refilling empty tilled soil.
 
 **Typical sequence:**
 ```
-npc_inspect_object(radius=10, what="crops")
-  → confirms: several empty_hoedirt tiles, no debris, no mature crops
+npc_inspect_object(radius=12, what="farm_actions")
+  → confirms: plant.count high, harvest.count ~0
 
-[if debris found during inspect] npc_clear_debris(radius=8, max_count=3)
+[if clear.count > 0]
+  npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
   → clean up first
 
-npc_plant_seeds(radius=10, max_count=min(empty_tiles, seed_count))
-  → plant on all available empty tilled soil
+npc_plant_seeds(seed_id = season-fit,
+                x1,y1,x2,y2 = plant.bbox)
+  → plant on ALL available empty tilled soil. Free mode if no seeds.
 
-npc_water_crops(radius=10, max_count=10)
+npc_water_crops(x1,y1,x2,y2 = plant.bbox)
   → water the newly planted seeds
 
-[if have fertilizer] npc_fertilize(radius=10, max_count=5)
-  → fertilize newly planted areas
+[if you have fertilizer or want free fertilizer applied]
+  npc_fertilize(fertilizer_id="(O)368", x1,y1,x2,y2 = plant.bbox)
+  → fertilize newly planted areas (free mode if backpack empty)
 ```
 
 **Key decisions:**
-- Skip clear_debris if inspect shows zero debris
-- Skip plant_seeds if you have no seeds — don't waste a tool call
-- Plant BEFORE water (new seeds need water)
+- This example REQUIRES plant_seeds — it's the whole point of the round.
+- Plant BEFORE water (new seeds need water).
+- An empty backpack does NOT block this round; plant_seeds runs in
+  free mode and the soil still becomes a planted crop.
 
 ---
 
 ### Example D — 全量整备 (Full seasonal prep)
 
-**Situation:** New season just started (day 1-2). The farm needs a full reset:
-old dead crops cleared, soil re-tilled, new seeds planted. Or the farm has been
-neglected for days and is in rough shape.
+**Situation:** New season just started (day 1-2), or farm has been
+neglected. Inspect shows multiple non-zero buckets:
+`clear.count` high, `till.count` high, `plant.count` high.
 
 **Typical sequence:**
 ```
-npc_inspect_object(radius=15, what="crops")
-  → confirms: large area needs work — debris + empty untiled + some empty tilled
+npc_inspect_object(radius=20, what="farm_actions")
+  → wide scan — see all 7 buckets
 
-npc_clear_debris(radius=15, max_count=12)
-  → full sweep of the area
+npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
+  → full sweep of farmland weeds
 
-npc_till_soil(radius=15, max_count=12)
-  → till all empty non-tilled tiles
+npc_till_soil(x1,y1,x2,y2 = till.bbox)
+  → till all empty non-tilled diggable tiles
 
-npc_plant_seeds(radius=15, max_count=12)
-  → plant across the full area
+npc_plant_seeds(seed_id = season-fit,
+                x1,y1,x2,y2 = unionBBox(till.bbox, plant.bbox))
+  → plant across the freshly tilled area + any pre-existing empty HoeDirt
 
-npc_water_crops(radius=15, max_count=15)
-  → water everything planted
+npc_water_crops(x1,y1,x2,y2 = unionBBox(till.bbox, plant.bbox))
+  → water everything just planted
 
-npc_fertilize(radius=12, max_count=10)
-  → fertilize what was just planted
+npc_fertilize(fertilizer_id="(O)368",
+              x1,y1,x2,y2 = unionBBox(till.bbox, plant.bbox))
+  → fertilize the new planting (free mode is fine)
 ```
 
 **Key decisions:**
-- Use larger radius and max_count — this is a big job
-- Only trigger this when you're SURE the area needs full work
-- In winter: DO NOT use this example (only clear_debris is available)
-- This is the most expensive round — budget your time accordingly
+- Use `radius=20` or larger inspect — this is a big job.
+- Only trigger this when farm_actions counts are high across multiple
+  buckets simultaneously.
+- In winter: DO NOT use this example (only clear_debris is valid).
+- "unionBBox" just means: pick the smallest rectangle covering both
+  bboxes. Most days till.bbox and plant.bbox overlap heavily.
 
 ---
 
 ### Example E — 轻量路过 (Light pass-by)
 
-**Situation:** You're passing through a farm-adjacent area. Not here specifically
-for farm work, but you take a quick look. Maybe do ONE small thing.
+**Situation:** You're passing through a farm-adjacent area, not on a
+dedicated maintenance trigger. ONE small thing might fit.
 
 **Typical sequence:**
 ```
-npc_inspect_object(radius=6, what="crops")
+npc_inspect_object(radius=8, what="farm_actions")
   → quick scan
 
-[if 1-2 dry tiles] npc_water_crops(radius=6, max_count=2)
-  → OR
-
-[if 1-2 weeds right in front of you] npc_clear_debris(radius=4, max_count=2)
-  → pick exactly ONE action, whichever is more urgent
+Pick exactly ONE of:
+  [if water.count >= 1]  npc_water_crops(x1,y1,x2,y2 = water.bbox)
+  [if clear.count >= 1]  npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
+  [if plant.count >= 1]  npc_plant_seeds(seed_id="(O)472",
+                                         x1,y1,x2,y2 = plant.bbox)
 
 npc_show_text_bubble "顺手弄了一下~"
 ```
 
 **Key decisions:**
-- Max ONE action (not counting inspect + bubble)
-- Small radius — only what's right in front of you
-- If nothing obvious: skip entirely, don't force it
-- This is opportunistic, not planned
+- Max ONE action (not counting inspect + bubble).
+- bbox already constrains the area — no extra max_count needed.
+- If all three counts are 0: skip entirely, don't force it.
+- This is opportunistic, not planned.
 
 ---
 
 ## Decision flow
 
 ### 1. Observe
-Call `npc_inspect_object(radius=10, what="crops")`. Read the result. Build a
-mental snapshot:
-- How much debris? (rough count/area)
-- How many empty untiled tiles?
-- How many empty tilled tiles (empty_hoedirt)?
-- Any unwatered tiles?
-- What's in my backpack? (seeds? fertilizer?)
+Call `npc_inspect_object(radius=12, what="farm_actions")`. Read the result.
+The response gives you 7 buckets (each with `count` + `bbox`):
 
-Do NOT output the raw JSON. Summarize in one brief thought.
+- `harvest` — ripe crops (let `smartnpc-farm-harvest` handle these)
+- `water` — dry crops needing water
+- `clear` — debris on/near farmland
+- `till` — empty diggable ground that can become farmland
+- `forage` — spawned forage (handle separately, not in this skill)
+- `plant` — empty tilled soil ready for seeds
+- `break` — trees / large stones (handle separately)
+
+For maintenance you care about: `water`, `clear`, `till`, `plant`.
+Summarize them in one brief thought (no raw JSON).
 
 ### 2. Match
 Which example above is CLOSEST to what you see?
 
 | What you see | Closest example |
 |---|---|
-| Lots of debris + no tilled soil | A (开垦新地) |
-| Established farm, minor issues | B (日常养护) |
-| Empty tilled soil + have seeds | C (补种轮作) |
-| New season or farm looks neglected | D (全量整备) |
-| Passing through, not dedicated | E (轻量路过) |
+| `till.count > 0` (empty diggable land), with or without debris | A (开垦新地) — MUST till + plant |
+| Established farm with mostly minor counts | B (日常养护) — still plant if `plant.count > 0` |
+| `plant.count > 0` AND `harvest.count == 0` (post-harvest) | C (补种轮作) — REQUIRES plant_seeds |
+| Multiple high counts (clear+till+plant) — neglected/seasonal | D (全量整备) |
+| Passing through, single low count | E (轻量路过) |
 | Mixed — matches parts of multiple | Combine steps from 2+ examples |
 
+**Key rule:** If `plant.count > 0` you ALWAYS call `npc_plant_seeds` —
+it's never optional regardless of which example you matched.
+
 ### 3. Compose
-Pick the tools you need from the Toolbox. Order them by hard dependencies.
-Remove tools where the precondition isn't met. This is YOUR sequence — it
+Pick the tools you need from the Toolbox. Order them by hard dependencies
+(clear → till → plant → water → fertilize). Drop a step ONLY if its
+matching `farm_actions` bucket count is 0. This is YOUR sequence — it
 doesn't have to exactly match any single example.
 
-You may combine: "There's debris like Example A, but also empty tilled soil like
-Example C — so I'll clear → till → plant, skipping the full D sequence."
-
 ### 4. Execute
-Call one tool at a time. Wait for each to complete. After each tool:
-- Glance at the result
-- If the situation changed (e.g., clearing revealed more empty land than
-  expected), adjust the remaining steps
-- If a tool fails or finds nothing, don't retry — move to the next step
+Call one tool at a time. Each behavior tool gets the bbox from inspect's
+matching bucket — no per-tile coordinates, no max_count for bbox calls.
+After each tool the action queue holds the next call until the current
+one finishes; you do NOT need to re-inspect between linked steps in the
+same round.
 
 ### 5. Wrap up
 - ONE `npc_show_text_bubble` summarizing what you did, in character
@@ -305,12 +350,12 @@ decisions — a diligent NPC simply does more, a casual one does less.
 When triggered via `action="opportunistic_work"` (not a dedicated
 `farm_maintenance` schedule entry):
 
-1. Call `npc_inspect_object(radius=8, what="crops")`.
+1. Call `npc_inspect_object(radius=10, what="farm_actions")`.
 2. Decide: is there something worth doing?
-   - **Yes, obvious work needed** (3+ debris, 3+ dry tiles, 5+ empty tilled +
-     seeds) → proceed with full decision flow above.
-   - **Minor things** (1-2 weeds, 1 dry tile) → Example E only, or skip.
-   - **Nothing** → skip entirely. Write
+   - **Any of `till.count`, `plant.count`, `clear.count`, `water.count` ≥ 3**
+     → proceed with full decision flow above.
+   - **All counts in 1-2 range** → Example E only.
+   - **All counts 0** → skip entirely. Write
      `opportunistic_work: <date> nothing to do`. No bubble needed.
 3. The decision is YOURS — this is where your personality matters. A diligent
    NPC says yes more often; a lazy one says no. There's no dice roll — you ARE

@@ -19,10 +19,13 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_wander";
+        protected override bool RefuseWhileBusy => true;
+        protected override bool IsPreemptable  => true;
         public WanderHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
             : base(log, showBubble)
         {
             _follow = follow;
+            SetBusyGate(follow);
         }
 
         protected override string ResolveBubble(JsonElement @params)
@@ -102,12 +105,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_clear_debris";
+        protected override bool RefuseWhileBusy => true;
 
         public ClearDebrisHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>
@@ -124,14 +129,65 @@ namespace SmartNPC.Bridge
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
             int radius   = ParseInt(@params, "radius",    5, 1, 30);
-            int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+            int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
             var (bboxOn, x1, y1, x2, y2) = ParseBBox(@params);
+            // bbox itself is the area cap — only apply max_count in radius mode.
+            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
 
             var location = npc.currentLocation;
             if (location is null) return;
 
-            // 1. Scan for clearable objects within bbox or radius, sort by distance.
+            // 1. First pass: walk the user-supplied region (bbox OR radius
+            //    around NPC) and accumulate the bounding box of any HoeDirt
+            //    tiles found. The "clear debris" intent on a farm map is
+            //    actually "tidy the cropland", not "scrub every weed in
+            //    range" — without this constraint a radius=30 sweep on Farm
+            //    drags the NPC into trees/brush far from the planted area.
+            //
+            //    farmlandFound stays false on non-farm maps (forest, mine,
+            //    etc.) — we keep the original sweep semantics there because
+            //    the agent legitimately uses clear_debris to clean trails
+            //    in those locations.
             var npcTile = npc.Tile;
+            int sx1, sy1, sx2, sy2;
+            if (bboxOn)
+            {
+                sx1 = x1; sy1 = y1; sx2 = x2; sy2 = y2;
+            }
+            else
+            {
+                int sr = Math.Max(radius, 1);
+                sx1 = (int)npcTile.X - sr;
+                sy1 = (int)npcTile.Y - sr;
+                sx2 = (int)npcTile.X + sr;
+                sy2 = (int)npcTile.Y + sr;
+            }
+
+            bool farmlandFound = false;
+            int fx1 = int.MaxValue, fy1 = int.MaxValue, fx2 = int.MinValue, fy2 = int.MinValue;
+            for (int tx = sx1; tx <= sx2; tx++)
+            {
+                for (int ty = sy1; ty <= sy2; ty++)
+                {
+                    var tv = new Microsoft.Xna.Framework.Vector2(tx, ty);
+                    if (!bboxOn)
+                    {
+                        float dd = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tv);
+                        if (dd > radius) continue;
+                    }
+                    if (!location.terrainFeatures.TryGetValue(tv, out var tf)) continue;
+                    if (tf is not StardewValley.TerrainFeatures.HoeDirt) continue;
+                    farmlandFound = true;
+                    if (tx < fx1) fx1 = tx;
+                    if (ty < fy1) fy1 = ty;
+                    if (tx > fx2) fx2 = tx;
+                    if (ty > fy2) fy2 = ty;
+                }
+            }
+
+            // 2. Scan for clearable objects, restricted to the farmland
+            //    bbox when one was found; otherwise the original user
+            //    region (radius/bbox).
             var targets = new List<(Microsoft.Xna.Framework.Vector2 tile, StardewValley.Object obj)>();
 
             foreach (var kv in location.Objects.Pairs)
@@ -139,7 +195,11 @@ namespace SmartNPC.Bridge
                 var tile = kv.Key;
                 var obj  = kv.Value;
                 if (!IsDebris(obj)) continue;
-                if (bboxOn)
+                if (farmlandFound)
+                {
+                    if (tile.X < fx1 || tile.X > fx2 || tile.Y < fy1 || tile.Y > fy2) continue;
+                }
+                else if (bboxOn)
                 {
                     if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
                 }
@@ -155,22 +215,44 @@ namespace SmartNPC.Bridge
                 Microsoft.Xna.Framework.Vector2.Distance(npcTile, a.tile)
                     .CompareTo(Microsoft.Xna.Framework.Vector2.Distance(npcTile, b.tile)));
 
-            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+            if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
             if (targets.Count == 0)
             {
-                string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
+                string scope = farmlandFound
+                    ? $"farmland=({fx1},{fy1})-({fx2},{fy2})"
+                    : (bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}");
                 Log.Log($"[npc_clear_debris] {npcName}: no debris in {scope}", LogLevel.Info);
+                MarkNothingToDo($"no debris in {scope}");
                 return;
             }
 
-            // 2. Hand the ordered tile list to FollowSystem — it will walk NPC to each
-            //    tile, destroy the object on arrival, and collect drops into the backpack.
-            var tilePoints = targets.Select(t => new Microsoft.Xna.Framework.Point(
-                (int)t.tile.X, (int)t.tile.Y));
+            // 3. Plan a near-optimal visit order over the capped target set
+            //    (TSP-style: nearest-neighbor + 2-opt). Distance-sorted picks
+            //    minimise the *first* hop only; TSP minimises the whole tour
+            //    so the NPC stops zig-zagging across the area.
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var tilePoints = PathPlanner.PlanBy(
+                startPt,
+                targets,
+                t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y))
+                .Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
             _follow.StartClearDebris(npcName, tilePoints, _inventory);
 
-            Log.Log($"[npc_clear_debris] {npcName}: queued {targets.Count} debris targets", LogLevel.Info);
+            // Visualise the actual area the NPC will work in: farmland bbox
+            // when we narrowed; otherwise the agent-provided region.
+            int ox1 = farmlandFound ? fx1 : (bboxOn ? x1 : (int)npcTile.X - radius);
+            int oy1 = farmlandFound ? fy1 : (bboxOn ? y1 : (int)npcTile.Y - radius);
+            int ox2 = farmlandFound ? fx2 : (bboxOn ? x2 : (int)npcTile.X + radius);
+            int oy2 = farmlandFound ? fy2 : (bboxOn ? y2 : (int)npcTile.Y + radius);
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "", ox1, oy1, ox2, oy2);
+
+            Log.Log(
+                $"[npc_clear_debris] {npcName}: queued {targets.Count} debris targets " +
+                (farmlandFound
+                    ? $"(narrowed to farmland bbox ({fx1},{fy1})-({fx2},{fy2}))"
+                    : "(no farmland nearby; using full input region)"),
+                LogLevel.Info);
         }
 
         // ── helpers ───────────────────────────────────────────────────
@@ -221,11 +303,13 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_water_crops";
+        protected override bool RefuseWhileBusy => true;
 
         public WaterCropsHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
             : base(log, showBubble)
         {
             _follow = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>
@@ -242,8 +326,9 @@ namespace SmartNPC.Bridge
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
             int radius   = ParseInt(@params, "radius",    5, 1, 30);
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 20);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 9999);
             var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
+            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -257,7 +342,14 @@ namespace SmartNPC.Bridge
                 var tile = kv.Key;
                 if (kv.Value is not StardewValley.TerrainFeatures.HoeDirt dirt) continue;
                 if (dirt.crop == null) continue;
-                if (!dirt.needsWatering()) continue;
+                // Authoritative "needs watering" check — state.Value != 1
+                // (HoeDirt.watered constant). HoeDirt.needsWatering() in
+                // SDV adds extra path-of-failure semantics that diverge
+                // from what we want here (we treat dead crops as no-op
+                // separately) so we read state directly to keep the
+                // observe / select / execute layers consistent.
+                if (dirt.crop.dead.Value) continue;
+                if (dirt.state.Value == StardewValley.TerrainFeatures.HoeDirt.watered) continue;
 
                 if (bboxOn)
                 {
@@ -273,17 +365,28 @@ namespace SmartNPC.Bridge
             }
 
             targets.Sort((a, b) => a.dist.CompareTo(b.dist));
-            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+            if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
             if (targets.Count == 0)
             {
                 string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
                 Log.Log($"[npc_water_crops] {npcName}: no unwatered crops in {scope}", LogLevel.Info);
+                MarkNothingToDo($"no unwatered crops in {scope}");
                 return;
             }
 
-            var tilePoints = targets.Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
+            // TSP-order the visit so a wide bbox doesn't zig-zag.
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var tilePoints = PathPlanner.PlanBy(
+                startPt, targets, t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y))
+                .Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
             _follow.StartWaterCrops(npcName, tilePoints);
+
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
+                bboxOn ? x1 : (int)npcTile.X - radius,
+                bboxOn ? y1 : (int)npcTile.Y - radius,
+                bboxOn ? x2 : (int)npcTile.X + radius,
+                bboxOn ? y2 : (int)npcTile.Y + radius);
 
             Log.Log($"[npc_water_crops] {npcName}: queued {targets.Count} tiles to water", LogLevel.Info);
         }
@@ -304,12 +407,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_harvest_crops";
+        protected override bool RefuseWhileBusy => true;
 
         public HarvestCropsHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>
@@ -326,8 +431,9 @@ namespace SmartNPC.Bridge
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
             int radius   = ParseInt(@params, "radius",    5, 1, 30);
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 10);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 9999);
             var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
+            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -342,11 +448,15 @@ namespace SmartNPC.Bridge
                 if (kv.Value is not StardewValley.TerrainFeatures.HoeDirt dirt) continue;
                 if (dirt.crop == null) continue;
                 if (dirt.crop.dead.Value) continue;
-                // Harvestable: crop must be in its final growth phase.
-                // We don't check fullyGrown here because some crops (e.g. pumpkin)
-                // spend multiple days in the final phase before fullyGrown flips.
-                // crop.harvest() itself does the final fullyGrown gate.
-                if (dirt.crop.currentPhase.Value < dirt.crop.phaseDays.Count - 1) continue;
+                // Harvestable: final growth phase AND fullyGrown is true.
+                //   - Single-harvest crops (parsnip, pumpkin): once mature, both
+                //     conditions hold until harvested.
+                //   - Multi-harvest crops (cranberry, blueberry, coffee): after
+                //     a successful harvest SDV keeps currentPhase at final but
+                //     resets fullyGrown=false during the regrow countdown.
+                //     Skipping !fullyGrown stops the NPC from walking up to a
+                //     not-yet-ripe-again berry bush only to bounce off.
+                if (!IsCropHarvestable(dirt.crop)) continue;
 
                 if (bboxOn)
                 {
@@ -362,17 +472,27 @@ namespace SmartNPC.Bridge
             }
 
             targets.Sort((a, b) => a.dist.CompareTo(b.dist));
-            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+            if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
             if (targets.Count == 0)
             {
                 string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
                 Log.Log($"[npc_harvest_crops] {npcName}: no mature crops in {scope}", LogLevel.Info);
+                MarkNothingToDo($"no mature/ripe crops in {scope}");
                 return;
             }
 
-            var tilePoints = targets.Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var tilePoints = PathPlanner.PlanBy(
+                startPt, targets, t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y))
+                .Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
             _follow.StartHarvestCrops(npcName, tilePoints, _inventory);
+
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
+                bboxOn ? x1 : (int)npcTile.X - radius,
+                bboxOn ? y1 : (int)npcTile.Y - radius,
+                bboxOn ? x2 : (int)npcTile.X + radius,
+                bboxOn ? y2 : (int)npcTile.Y + radius);
 
             Log.Log($"[npc_harvest_crops] {npcName}: queued {targets.Count} crops to harvest", LogLevel.Info);
         }
@@ -385,6 +505,43 @@ namespace SmartNPC.Bridge
                 return System.Math.Clamp(v, min, max);
             return def;
         }
+
+        /// <summary>
+        /// Single source of truth for "is this crop ready to pick right now?".
+        /// Mirrors the precondition inside SDV's <c>Crop.harvest()</c>:
+        ///
+        ///   <c>!dead && currentPhase >= phaseDays.Count - 1
+        ///      && (!fullyGrown || dayOfCurrentPhase &lt;= 0)</c>
+        ///
+        /// `fullyGrown` is NOT "ripe right now" — it's a sticky flag that
+        /// flips to true the first time a crop reaches the final phase, and
+        /// stays true forever after for multi-harvest crops. The actual
+        /// gate is the disjunction:
+        ///
+        ///   - Single-harvest crops (parsnip, pumpkin, ...): once they
+        ///     reach final phase, `fullyGrown` is still FALSE (SDV only
+        ///     flips it to true after the first "ripen" tick). They pass
+        ///     via the !fullyGrown branch.
+        ///   - Multi-harvest crops first ripening (cranberry, blueberry):
+        ///     fullyGrown=true, dayOfCurrentPhase=0 → pass via the
+        ///     dayOfCurrentPhase&lt;=0 branch.
+        ///   - Multi-harvest crops mid-regrow: fullyGrown=true,
+        ///     dayOfCurrentPhase>0 → BOTH branches false → not ripe yet.
+        ///     This is the case the agent kept walking up to before; the
+        ///     bbox bbox-aware sweep now correctly skips them.
+        ///
+        /// Used by HarvestCropsHandler.Execute (target selection),
+        /// InspectObjectHandler's farm_actions sweep (the harvest bucket
+        /// + per-crop tally), and FollowSystem.TickHarvestCrops (per-tile
+        /// retry gate) so all three layers agree.
+        /// </summary>
+        internal static bool IsCropHarvestable(StardewValley.Crop? crop)
+        {
+            if (crop is null) return false;
+            if (crop.dead.Value) return false;
+            if (crop.currentPhase.Value < crop.phaseDays.Count - 1) return false;
+            return !crop.fullyGrown.Value || crop.dayOfCurrentPhase.Value <= 0;
+        }
     }
 
     internal sealed class DepositItemsHandler : NpcActionHandlerBase
@@ -393,12 +550,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_deposit_items";
+        protected override bool RefuseWhileBusy => true;
 
         public DepositItemsHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>
@@ -468,12 +627,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_deliver_items";
+        protected override bool RefuseWhileBusy => true;
 
         public DeliverItemsHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>
@@ -505,12 +666,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_forage_collect";
+        protected override bool RefuseWhileBusy => true;
 
         public ForageCollectHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         protected override string ResolveBubble(JsonElement @params)
@@ -523,8 +686,9 @@ namespace SmartNPC.Bridge
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
             int radius   = ParseInt(@params, "radius",    8, 1, 30);
-            int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+            int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
             var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
+            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -554,20 +718,31 @@ namespace SmartNPC.Bridge
                 Microsoft.Xna.Framework.Vector2.Distance(npcTile, a.tile)
                     .CompareTo(Microsoft.Xna.Framework.Vector2.Distance(npcTile, b.tile)));
 
-            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+            if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
             if (targets.Count == 0)
             {
                 string scope = bboxOn ? $"bbox=({x1},{y1})-({x2},{y2})" : $"radius={radius}";
                 Log.Log($"[npc_forage_collect] {npcName}: no forage in {scope}", LogLevel.Info);
+                MarkNothingToDo($"no spawned forage in {scope}");
                 return;
             }
 
-            var forageTargets = targets.Select(t =>
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var ordered = PathPlanner.PlanBy(
+                startPt, targets, t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
+            var forageTargets = ordered.Select(t =>
                 (new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y), t.itemId, t.itemName))
                 .ToList();
 
             _follow.StartForageCollect(npcName, forageTargets, _inventory);
+
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
+                bboxOn ? x1 : (int)npcTile.X - radius,
+                bboxOn ? y1 : (int)npcTile.Y - radius,
+                bboxOn ? x2 : (int)npcTile.X + radius,
+                bboxOn ? y2 : (int)npcTile.Y + radius);
+
             Log.Log($"[npc_forage_collect] {npcName}: queued {targets.Count} forage targets", LogLevel.Info);
         }
 
@@ -587,9 +762,69 @@ namespace SmartNPC.Bridge
 
     internal sealed class PetAnimalHandler : NpcActionHandlerBase
     {
+        private readonly FollowSystem _follow;
+
         protected override string ActionName => "npc_pet_animal";
-        public PetAnimalHandler(IMonitor log, Func<bool> showBubble) : base(log, showBubble) { }
-        // TODO: find nearby animal and pet it
+        protected override bool RefuseWhileBusy => true;
+
+        public PetAnimalHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
+            : base(log, showBubble)
+        {
+            _follow = follow;
+            SetBusyGate(follow);
+        }
+
+        protected override string ResolveBubble(JsonElement @params)
+        {
+            var pet = Game1.player?.getPet();
+            return pet is not null ? $"[摸摸 {pet.Name}]" : "[摸摸宠物]";
+        }
+
+        protected override void Execute(NPC npc, string npcName, JsonElement @params)
+        {
+            // The schedule asks to pet the current player pet. We resolve
+            // it via Game1.player.getPet() rather than taking an
+            // animal_name param — there's only one player pet at a time
+            // and the agent should not need to know its name. Anything
+            // else (cows, chickens — `FarmAnimal`) is intentionally out
+            // of scope; ranch animals have their own petting hooks the
+            // engine handles when the player walks past them.
+            var pet = Game1.player?.getPet();
+            if (pet is null)
+            {
+                Log.Log($"[npc_pet_animal] {npcName}: player has no pet", LogLevel.Info);
+                MarkNothingToDo("the player has no farm pet (cat/dog/turtle) to pet");
+                return;
+            }
+            if (pet.currentLocation is null)
+            {
+                Log.Log($"[npc_pet_animal] {npcName}: pet has no currentLocation", LogLevel.Info);
+                MarkNothingToDo($"pet {pet.Name} has no current location");
+                return;
+            }
+            if (npc.currentLocation != pet.currentLocation)
+            {
+                string petMap = pet.currentLocation.Name ?? "<null>";
+                string npcMap = npc.currentLocation?.Name ?? "<null>";
+                Log.Log(
+                    $"[npc_pet_animal] {npcName}: pet {pet.Name} on '{petMap}' but NPC on '{npcMap}'",
+                    LogLevel.Info);
+                MarkNothingToDo(
+                    $"pet {pet.Name} is on map '{petMap}', not on this NPC's map '{npcMap}'. " +
+                    "Skip this slot or run npc_summon for the NPC first.");
+                return;
+            }
+
+            bool started = _follow.StartPetAnimal(npcName, npc);
+            if (!started)
+            {
+                MarkNothingToDo("could not start pet-animal walk (pet unavailable)");
+                return;
+            }
+            Log.Log(
+                $"[npc_pet_animal] {npcName}: walking to pet {pet.Name} at {pet.Tile}",
+                LogLevel.Info);
+        }
     }
 
     internal sealed class PlantSeedsHandler : NpcActionHandlerBase
@@ -598,12 +833,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_plant_seeds";
+        protected override bool RefuseWhileBusy => true;
 
         public PlantSeedsHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>
@@ -618,7 +855,7 @@ namespace SmartNPC.Bridge
                 s.ValueKind == JsonValueKind.String)
                 seedId = s.GetString();
 
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 10);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 9999);
             return seedId is not null
                 ? $"[播种] {seedId} x{maxCount}"
                 : "[播种]";
@@ -639,8 +876,9 @@ namespace SmartNPC.Bridge
                 return;
             }
 
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 10);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 9999);
+            var (bboxOn, bx1, by1, bx2, by2) = ClearDebrisHandler.ParseBBox(@params);
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -653,33 +891,49 @@ namespace SmartNPC.Bridge
             }
 
             // Check inventory: does NPC have enough seeds?
+            // bbox mode ignores max_count (the rectangle is the cap), but the
+            // backpack count still bounds work — can't plant more seeds than
+            // we carry. Free-plant mode (no seeds in backpack) lifts that
+            // bound; bbox just plants every empty tile.
             var items = _inventory.GetItems(npcName);
             var seedSlot = items.FirstOrDefault(s => s.ItemId == seedId);
             int available = seedSlot?.Count ?? 0;
-            int toPlant = maxCount;
+            int effectiveCap;
             if (available <= 0)
             {
                 Log.Log($"[npc_plant_seeds] {npcName}: no {seedId} in backpack, planting without consuming seeds", LogLevel.Info);
+                effectiveCap = bboxOn ? int.MaxValue : maxCount;
             }
             else
             {
-                toPlant = Math.Min(maxCount, available);
+                effectiveCap = bboxOn ? available : Math.Min(maxCount, available);
             }
 
-            // Scan for empty HoeDirt tiles within radius.
+            // Scan for empty HoeDirt tiles within bbox or radius.
             var npcTile = npc.Tile;
             var targets = new System.Collections.Generic.List<(Microsoft.Xna.Framework.Vector2 tile, float dist)>();
-            int scanRange = Math.Max(radius, 1);
 
-            for (int dx = -scanRange; dx <= scanRange; dx++)
+            int sx1, sy1, sx2, sy2;
+            if (bboxOn)
             {
-                for (int dy = -scanRange; dy <= scanRange; dy++)
+                sx1 = bx1; sy1 = by1; sx2 = bx2; sy2 = by2;
+            }
+            else
+            {
+                int scanRange = Math.Max(radius, 1);
+                sx1 = (int)npcTile.X - scanRange;
+                sy1 = (int)npcTile.Y - scanRange;
+                sx2 = (int)npcTile.X + scanRange;
+                sy2 = (int)npcTile.Y + scanRange;
+            }
+
+            for (int tx = sx1; tx <= sx2; tx++)
+            {
+                for (int ty = sy1; ty <= sy2; ty++)
                 {
-                    int tx = (int)npcTile.X + dx;
-                    int ty = (int)npcTile.Y + dy;
                     var tileV2 = new Microsoft.Xna.Framework.Vector2(tx, ty);
                     float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
-                    if (d > radius) continue;
+                    if (!bboxOn && d > radius) continue;
 
                     // Check HoeDirt with no crop.
                     if (!location.terrainFeatures.TryGetValue(tileV2, out var tf)) continue;
@@ -690,18 +944,29 @@ namespace SmartNPC.Bridge
                 }
             }
 
-            // Sort by distance and take top toPlant.
+            // Sort by distance and take top effectiveCap.
             targets.Sort((a, b) => a.dist.CompareTo(b.dist));
-            if (targets.Count > toPlant) targets = targets.GetRange(0, toPlant);
+            if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_plant_seeds] {npcName}: no empty HoeDirt in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({bx1},{by1})-({bx2},{by2})" : $"radius={radius}";
+                Log.Log($"[npc_plant_seeds] {npcName}: no empty HoeDirt in {scope}", LogLevel.Info);
+                MarkNothingToDo($"no empty tilled soil in {scope}");
                 return;
             }
 
-            var tilePoints = targets.Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var tilePoints = PathPlanner.PlanBy(
+                startPt, targets, t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y))
+                .Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
             _follow.StartPlantSeeds(npcName, tilePoints, seedId, _inventory);
+
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
+                bboxOn ? bx1 : (int)npcTile.X - radius,
+                bboxOn ? by1 : (int)npcTile.Y - radius,
+                bboxOn ? bx2 : (int)npcTile.X + radius,
+                bboxOn ? by2 : (int)npcTile.Y + radius);
 
             Log.Log($"[npc_plant_seeds] {npcName}: queued {targets.Count} tiles to plant with {seedId} (seeds_in_backpack={available})", LogLevel.Info);
         }
@@ -732,11 +997,13 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_till_soil";
+        protected override bool RefuseWhileBusy => true;
 
         public TillSoilHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
             : base(log, showBubble)
         {
             _follow = follow;
+            SetBusyGate(follow);
         }
 
         /// <summary>Public entry for debug commands running on the game thread.</summary>
@@ -745,15 +1012,23 @@ namespace SmartNPC.Bridge
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    3, 1, 30);
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
-            return $"[翻地] r={radius} max={maxCount}";
+            int patchW = ParseInt(@params, "patch_w", 10, 1, 12);
+            int patchH = ParseInt(@params, "patch_h",  6, 1, 12);
+            return $"[翻地] patch={patchW}x{patchH}";
         }
+
+        // Per-thunk handoff to GetResult: the rectangle the planner chose.
+        // Thunks run serially on the game thread, so a plain field is fine.
+        // Reset at the start of every Execute.
+        private FarmlandExtensionPlanner.Plan? _lastPlan;
 
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    3, 1, 30);
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
+            _lastPlan = null;
+
+            int radius = ParseInt(@params, "radius",  3, 1, 30);
+            int patchW = ParseInt(@params, "patch_w", 10, 1, 12);
+            int patchH = ParseInt(@params, "patch_h",  6, 1, 12);
             var (bboxOn, bx1, by1, bx2, by2) = ClearDebrisHandler.ParseBBox(@params);
 
             var location = npc.currentLocation;
@@ -763,13 +1038,14 @@ namespace SmartNPC.Bridge
             if (!IsTillableMap(location))
             {
                 Log.Log($"[npc_till_soil] {npcName}: map '{location.Name}' is not tillable (farm/greenhouse only)", LogLevel.Warn);
+                MarkNothingToDo($"map '{location.Name}' is not a farm/greenhouse");
                 return;
             }
 
-            // Scan for empty diggable tiles within bbox or radius.
+            // Compute the search bbox: use agent-supplied rectangle when set,
+            // otherwise fall back to a square window around the NPC sized by
+            // radius. The planner sees this as a hard outer bound.
             var npcTile = npc.Tile;
-            var targets = new System.Collections.Generic.List<(Microsoft.Xna.Framework.Vector2 tile, float dist)>();
-
             int sx1, sy1, sx2, sy2;
             if (bboxOn)
             {
@@ -784,42 +1060,75 @@ namespace SmartNPC.Bridge
                 sy2 = (int)npcTile.Y + scanRange;
             }
 
-            for (int tx = sx1; tx <= sx2; tx++)
-            {
-                for (int ty = sy1; ty <= sy2; ty++)
-                {
-                    var tileV2 = new Microsoft.Xna.Framework.Vector2(tx, ty);
-                    float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
-                    if (!bboxOn && d > radius) continue;
+            var bbox = new Microsoft.Xna.Framework.Rectangle(
+                sx1, sy1, sx2 - sx1 + 1, sy2 - sy1 + 1);
+            var npcPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
 
-                    // Skip occupied tiles.
-                    if (location.Objects.ContainsKey(tileV2)) continue;
-                    if (location.terrainFeatures.ContainsKey(tileV2)) continue;
-                    // Must be passable (not water, cliff, building, etc.).
-                    if (!location.isTilePassable(
-                        new xTile.Dimensions.Location(tx, ty), Game1.viewport)) continue;
-                    // Must be diggable per the map's Back layer property.
-                    if (location.doesTileHaveProperty(tx, ty, "Diggable", "Back") != "T") continue;
-
-                    targets.Add((tileV2, d));
-                }
-            }
-
-            // Sort by distance and take top maxCount.
-            targets.Sort((a, b) => a.dist.CompareTo(b.dist));
-            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
-
-            if (targets.Count == 0)
+            // Single source of truth for "where to till": the planner picks
+            // a regular patchW × patchH rectangle that hugs existing
+            // HoeDirt when possible. Returns null if no such rectangle fits
+            // anywhere in the bbox — could be because the bbox is full of
+            // tiles, too small to fit the patch, or every candidate spot
+            // is blocked by Objects / non-Diggable terrain.
+            var plan = FarmlandExtensionPlanner.Plan_(location, bbox, npcPt, patchW, patchH);
+            if (!plan.HasValue)
             {
                 string scope = bboxOn ? $"bbox=({bx1},{by1})-({bx2},{by2})" : $"radius={radius}";
-                Log.Log($"[npc_till_soil] {npcName}: no empty diggable tiles in {scope}", LogLevel.Info);
+                Log.Log(
+                    $"[npc_till_soil] {npcName}: no {patchW}x{patchH} patch fits in {scope}",
+                    LogLevel.Info);
+                MarkNothingToDo($"no {patchW}x{patchH} farmland-adjacent patch fits in {scope}");
                 return;
             }
 
-            var tilePoints = targets.Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
+            _lastPlan = plan;
+            var rect = plan.Value.Rect;
+
+            // Materialise patch tiles and TSP-order them so the NPC walks
+            // a clean serpentine through the rectangle instead of zigzagging.
+            var patchTiles = new System.Collections.Generic.List<Microsoft.Xna.Framework.Point>(rect.Width * rect.Height);
+            for (int dx = 0; dx < rect.Width; dx++)
+            {
+                for (int dy = 0; dy < rect.Height; dy++)
+                    patchTiles.Add(new Microsoft.Xna.Framework.Point(rect.X + dx, rect.Y + dy));
+            }
+            var tilePoints = PathPlanner.PlanBy(npcPt, patchTiles, p => p);
             _follow.StartTillSoil(npcName, tilePoints);
 
-            Log.Log($"[npc_till_soil] {npcName}: queued {targets.Count} tiles to till", LogLevel.Info);
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
+                rect.X, rect.Y, rect.X + rect.Width - 1, rect.Y + rect.Height - 1);
+
+            Log.Log(
+                $"[npc_till_soil] {npcName}: tilling {patchW}x{patchH} patch at " +
+                $"({rect.X},{rect.Y})-({rect.X + rect.Width - 1},{rect.Y + rect.Height - 1}) " +
+                $"adjacent={plan.Value.AdjacentToExisting} edge={plan.Value.AdjacencyLen}",
+                LogLevel.Info);
+        }
+
+        protected override object? GetResult(NPC npc, string npcName, JsonElement @params)
+        {
+            if (!_lastPlan.HasValue) return null;
+            var p = _lastPlan.Value;
+            var r = p.Rect;
+            return new
+            {
+                ok      = true,
+                npc     = npcName,
+                action  = ActionName,
+                tilled  = r.Width * r.Height,
+                patch   = new
+                {
+                    x1 = r.X,
+                    y1 = r.Y,
+                    x2 = r.X + r.Width  - 1,
+                    y2 = r.Y + r.Height - 1,
+                },
+                adjacent_to_existing = p.AdjacentToExisting,
+                adjacency_edge       = p.AdjacencyLen,
+                message = p.AdjacentToExisting
+                    ? $"tilled {r.Width}x{r.Height} patch adjacent to existing farmland"
+                    : $"tilled {r.Width}x{r.Height} patch (no existing farmland nearby — seeded)",
+            };
         }
 
         // ── helpers ───────────────────────────────────────────────────
@@ -930,7 +1239,11 @@ namespace SmartNPC.Bridge
                             int phase = (int)dirt.crop.currentPhase.Value;
                             int phases = dirt.crop.phaseDays.Count;
 
-                            if (dirt.crop.fullyGrown.Value)
+                            // mature = "ripe right now" (HarvestCropsHandler will pick it
+                            // this tick). growing = anything else, including a multi-harvest
+                            // crop in its regrow window (phase=final, fullyGrown=true,
+                            // dayOfCurrentPhase>0). Same gate used by the farm_actions sweep.
+                            if (HarvestCropsHandler.IsCropHarvestable(dirt.crop))
                             {
                                 matureCrops.Add(new { x = tx, y = ty, crop = cn, id = cid });
                             }
@@ -939,7 +1252,7 @@ namespace SmartNPC.Bridge
                                 growingCrops.Add(new { x = tx, y = ty, crop = cn, id = cid, phase, phases });
                             }
 
-                            if (dirt.needsWatering())
+                            if (dirt.state.Value != StardewValley.TerrainFeatures.HoeDirt.watered)
                             {
                                 totalUnwatered++;
                                 unwateredCrops.Add(new { x = tx, y = ty, crop = cn });
@@ -1009,7 +1322,7 @@ namespace SmartNPC.Bridge
         // ── farm_actions mode ────────────────────────────────────────
         //
         // Single sweep over the radius (or whole-tile rectangle) classifying
-        // every tile into one of 6 buckets:
+        // every tile into one of 7 buckets:
         //
         //   harvest — HoeDirt with crop in its final growth phase
         //   water   — HoeDirt with crop that needsWatering()
@@ -1017,6 +1330,7 @@ namespace SmartNPC.Bridge
         //   till    — passable, Diggable=T, no Object, no terrain feature
         //   forage  — Object with IsSpawnedObject=true
         //   plant   — HoeDirt without a crop
+        //   break   — mature non-tapped Tree, or large Stone (PSI >= 44)
         //
         // Each non-empty bucket gets a count + axis-aligned bbox the agent
         // can feed back as x1/y1/x2/y2 to the matching behavior tool.
@@ -1042,6 +1356,16 @@ namespace SmartNPC.Bridge
             // Per-crop tally for the harvest bucket: id → (name, count).
             var harvestCrops = new Dictionary<string, (string name, int count)>();
 
+            // Debris candidates are buffered, not Hit() directly, because
+            // we want to restrict the `clear` group to the farmland bbox
+            // (whatever rectangle covers all HoeDirt tiles seen this sweep).
+            // Without this, a wide-radius observe on Farm picks up brush
+            // far from the planted area and the agent then issues a giant
+            // clear_debris bbox covering the whole region.
+            var debrisCandidates = new List<(int x, int y)>();
+            bool farmlandFound = false;
+            int fx1 = int.MaxValue, fy1 = int.MaxValue, fx2 = int.MinValue, fy2 = int.MinValue;
+
             int scanned = 0;
             int scanRange = Math.Max(radius, 0);
             for (int dx = -scanRange; dx <= scanRange; dx++)
@@ -1061,10 +1385,19 @@ namespace SmartNPC.Bridge
                     if (location.terrainFeatures.TryGetValue(tileV2, out var tf)
                         && tf is StardewValley.TerrainFeatures.HoeDirt dirt)
                     {
+                        // Track farmland bbox for the post-pass clear filter.
+                        farmlandFound = true;
+                        if (tx < fx1) fx1 = tx;
+                        if (ty < fy1) fy1 = ty;
+                        if (tx > fx2) fx2 = tx;
+                        if (ty > fy2) fy2 = ty;
+
                         if (dirt.crop != null && !dirt.crop.dead.Value)
                         {
-                            // Final phase = harvestable. Matches HarvestCropsHandler.
-                            if (dirt.crop.currentPhase.Value >= dirt.crop.phaseDays.Count - 1)
+                            // Harvestable right now — same gate as
+                            // HarvestCropsHandler so the bbox the agent
+                            // feeds back never contains regrowing tiles.
+                            if (HarvestCropsHandler.IsCropHarvestable(dirt.crop))
                             {
                                 Hit("harvest", tx, ty);
                                 string cid = dirt.crop.indexOfHarvest.Value;
@@ -1076,7 +1409,16 @@ namespace SmartNPC.Bridge
                                     harvestCrops[cid] = (cn, 1);
                             }
 
-                            if (dirt.needsWatering())
+                            // Authoritative gate: state.Value != watered.
+                            // We do NOT call HoeDirt.needsWatering() here —
+                            // observation has shown it can return true even
+                            // when state.Value == watered (paddy-crop or
+                            // auto-water side effects) and that desync makes
+                            // the agent see a constant `water.count` after
+                            // the NPC has actually watered the tiles. Reading
+                            // state directly keeps observe / select / execute
+                            // aligned and lets the count drop as expected.
+                            if (dirt.state.Value != StardewValley.TerrainFeatures.HoeDirt.watered)
                                 Hit("water", tx, ty);
                         }
                         else if (dirt.crop == null)
@@ -1085,13 +1427,27 @@ namespace SmartNPC.Bridge
                         }
                     }
 
-                    // ── Objects: clear (debris) / forage (spawn) ─────
+                    // ── Trees: break (mature, not tapped) ───────────
+                    // Mirrors BreakResourceHandler tree filter so the
+                    // bbox the agent feeds back actually has work.
+                    if (tf is StardewValley.TerrainFeatures.Tree tree
+                        && tree.growthStage.Value >= 5
+                        && !tree.tapped.Value)
+                    {
+                        Hit("break", tx, ty);
+                    }
+
+                    // ── Objects: clear (debris) / forage (spawn) / break (large stone) ─
                     if (location.Objects.TryGetValue(tileV2, out var obj) && obj != null)
                     {
                         if (IsDebrisObj(obj))
-                            Hit("clear", tx, ty);
+                            debrisCandidates.Add((tx, ty));
                         if (obj.IsSpawnedObject)
                             Hit("forage", tx, ty);
+                        // Large stones (PSI >= 44) are break targets; smaller
+                        // ones already counted as `clear`.
+                        if (obj.Name == "Stone" && obj.ParentSheetIndex >= 44)
+                            Hit("break", tx, ty);
                     }
 
                     // ── till: empty, passable, Diggable=T ────────────
@@ -1103,6 +1459,19 @@ namespace SmartNPC.Bridge
                         Hit("till", tx, ty);
                     }
                 }
+            }
+
+            // Post-pass: commit debris candidates into the `clear` bucket,
+            // restricted to the farmland bbox if we saw any HoeDirt this
+            // sweep. On non-farm maps (no HoeDirt found) we keep every
+            // debris candidate so the agent can still clean trails.
+            foreach (var (tx, ty) in debrisCandidates)
+            {
+                if (farmlandFound)
+                {
+                    if (tx < fx1 || tx > fx2 || ty < fy1 || ty > fy2) continue;
+                }
+                Hit("clear", tx, ty);
             }
 
             // ── Assemble actions_available map ─────────────────────────
@@ -1136,10 +1505,11 @@ namespace SmartNPC.Bridge
             AddActionGroup("till");
             AddActionGroup("forage");
             AddActionGroup("plant");
+            AddActionGroup("break");
 
             // ── Summary ────────────────────────────────────────────────
             var parts = new List<string>();
-            foreach (var key in new[] { "harvest", "water", "clear", "till", "forage", "plant" })
+            foreach (var key in new[] { "harvest", "water", "clear", "till", "forage", "plant", "break" })
             {
                 if (buckets.TryGetValue(key, out var v) && v.count > 0)
                     parts.Add($"{key}={v.count}");
@@ -1162,6 +1532,14 @@ namespace SmartNPC.Bridge
             Log.Log(
                 $"[npc_inspect_object] {npcName}: farm_actions center=({cx},{cy}) r={radius} scanned={scanned} → {summary}",
                 LogLevel.Info);
+
+            // Debug overlay: paint the observed square red briefly so the
+            // operator can see exactly what the agent just looked at.
+            // No-op when ModConfig.DebugShowBBoxOverlay is false.
+            int r = Math.Max(radius, 0);
+            BBoxOverlay.Instance.MarkObserve(
+                location.Name ?? "",
+                cx - r, cy - r, cx + r, cy + r);
 
             return result;
         }
@@ -1215,12 +1593,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem _follow;
 
         protected override string ActionName => "npc_withdraw_from_chest";
+        protected override bool RefuseWhileBusy => true;
 
         public WithdrawFromChestHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         protected override string ResolveBubble(JsonElement @params)
@@ -1372,27 +1752,32 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem  _follow;
 
         protected override string ActionName => "npc_break_resource";
+        protected override bool RefuseWhileBusy => true;
 
         public BreakResourceHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         protected override string ResolveBubble(JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    6, 1, 15);
-            int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+            int radius   = ParseInt(@params, "radius",    6, 1, 30);
+            int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
             string what  = ParseWhat(@params);
             return $"[伐木] r={radius} max={maxCount} {what}";
         }
 
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
-            int radius   = ParseInt(@params, "radius",    6, 1, 15);
-            int maxCount = ParseInt(@params, "max_count", 3, 1, 10);
+            int radius   = ParseInt(@params, "radius",    6, 1, 30);
+            int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
             string what  = ParseWhat(@params);
+            var (bboxOn, bx1, by1, bx2, by2) = ClearDebrisHandler.ParseBBox(@params);
+            // bbox itself bounds the work; max_count is a radius-mode safety knob only.
+            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
             bool wantTrees  = what == "trees" || what == "all";
             bool wantStones = what == "stones" || what == "all";
 
@@ -1407,18 +1792,30 @@ namespace SmartNPC.Bridge
             )>();
 
             // ── Scan terrainFeatures for trees ──────────────────────
-            if (wantTrees)
+            // Scan range comes from bbox when set; otherwise radius around NPC.
+            int sx1, sy1, sx2, sy2;
+            if (bboxOn)
+            {
+                sx1 = bx1; sy1 = by1; sx2 = bx2; sy2 = by2;
+            }
+            else
             {
                 int scanRange = Math.Max(radius, 1);
-                for (int dx = -scanRange; dx <= scanRange; dx++)
+                sx1 = (int)npcTile.X - scanRange;
+                sy1 = (int)npcTile.Y - scanRange;
+                sx2 = (int)npcTile.X + scanRange;
+                sy2 = (int)npcTile.Y + scanRange;
+            }
+
+            if (wantTrees)
+            {
+                for (int tx = sx1; tx <= sx2; tx++)
                 {
-                    for (int dy = -scanRange; dy <= scanRange; dy++)
+                    for (int ty = sy1; ty <= sy2; ty++)
                     {
-                        int tx = (int)npcTile.X + dx;
-                        int ty = (int)npcTile.Y + dy;
                         var tileV2 = new Microsoft.Xna.Framework.Vector2(tx, ty);
                         float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
-                        if (d > radius) continue;
+                        if (!bboxOn && d > radius) continue;
 
                         if (!location.terrainFeatures.TryGetValue(tileV2, out var tf)) continue;
                         if (tf is not StardewValley.TerrainFeatures.Tree tree) continue;
@@ -1448,9 +1845,16 @@ namespace SmartNPC.Bridge
                     // Large stones (PSI >= 44). Small stones handled by clear_debris.
                     if (!(obj.Name == "Stone" && obj.ParentSheetIndex >= 44)) continue;
 
+                    if (bboxOn)
+                    {
+                        if (tileV2.X < bx1 || tileV2.X > bx2 || tileV2.Y < by1 || tileV2.Y > by2) continue;
+                    }
+                    else
+                    {
+                        float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
+                        if (dist > radius) continue;
+                    }
                     float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
-                    if (d > radius) continue;
-
                     targets.Add((new Microsoft.Xna.Framework.Point((int)tileV2.X, (int)tileV2.Y),
                         false, false, "", obj.ParentSheetIndex, d));
                 }
@@ -1458,18 +1862,28 @@ namespace SmartNPC.Bridge
 
             // ── Sort & cap ──────────────────────────────────────────
             targets.Sort((a, b) => a.dist.CompareTo(b.dist));
-            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+            if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_break_resource] {npcName}: no {what} resources in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({bx1},{by1})-({bx2},{by2})" : $"radius={radius}";
+                Log.Log($"[npc_break_resource] {npcName}: no {what} resources in {scope}", LogLevel.Info);
+                MarkNothingToDo($"no {what} resources in {scope}");
                 return;
             }
 
-            // ── Start FollowSystem ──────────────────────────────────
-            var resourceTargets = targets.Select(t =>
+            // ── Start FollowSystem (TSP-ordered) ────────────────────
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var ordered = PathPlanner.PlanBy(startPt, targets, t => t.tile);
+            var resourceTargets = ordered.Select(t =>
                 new ResourceTarget(t.tile, t.isTree, t.isStump, t.treeType, t.stoneIndex));
             _follow.StartBreakResource(npcName, resourceTargets, _inventory);
+
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
+                bboxOn ? bx1 : (int)npcTile.X - radius,
+                bboxOn ? by1 : (int)npcTile.Y - radius,
+                bboxOn ? bx2 : (int)npcTile.X + radius,
+                bboxOn ? by2 : (int)npcTile.Y + radius);
 
             Log.Log($"[npc_break_resource] {npcName}: queued {targets.Count} resources (trees={targets.Count(t => t.isTree)} stones={targets.Count(t => !t.isTree)})", LogLevel.Info);
         }
@@ -1504,12 +1918,14 @@ namespace SmartNPC.Bridge
         private readonly FollowSystem  _follow;
 
         protected override string ActionName => "npc_fertilize";
+        protected override bool RefuseWhileBusy => true;
 
         public FertilizeHandler(IMonitor log, Func<bool> showBubble, NpcInventory inventory, FollowSystem follow)
             : base(log, showBubble)
         {
             _inventory = inventory;
             _follow    = follow;
+            SetBusyGate(follow);
         }
 
         protected override string ResolveBubble(JsonElement @params)
@@ -1519,7 +1935,7 @@ namespace SmartNPC.Bridge
                 @params.TryGetProperty("fertilizer_id", out JsonElement s) &&
                 s.ValueKind == JsonValueKind.String)
                 fertId = s.GetString();
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 9999);
             return fertId is not null
                 ? $"[施肥] {fertId} x{maxCount}"
                 : "[施肥]";
@@ -1539,8 +1955,11 @@ namespace SmartNPC.Bridge
                 return;
             }
 
-            int radius   = ParseInt(@params, "radius",    5, 1, 10);
-            int maxCount = ParseInt(@params, "max_count", 5, 1, 15);
+            int radius   = ParseInt(@params, "radius",    5, 1, 30);
+            int maxCount = ParseInt(@params, "max_count", 5, 1, 9999);
+            var (bboxOn, bx1, by1, bx2, by2) = ClearDebrisHandler.ParseBBox(@params);
+            // bbox itself is the area cap; max_count is a radius-mode safety knob only.
+            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -1551,20 +1970,31 @@ namespace SmartNPC.Bridge
                 return;
             }
 
-            // Scan for empty, unfertilized HoeDirt tiles.
+            // Scan for empty, unfertilized HoeDirt tiles within bbox or radius.
             var npcTile = npc.Tile;
             var targets = new System.Collections.Generic.List<(Microsoft.Xna.Framework.Vector2 tile, float dist)>();
-            int scanRange = Math.Max(radius, 1);
 
-            for (int dx = -scanRange; dx <= scanRange; dx++)
+            int sx1, sy1, sx2, sy2;
+            if (bboxOn)
             {
-                for (int dy = -scanRange; dy <= scanRange; dy++)
+                sx1 = bx1; sy1 = by1; sx2 = bx2; sy2 = by2;
+            }
+            else
+            {
+                int scanRange = Math.Max(radius, 1);
+                sx1 = (int)npcTile.X - scanRange;
+                sy1 = (int)npcTile.Y - scanRange;
+                sx2 = (int)npcTile.X + scanRange;
+                sy2 = (int)npcTile.Y + scanRange;
+            }
+
+            for (int tx = sx1; tx <= sx2; tx++)
+            {
+                for (int ty = sy1; ty <= sy2; ty++)
                 {
-                    int tx = (int)npcTile.X + dx;
-                    int ty = (int)npcTile.Y + dy;
                     var tileV2 = new Microsoft.Xna.Framework.Vector2(tx, ty);
                     float d = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tileV2);
-                    if (d > radius) continue;
+                    if (!bboxOn && d > radius) continue;
 
                     if (!location.terrainFeatures.TryGetValue(tileV2, out var tf)) continue;
                     if (tf is not StardewValley.TerrainFeatures.HoeDirt dirt) continue;
@@ -1575,13 +2005,15 @@ namespace SmartNPC.Bridge
                 }
             }
 
-            // Sort & cap.
+            // Sort & cap (bbox mode keeps everything inside the rectangle).
             targets.Sort((a, b) => a.dist.CompareTo(b.dist));
-            if (targets.Count > maxCount) targets = targets.GetRange(0, maxCount);
+            if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
             if (targets.Count == 0)
             {
-                Log.Log($"[npc_fertilize] {npcName}: no empty unfertilized HoeDirt in radius={radius}", LogLevel.Info);
+                string scope = bboxOn ? $"bbox=({bx1},{by1})-({bx2},{by2})" : $"radius={radius}";
+                Log.Log($"[npc_fertilize] {npcName}: no empty unfertilized HoeDirt in {scope}", LogLevel.Info);
+                MarkNothingToDo($"no empty unfertilized tilled soil in {scope}");
                 return;
             }
 
@@ -1592,8 +2024,17 @@ namespace SmartNPC.Bridge
             if (available <= 0)
                 Log.Log($"[npc_fertilize] {npcName}: no {fertId} in backpack, fertilizing without consuming", LogLevel.Info);
 
-            var tilePoints = targets.Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var tilePoints = PathPlanner.PlanBy(
+                startPt, targets, t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y))
+                .Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
             _follow.StartFertilize(npcName, tilePoints, fertId, _inventory);
+
+            BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
+                bboxOn ? bx1 : (int)npcTile.X - radius,
+                bboxOn ? by1 : (int)npcTile.Y - radius,
+                bboxOn ? bx2 : (int)npcTile.X + radius,
+                bboxOn ? by2 : (int)npcTile.Y + radius);
 
             Log.Log($"[npc_fertilize] {npcName}: queued {tilePoints.Count()} tiles to fertilize with {fertId} (in_backpack={available})", LogLevel.Info);
         }

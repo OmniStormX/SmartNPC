@@ -21,14 +21,29 @@ import (
 // reasoning. Concrete tool parameters (location, duration, message
 // content, item id, etc.) are deferred to the moment the entry fires:
 // the LLM will pick them then based on live game state instead of
-// committing to numbers ahead of time. This both shrinks plan-time
-// prompts and lets reactions stay context-aware.
+// committing to numbers ahead of time.
+//
+// Time precision: minute-of-day from midnight (06:00 = 360, 25:30 = 1530).
+// GameHour is kept for backward compatibility with older callers / logs;
+// it is derived from GameMinutes when not set explicitly.
 type Entry struct {
-	GameHour int       `json:"game_hour"`        // 6-25 (SDV time: 6am to 2am next day shown as 25/26)
-	Action   string    `json:"action"`           // MCP tool name, e.g. "npc_water_crops"
-	Reason   string    `json:"reason,omitempty"` // LLM's reasoning (for debugging / display)
-	Fired    bool      `json:"fired"`            // set true once dispatched
-	FiredAt  time.Time `json:"fired_at,omitempty"`
+	GameHour    int       `json:"game_hour"            jsonschema:"6-25, the hour the entry fires (10-minute precision via game_minute)"`
+	GameMinute  int       `json:"game_minute,omitempty" jsonschema:"0-50 in 10-minute steps; defaults to 0 if absent"`
+	GameMinutes int       `json:"game_minutes,omitempty" jsonschema:"derived: hour*60 + minute (used internally; no need to set)"`
+	Action      string    `json:"action"               jsonschema:"MCP tool name, e.g. \"npc_water_crops\""`
+	Reason      string    `json:"reason,omitempty"     jsonschema:"LLM's reasoning (for debugging / display)"`
+	Fired       bool      `json:"fired"                jsonschema:"set true once dispatched"`
+	FiredAt     time.Time `json:"fired_at,omitempty"`
+}
+
+// MinutesOfDay returns the entry's fire time as a minute-of-day count
+// (06:00 → 360). Falls back to GameHour*60 when GameMinutes is unset so
+// older serialized schedules keep working unchanged.
+func (e Entry) MinutesOfDay() int {
+	if e.GameMinutes > 0 {
+		return e.GameMinutes
+	}
+	return e.GameHour*60 + e.GameMinute
 }
 
 // DaySchedule holds one NPC's plan for one game day.
@@ -40,12 +55,14 @@ type DaySchedule struct {
 	Entries []Entry `json:"entries"`
 }
 
-// FiredEntry is returned by Tick when a schedule entry's hour arrives.
+// FiredEntry is returned by Tick when a schedule entry's time arrives.
 type FiredEntry struct {
-	NPC      string `json:"npc"`
-	GameHour int    `json:"game_hour"`
-	Action   string `json:"action"`
-	Reason   string `json:"reason,omitempty"`
+	NPC         string `json:"npc"`
+	GameHour    int    `json:"game_hour"`
+	GameMinute  int    `json:"game_minute"`
+	GameMinutes int    `json:"game_minutes"`
+	Action      string `json:"action"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // Scheduler manages daily schedules for all NPCs. Thread-safe.
@@ -132,15 +149,25 @@ func (s *Scheduler) ClearNPC(npc string) {
 	delete(s.schedules, npc)
 }
 
-// Tick checks all schedules against the given game hour and returns entries
-// that should fire now. Each entry fires at most once per day.
-// Entries whose GameHour is at or before the current hour are fired, so
-// skipped hours (sleep, cutscene, debug time-jump) are never lost.
+// Tick checks all schedules against the given absolute minute-of-day and
+// returns entries that should fire now. Each entry fires at most once per
+// day. Entries whose fire time is at or before the current minute are
+// fired, so skipped ticks (sleep, cutscene, debug time-jump, 20-minute
+// tick cadence missing a 10-minute entry) are never lost.
 //
-// gameHour should be 6-25 (matching SDV's 6:00am to 2:00am range).
-func (s *Scheduler) Tick(gameHour int) []FiredEntry {
+// gameMinutes is hour*60 + minute (06:00 → 360, 25:00 → 1500). For
+// backward compatibility with callers that still pass an hour (≤ 30,
+// matches SDV's 6-25 range plus a margin), we promote it to hour*60.
+func (s *Scheduler) Tick(gameMinutes int) []FiredEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Backward-compat: legacy callers passed an integer hour. Anything ≤ 30
+	// can't be a minute-of-day count (>= 360 in practice), so treat it as
+	// an hour and promote.
+	if gameMinutes <= 30 {
+		gameMinutes *= 60
+	}
 
 	var fired []FiredEntry
 	now := time.Now()
@@ -148,16 +175,21 @@ func (s *Scheduler) Tick(gameHour int) []FiredEntry {
 	for npc, sched := range s.schedules {
 		for i := range sched.Entries {
 			e := &sched.Entries[i]
-			if e.Fired || e.GameHour > gameHour {
+			if e.Fired {
+				continue
+			}
+			if e.MinutesOfDay() > gameMinutes {
 				continue
 			}
 			e.Fired = true
 			e.FiredAt = now
 			fired = append(fired, FiredEntry{
-				NPC:      npc,
-				GameHour: e.GameHour,
-				Action:   e.Action,
-				Reason:   e.Reason,
+				NPC:         npc,
+				GameHour:    e.GameHour,
+				GameMinute:  e.GameMinute,
+				GameMinutes: e.MinutesOfDay(),
+				Action:      e.Action,
+				Reason:      e.Reason,
 			})
 		}
 	}

@@ -34,7 +34,7 @@ Triggered by:
 | `npc_harvest_crops` | Harvest mature crops, items go to NPC backpack | Mature crops within radius |
 | `npc_deposit_items` | Store backpack items in nearest chest | Items in backpack, chest exists |
 | `npc_deliver_items` | Hand backpack items to the player | Items in backpack, player nearby + available |
-| `npc_plant_seeds` | Replant on newly empty tilled soil | Empty tilled soil, seeds available |
+| `npc_plant_seeds` | Replant on newly empty tilled soil | Empty tilled soil. **Seeds NOT required** — free-plant mode runs even with an empty backpack. |
 | `npc_water_crops` | Water the replanted seeds | Dry tiles after replanting |
 | `npc_show_text_bubble` | Show a brief in-character thought | — (always available) |
 
@@ -43,7 +43,7 @@ Triggered by:
 ```
 harvest_crops ──→ deposit_items    (backpack fills up → must store)
 harvest_crops ──→ deliver_items    (alternative to deposit, give to player)
-harvest_crops ──→ plant_seeds      (optional: after harvest, replant if seeds available)
+harvest_crops ──→ plant_seeds      (recommended: after harvest, replant on the empty tiled soil — free-plant mode means no seeds needed)
 plant_seeds   ──→ water_crops      (new seeds need water)
 ```
 

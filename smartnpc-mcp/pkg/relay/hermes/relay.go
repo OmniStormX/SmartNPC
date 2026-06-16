@@ -152,6 +152,17 @@ func (r *Relay) HandleEvent(_ context.Context, name string, data json.RawMessage
 	r.logger.Info("hermesrelay event received",
 		"event", name, "conversation", r.getConversation())
 	input := events.FormatForHermes(name, data)
+	// Empty formatter output = "do not forward this event to the agent".
+	// Used by FormatForHermes to silently drop NPC-internal echoes (e.g.
+	// per-tile crop_harvested broadcasts) and unknown events that have no
+	// actionable rendering. Returning a generic fallback would otherwise
+	// pollute the agent's turn history and cause it to project the event
+	// onto the player — see comment in events/format.go.
+	if input == "" {
+		r.logger.Debug("hermesrelay event suppressed (empty render)",
+			"event", name)
+		return
+	}
 	LogRelayRequest(r.cfg.NPCName, name, len(input), len(r.persona)+len(r.criticalRules))
 	go r.post(input, name)
 }

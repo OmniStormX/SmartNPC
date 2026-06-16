@@ -242,16 +242,23 @@ func TestFormatForHermes_ChatReceivedPrivateLegacy(t *testing.T) {
 }
 
 func TestFormatForHermes_UnknownEvent(t *testing.T) {
+	// Unknown events are deliberately suppressed: a generic
+	// "Game event \"X\" occurred." line is worse than nothing because the
+	// agent tends to project the implied action onto the player. The relay
+	// treats an empty render as "do not forward this turn".
 	got := FormatForHermes("something_new", json.RawMessage(`{}`))
-	if !strings.Contains(got, "something_new") {
-		t.Fatalf("expected fallback to echo event name; got %q", got)
+	if got != "" {
+		t.Fatalf("expected empty render for unknown event; got %q", got)
 	}
 }
 
 func TestFormatForHermes_MalformedPayloadFallsBack(t *testing.T) {
+	// Same suppression policy applies when a known event arrives with a
+	// malformed payload — better to drop the turn than to fabricate a
+	// generic line that might mislead the model.
 	got := FormatForHermes(bridge.EventChatMessage, json.RawMessage(`not valid json`))
-	if !strings.Contains(got, bridge.EventChatMessage) {
-		t.Fatalf("expected fallback string for bad payload; got %q", got)
+	if got != "" {
+		t.Fatalf("expected empty render for bad payload; got %q", got)
 	}
 }
 
