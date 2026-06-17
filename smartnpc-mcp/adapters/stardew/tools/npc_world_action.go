@@ -350,6 +350,24 @@ type NpcFertilizeOutput struct {
 	Message     string `json:"message,omitempty"    jsonschema:"status"`
 }
 
+// ── npc_fill_gaps ────────────────────────────────────────────────────
+
+type NpcFillGapsInput struct {
+	NPC string `json:"npc"               jsonschema:"NPC internal name"`
+	X1  int    `json:"x1,omitempty"      jsonschema:"bbox left edge (inclusive); set all 4 to scan rectangle"`
+	Y1  int    `json:"y1,omitempty"      jsonschema:"bbox top edge (inclusive)"`
+	X2  int    `json:"x2,omitempty"      jsonschema:"bbox right edge (inclusive)"`
+	Y2  int    `json:"y2,omitempty"      jsonschema:"bbox bottom edge (inclusive)"`
+}
+
+type NpcFillGapsOutput struct {
+	OK      bool   `json:"ok"                jsonschema:"true if accepted"`
+	NPC     string `json:"npc"               jsonschema:"echo"`
+	Filled  int    `json:"filled,omitempty"  jsonschema:"number of gap tiles filled"`
+	Skipped int    `json:"skipped,omitempty" jsonschema:"gap tiles skipped (occupied/blocked)"`
+	Message string `json:"message,omitempty" jsonschema:"status"`
+}
+
 // ── npc_break_resource ──────────────────────────────────────────────
 
 type NpcBreakResourceInput struct {
@@ -761,6 +779,25 @@ func registerNpcWorldAction(s *mcp.Server, br *bridge.WSClient) {
 		}
 		logToolCall("npc_fertilize", in)
 		out, err := callBridge[NpcFertilizeOutput](ctx, req, br, bridge.ActionNpcFertilize, in, "npc_fertilize")
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_fill_gaps",
+		Description: "NPC fills gaps within an existing farmland bbox — tills empty tiles " +
+			"that are inside the farmland rectangle but not yet HoeDirt.\n\n" +
+			"When to call: farm_actions shows fill.count > 0 — gaps exist inside the farmland " +
+			"bbox. Call AFTER clearing fill_blocked (if any) with npc_clear_debris / npc_break_resource.\n\n" +
+			"Targeting: pass x1/y1/x2/y2 = fill.bbox from npc_inspect_object(what=farm_actions).\n\n" +
+			"Constraints: only tills empty passable Diggable tiles. Does NOT clear debris or chop trees — " +
+			"agent must handle fill_blocked first.\n\n" +
+			"Side-effect: WRITE (creates HoeDirt in gaps).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in NpcFillGapsInput) (*mcp.CallToolResult, NpcFillGapsOutput, error) {
+		if in.NPC == "" {
+			return nil, NpcFillGapsOutput{}, errNpcRequired
+		}
+		logToolCall("npc_fill_gaps", in)
+		out, err := callBridge[NpcFillGapsOutput](ctx, req, br, bridge.ActionNpcFillGaps, in, "npc_fill_gaps")
 		return nil, out, err
 	})
 

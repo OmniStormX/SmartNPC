@@ -91,6 +91,7 @@ const (
 	ActionNpcPlaceObject   = "npc_place_object"
 	ActionNpcBreakResource = "npc_break_resource"
 	ActionNpcFertilize     = "npc_fertilize"
+	ActionNpcFillGaps      = "npc_fill_gaps"
 
 	// ── NPC inventory transfer ────────────────────────────────────
 	ActionNpcWithdrawItems = "npc_withdraw_from_chest"
