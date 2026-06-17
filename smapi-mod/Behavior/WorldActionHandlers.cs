@@ -336,9 +336,9 @@ namespace SmartNPC.Bridge
         }
 
         /// <summary>
-        /// TerrainFeature counterpart of IsDebris: tree stumps (chopped-down trees)
-        /// and saplings (growthStage &lt; 5) are clearable; mature trees are not
-        /// (they belong to npc_break_resource).
+        /// TerrainFeature counterpart of IsDebris: tree stumps, saplings,
+        /// and tall grass are clearable; mature trees are not (they belong
+        /// to npc_break_resource).
         /// </summary>
         internal static bool IsTerrainDebris(StardewValley.TerrainFeatures.TerrainFeature tf)
         {
@@ -347,14 +347,18 @@ namespace SmartNPC.Bridge
                 if (tree.stump.Value) return true;
                 if (tree.growthStage.Value < 5) return true;
             }
+            if (tf is StardewValley.TerrainFeatures.Grass)
+                return true;
             return false;
         }
 
-        /// <summary>Drop id for terrain debris: stump→Hardwood, sapling→Wood.</summary>
+        /// <summary>Drop id for terrain debris: stump→Hardwood, sapling→Wood, grass→Fiber.</summary>
         internal static string TerrainDebrisDropId(StardewValley.TerrainFeatures.TerrainFeature tf)
         {
             if (tf is StardewValley.TerrainFeatures.Tree tree && tree.stump.Value)
                 return "(O)709"; // Hardwood
+            if (tf is StardewValley.TerrainFeatures.Grass)
+                return "(O)771"; // Fiber (Mixed Seeds equivalent)
             return "(O)388"; // Wood
         }
 
@@ -1792,6 +1796,8 @@ namespace SmartNPC.Bridge
                 if (tree.stump.Value) return true;
                 if (tree.growthStage.Value < 5) return true;
             }
+            if (tf is StardewValley.TerrainFeatures.Grass)
+                return true;
             return false;
         }
 
