@@ -209,7 +209,7 @@ namespace SmartNPC.Bridge
             // 2. Scan for clearable objects, restricted to the farmland
             //    bbox when one was found; otherwise the original user
             //    region (radius/bbox).
-            var targets = new List<(Microsoft.Xna.Framework.Vector2 tile, StardewValley.Object obj)>();
+            var targets = new List<Microsoft.Xna.Framework.Vector2>();
 
             foreach (var kv in location.Objects.Pairs)
             {
@@ -229,12 +229,34 @@ namespace SmartNPC.Bridge
                     float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
                     if (dist > radius) continue;
                 }
-                targets.Add((tile, obj));
+                targets.Add(tile);
+            }
+
+            // 2b. Scan terrainFeatures for tree stumps and saplings.
+            foreach (var kv in location.terrainFeatures.Pairs)
+            {
+                var tile = kv.Key;
+                var tf   = kv.Value;
+                if (!IsTerrainDebris(tf)) continue;
+                if (farmlandFound)
+                {
+                    if (tile.X < fx1 || tile.X > fx2 || tile.Y < fy1 || tile.Y > fy2) continue;
+                }
+                else if (bboxOn)
+                {
+                    if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
+                }
+                else
+                {
+                    float dist = Microsoft.Xna.Framework.Vector2.Distance(npcTile, tile);
+                    if (dist > radius) continue;
+                }
+                targets.Add(tile);
             }
 
             targets.Sort((a, b) =>
-                Microsoft.Xna.Framework.Vector2.Distance(npcTile, a.tile)
-                    .CompareTo(Microsoft.Xna.Framework.Vector2.Distance(npcTile, b.tile)));
+                Microsoft.Xna.Framework.Vector2.Distance(npcTile, a)
+                    .CompareTo(Microsoft.Xna.Framework.Vector2.Distance(npcTile, b)));
 
             if (targets.Count > effectiveCap) targets = targets.GetRange(0, effectiveCap);
 
@@ -249,16 +271,12 @@ namespace SmartNPC.Bridge
             }
 
             // 3. Plan a near-optimal visit order over the capped target set
-            //    (TSP-style: nearest-neighbor + 2-opt). Distance-sorted picks
-            //    minimise the *first* hop only; TSP minimises the whole tour
-            //    so the NPC stops zig-zagging across the area.
             var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
-            var tilePoints = PathPlanner.PlanBy(
-                startPt,
-                targets,
-                t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y))
-                .Select(t => new Microsoft.Xna.Framework.Point((int)t.tile.X, (int)t.tile.Y));
-            _follow.StartClearDebris(npcName, tilePoints, _inventory);
+            var tilePoints = targets
+                .Select(t => new Microsoft.Xna.Framework.Point((int)t.X, (int)t.Y))
+                .ToList();
+            var ordered = PathPlanner.PlanBy(startPt, tilePoints, p => p);
+            _follow.StartClearDebris(npcName, ordered, _inventory);
 
             // Visualise the actual area the NPC will work in: farmland bbox
             // when we narrowed; otherwise the agent-provided region.
