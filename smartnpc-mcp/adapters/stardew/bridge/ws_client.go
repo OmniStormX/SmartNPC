@@ -26,7 +26,7 @@ const DefaultWSURL = "ws://127.0.0.1:18745/ws"
 
 // Default timeouts. Override via WSClientOptions.
 const (
-	defaultCallTimeout  = 10 * time.Second
+	defaultCallTimeout  = 60 * time.Minute  // 1 hour — effectively disabled for practical purposes
 	defaultDialTimeout  = 5 * time.Second
 	defaultRetryBackoff = 2 * time.Second
 )

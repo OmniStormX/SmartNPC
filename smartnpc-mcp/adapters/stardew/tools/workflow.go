@@ -242,8 +242,7 @@ func RegisterWorkflow(s *mcp.Server, reg *workflow.Registry, debug bool) {
 				return nil, WorkflowRunInlineOutput{}, fmt.Errorf("workflow_id or inline is required")
 			}
 
-			runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
+			runCtx := ctx // no extra timeout — parent ctx provides guardrail
 
 			runner := &noopRunner{}
 			res, err := workflow.Run(runCtx, runner, in.NPC, def, in.Args)
