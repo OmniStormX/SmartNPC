@@ -1,6 +1,9 @@
 id: resource_gather
 description: 资源采集：巡视 → 捡野生物品 + 砍树砸石 → 存箱 → 气泡
 version: "3"
+loop:
+  mode: skill_controlled
+  stop_on: next_schedule
 inputs:
   - name: inspect_radius
     description: 巡视半径

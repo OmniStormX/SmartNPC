@@ -1,6 +1,9 @@
 id: farm_care
 description: 农场养护：巡视 → LLM 动态决策（收菜+浇水+补种）→ 存箱 → 气泡
 version: "3"
+loop:
+  mode: skill_controlled
+  stop_on: next_schedule
 inputs:
   - name: inspect_radius
     description: 巡视半径
