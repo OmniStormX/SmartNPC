@@ -207,13 +207,8 @@ func (e *engine) runTool(ctx context.Context, t *ToolStep, scope *Scope) (bool, 
 		slog.Info("workflow: runTool", "npc", e.npc, "tool", t.Name, "args", args)
 
 
-	// Per-tool timeout: explicit value wins, otherwise 60 s default.
-	timeout := time.Duration(t.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = defaultToolTimeout
-	}
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	// Tool timeout disabled — parent workflow ctx and FollowSystem MaxActionTicks provide sufficient guardrails.
+	callCtx := ctx
 
 	out, err := e.runner.CallTool(callCtx, e.npc, t.Name, args)
 	if err != nil {
