@@ -72,14 +72,15 @@ water_crops  可随时对干燥砖格进行
 npc_inspect_object(radius=15, what="farm_actions")
   → 查看 till.count 高，clear.count 可能有，plant.count 低
 
-npc_clear_debris(x1,y1,x2,y2 = till.bbox)
-  → 清除待开垦区域内的所有杂物（杂草、树枝、石头、树桩、树苗）
-  → **重要：始终使用 till.bbox 而非 clear.bbox** —— till.bbox 覆盖了整个待开垦区域，
-  → 包括耕地边缘外的杂物。只有 till.bbox 能保证翻耕前该区域完全没有障碍物。
-  → 即使 clear.count == 0 也要执行此步 —— till.bbox 内的杂物可能被归类为 till 而非 clear。
+npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
+  → 清除农田及周边区域内的杂物（杂草、树枝、石头、树桩、树苗）
+  → 使用 clear.bbox —— 它已裁剪到农田范围，避免清到远处无关区域。
+  → 如果 clear.count == 0 但 till.count > 0，跳过此步（TickTillSoil 内部逐格清理）。
 
 npc_till_soil(x1,y1,x2,y2 = till.bbox)
-  → 翻耕清理后的空地（内部 TickTillSoil 会再次检查并补清遗漏的杂物）
+  → 翻耕待开垦区域。**内部 TickTillSoil 会在翻耕前逐格清理杂物、树桩、成熟树。**
+  → 不要在 till_soil 前用 till.bbox 调 clear_debris —— till.bbox 跨度过大。
+  → 如果返回 nothing_to_do=true，用更小的 patch_w/patch_h 或更大的 radius 重试。
 
 npc_plant_seeds(seed_id = 当季种子, x1,y1,x2,y2 = till.bbox 或 plant.bbox)
   → 在新耕地上种植。背包为空则使用免费种植模式。
