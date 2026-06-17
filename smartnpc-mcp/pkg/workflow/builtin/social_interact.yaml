@@ -1,6 +1,6 @@
 id: social_interact
-description: 玩家互动：可选摸宠物 → 可选送货 → 走近聊天 → 气泡
-version: "2"
+description: 玩家互动：可选摸宠物 → 可选送货 → 走近 → LLM 聊天 → 气泡
+version: "3"
 inputs:
   - name: pet_first
     description: 是否先摸宠物再找玩家
@@ -27,14 +27,18 @@ steps:
         args: {}
         on_nothing_to_do: skip
 
-  # 走近聊天
+  # 走近玩家
   - kind: tool
     name: npc_approach_and_speak
     args: {}
     on_nothing_to_do: skip
 
+  # LLM 驱动的社交聊天 — 聊近期事件、今天做了什么、关心玩家
+  - kind: skill_call
+    skill: smartnpc-social-chat
+
   # 收尾气泡
   - kind: tool
     name: npc_show_text_bubble
     args:
-      text: "[今天过得不错~]"
+      text: "[和你聊天真开心~]"
