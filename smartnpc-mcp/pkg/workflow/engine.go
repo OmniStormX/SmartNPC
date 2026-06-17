@@ -194,7 +194,7 @@ func (s *StopStep) reasonOr(fallback string) string {
 // a ToolStep does not set an explicit timeout_seconds. Heavy actions
 // (clear_debris, break_resource, etc.) should get an explicit value in the
 // YAML so the intent is visible; this is the safety net.
-const defaultToolTimeout = 60 * time.Second
+const defaultToolTimeout = 120 * time.Second
 
 func (e *engine) runTool(ctx context.Context, t *ToolStep, scope *Scope) (bool, error) {
 	if t == nil || t.Name == "" {
