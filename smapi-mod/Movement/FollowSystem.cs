@@ -117,6 +117,10 @@ namespace SmartNPC.Bridge
         public Point         TillTarget { get; set; }
         public bool          TillPathed { get; set; }
         public int           TillCount  { get; set; }
+        /// <summary>Tiles in the till patch that have debris to clear before tilling.</summary>
+        public System.Collections.Generic.List<Point>? TillPreClearTiles { get; set; }
+        /// <summary>Tiles in the till patch that have mature trees to chop before tilling.</summary>
+        public System.Collections.Generic.List<Point>? TillPreBreakTiles { get; set; }
 
         // ForageCollect: walk to spawned objects and pick them up.
         public Queue<(Point Tile, string ItemId, string ItemName)>? ForageQueue    { get; set; }
@@ -615,12 +619,16 @@ namespace SmartNPC.Bridge
         /// Queue up a list of empty diggable tiles for the NPC to walk to and
         /// till (create HoeDirt) one by one. Only valid on farm-type maps.
         /// </summary>
-        public void StartTillSoil(string npcName, IEnumerable<Point> targets)
+        public void StartTillSoil(string npcName, IEnumerable<Point> targets,
+            System.Collections.Generic.List<Point>? preClearTiles = null,
+            System.Collections.Generic.List<Point>? preBreakTiles = null)
         {
             var st = this.GetOrCreate(npcName);
-            st.TillQueue  = new Queue<Point>(targets);
-            st.TillPathed = false;
-            st.TillCount  = 0;
+            st.TillQueue         = new Queue<Point>(targets);
+            st.TillPreClearTiles = preClearTiles;
+            st.TillPreBreakTiles = preBreakTiles;
+            st.TillPathed        = false;
+            st.TillCount         = 0;
 
             if (st.TillQueue.Count == 0)
             {
@@ -1800,6 +1808,24 @@ namespace SmartNPC.Bridge
                     debrisCleared = true;
                     _log.Log(
                         $"[FollowSystem/TillSoil] {npcName}: cleared terrain debris at ({target.X},{target.Y})",
+                        LogLevel.Debug);
+                }
+                else if (location.terrainFeatures.TryGetValue(targetV2, out var treeTf)
+                    && treeTf is StardewValley.TerrainFeatures.Tree tree
+                    && tree.growthStage.Value >= 5
+                    && !tree.tapped.Value)
+                {
+                    // Chop the tree — drop wood based on tree type.
+                    // Mahogany (treeType="3") → Hardwood, others → regular Wood.
+                    string dropId = tree.treeType.Value == "3" ? "(O)709" : "(O)388";
+                    location.terrainFeatures.Remove(targetV2);
+                    // Drop the wood as a spawned object on the ground.
+                    var woodObj = new StardewValley.Object(dropId, 1);
+                    woodObj.IsSpawnedObject = true;
+                    location.Objects.Add(targetV2, woodObj);
+                    debrisCleared = true;
+                    _log.Log(
+                        $"[FollowSystem/TillSoil] {npcName}: chopped tree at ({target.X},{target.Y}) → {dropId}",
                         LogLevel.Debug);
                 }
 
