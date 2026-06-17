@@ -1,43 +1,12 @@
 id: farm_cleanup
-description: 农场清理：巡视 → LLM 动态决策（清杂物+砍树碎石）→ 存箱 → 气泡
-version: "3"
-loop:
-  mode: skill_controlled
-  stop_on: next_schedule
+description: 农场清理——Agent 根据 smartnpc-farm-cleanup skill 动态决策
+version: "5"
 inputs:
   - name: inspect_radius
     description: 巡视半径
     default: 30
-  - name: extend_bbox
-    description: 农田 bbox 外扩格数
-    default: 3
 steps:
-  # 1. 观测农场
-  - kind: tool
-    name: npc_inspect_object
-    args:
-      what: farm_actions
-      radius: "$inspect_radius"
-    save_as: obs
-
-  # 2. LLM 动态决策。加载 smartnpc-farm-maintenance skill，
-  #    LLM 根据实时 farm_actions 自行决定：
-  #    清理杂物（优先农田及周边）→ 砍树碎石 → 采集
   - kind: skill_call
-    skill: smartnpc-farm-maintenance
+    skill: smartnpc-farm-cleanup
     args:
       inspect_radius: "$inspect_radius"
-      extend_bbox: "$extend_bbox"
-
-  # 3. 存箱
-  - kind: tool
-    name: npc_deposit_items
-    args:
-      auto_find: true
-    on_nothing_to_do: skip
-
-  # 4. 收尾气泡
-  - kind: tool
-    name: npc_show_text_bubble
-    args:
-      text: "[农场和周边清理干净了~]"

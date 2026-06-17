@@ -1,6 +1,6 @@
 id: farm_evening_close
-description: 傍晚农场收尾：最后一轮收割 → 入库 → 补种 → 锁箱情绪气泡
-version: "1"
+description: 傍晚收尾——Agent 根据 smartnpc-farm-evening-close skill 动态决策
+version: "4"
 inputs:
   - name: inspect_radius
     description: 巡视半径
@@ -9,59 +9,8 @@ inputs:
     description: 补种的种子 Qualified ID
     default: "(O)472"
 steps:
-  # 1. 观测
-  - kind: tool
-    name: npc_inspect_object
+  - kind: skill_call
+    skill: smartnpc-farm-evening-close
     args:
-      what: farm_actions
-      radius: "$inspect_radius"
-    save_as: obs
-
-  # 2. 有可收作物 → 收割 + 入库
-  - kind: branch
-    when: "$obs.actions_available.harvest.count > 0"
-    then:
-      - kind: tool
-        name: npc_harvest_crops
-        args:
-          x1: "$obs.actions_available.harvest.bbox.x1"
-          y1: "$obs.actions_available.harvest.bbox.y1"
-          x2: "$obs.actions_available.harvest.bbox.x2"
-          y2: "$obs.actions_available.harvest.bbox.y2"
-        on_nothing_to_do: skip
-      - kind: tool
-        name: npc_deposit_items
-        args:
-          auto_find: true
-        on_nothing_to_do: skip
-
-  # 3. 有空位 → 补种
-  - kind: branch
-    when: "$obs.actions_available.plant.count > 0"
-    then:
-      - kind: tool
-        name: npc_plant_seeds
-        args:
-          seed_id: "$target_seed"
-          x1: "$obs.actions_available.plant.bbox.x1"
-          y1: "$obs.actions_available.plant.bbox.y1"
-          x2: "$obs.actions_available.plant.bbox.x2"
-          y2: "$obs.actions_available.plant.bbox.y2"
-        on_nothing_to_do: skip
-
-  # 4. 收尾：锁箱子情绪
-  - kind: tool
-    name: npc_show_text_bubble
-    args:
-      text: "[今天干得不错，收工了]"
-
-  - kind: random
-    weighted:
-      - weight: 2
-        do:
-          - kind: tool
-            name: npc_express_emotion
-            args:
-              emotion: happy
-      - weight: 1
-        do: []
+      inspect_radius: "$inspect_radius"
+      target_seed: "$target_seed"

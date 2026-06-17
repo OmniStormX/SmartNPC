@@ -206,7 +206,10 @@ namespace SmartNPC.Bridge
 
             this.MaybeQueueDebugEvent(req);
 
+            var t0 = DateTime.UtcNow;
             Response resp = await _router.Dispatch(req).ConfigureAwait(false);
+            var elapsed = (DateTime.UtcNow - t0).TotalMilliseconds;
+            _log.Log($"[timing] ws={req.Id} action={req.Action} elapsed={elapsed:F0}ms ok={resp?.Ok}", LogLevel.Info);
             await this.SendJson(resp).ConfigureAwait(false);
         }
 

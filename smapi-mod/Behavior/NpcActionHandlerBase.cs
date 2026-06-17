@@ -175,6 +175,7 @@ namespace SmartNPC.Bridge
             if (string.IsNullOrWhiteSpace(npcName))
                 return Task.FromResult(Response.Failure(id, "invalid_params", "npc is required"));
 
+            var enqueuedAt = DateTime.UtcNow;
             string bubble = ResolveBubble(@params);
             var tcs = new TaskCompletionSource<Response>();
             string captured = npcName;
@@ -189,7 +190,9 @@ namespace SmartNPC.Bridge
                 // The pump runs thunks serially on the game thread, so a
                 // plain field is enough; reset is defense-in-depth in case
                 // a previous thunk threw before we cleared it.
+                var queueWait = (DateTime.UtcNow - enqueuedAt).TotalMilliseconds;
                 _nothingReason = null;
+                var tExec0 = DateTime.UtcNow;
                 try
                 {
                     NPC? npc = Game1.getCharacterFromName(captured);
@@ -265,6 +268,9 @@ namespace SmartNPC.Bridge
                     Log.Log($"[{ActionName}] error: {ex.Message}", LogLevel.Error);
                     tcs.TrySetResult(Response.Failure(id, "handler_error", ex.Message));
                 }
+                var tExec = (DateTime.UtcNow - tExec0).TotalMilliseconds;
+                if (tExec > 500 || queueWait > 100)
+                    Log.Log($"[timing] game-thread req={id} action={ActionName} npc={captured} queueWait={queueWait:F0}ms exec={tExec:F0}ms", LogLevel.Info);
             };
 
             // Routing decision: trivial actions, queue-eligible actions, or

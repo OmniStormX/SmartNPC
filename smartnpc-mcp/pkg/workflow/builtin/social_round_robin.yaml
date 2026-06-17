@@ -1,32 +1,8 @@
 id: social_round_robin
-description: 拜访 NPC：走近聊天或随机表情 —— 三选一社交动作
-version: "1"
+description: 轻量社交——Agent 根据 smartnpc-social-round-robin skill 动态决策
+version: "5"
 steps:
-  # 随机选择社交动作
-  - kind: random
-    weighted:
-      - weight: 3
-        do:
-          - kind: tool
-            name: npc_approach_and_speak
-            args: {}
-            on_nothing_to_do: skip
-      - weight: 2
-        do:
-          - kind: tool
-            name: npc_express_emotion
-            args:
-              emotion: happy
-      - weight: 2
-        do:
-          - kind: tool
-            name: npc_dance_happy
-            args: {}
-      - weight: 1
-        do:
-          - kind: tool
-            name: npc_wander
-            args:
-              duration_ticks: 150
-              radius: 6
-            on_nothing_to_do: skip
+  - kind: skill_call
+    skill: smartnpc-social-round-robin
+    args:
+      mode: casual_round

@@ -231,7 +231,15 @@ namespace SmartNPC.Bridge
         // force-idled and the action queue is discarded — this prevents an NPC
         // from spending 3+ real minutes on a single break_resource or clear_debris
         // sweep that the workflow engine already considered timed out.
-        private const int MaxActionTicks = 3600;
+        private const int MaxActionTicks = int.MaxValue; // effectively disabled — Go-side workflow ctx handles lifecycle
+
+        // Max real-time duration for the clear_debris action (in ticks).
+        // At ~60 ticks/s this is 15 real seconds. When exceeded the NPC is
+        // force-idled and the remaining debris queue is discarded — the next
+        // workflow trigger will re-inspect and pick up where it left off.
+        // Separate from MaxActionTicks so only clear_debris is time-bounded;
+        // till/water/harvest use the full workflow ctx lifetime.
+        private const int ClearDebrisMaxTicks = 900; // 15s @ 60fps
 
         // Follow radius: stay within this many tiles of the player. If farther,
         // the NPC is repathed behind the player.
@@ -1341,6 +1349,22 @@ namespace SmartNPC.Bridge
                 return;
             }
 
+            // Per-action time limit: stop after ~15s so the NPC doesn't spend
+            // minutes clearing a giant till.bbox. The next workflow trigger
+            // will re-inspect and pick up remaining debris.
+            if (st.ActionStartedAt > 0 &&
+                (int)(_tickCounter - (uint)st.ActionStartedAt) > ClearDebrisMaxTicks)
+            {
+                int elapsed = (int)(_tickCounter - (uint)st.ActionStartedAt) / 60;
+                _log.Log(
+                    $"[FollowSystem/ClearDebris] {npcName}: ran {elapsed}s, " +
+                    $"exceeded {ClearDebrisMaxTicks / 60}s limit — force-idle " +
+                    $"(remaining queue: {st.DebrisQueue.Count})",
+                    LogLevel.Warn);
+                ForceIdle(npc, npcName, st);
+                return;
+            }
+
             Point target = st.DebrisTarget;
 
             var targetV2 = new Vector2(target.X, target.Y);
@@ -2052,6 +2076,13 @@ namespace SmartNPC.Bridge
                 if (!string.IsNullOrWhiteSpace(st.ApproachReason))
                     npc.showTextAboveHead(st.ApproachReason);
                 npc.doEmote(20); // heart — "I want to talk to you"
+
+                // Broadcast event to trigger LLM conversation about recent events.
+                _ = _broadcastEvent?.Invoke("npc_approached_player", new
+                {
+                    npc    = npcName,
+                    player = player.Name,
+                });
 
                 _log.Log(
                     $"[FollowSystem/ApproachAndSpeak] {npcName}: arrived, facing={facing} → Idle",

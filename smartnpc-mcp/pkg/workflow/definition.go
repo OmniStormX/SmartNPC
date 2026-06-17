@@ -44,8 +44,6 @@ type Definition struct {
 	// Each input may declare a default; if absent and the call did not
 	// supply a value, the variable resolves to nil (expression-friendly).
 	Inputs []InputSpec `json:"inputs,omitempty" yaml:"inputs,omitempty"`
-	// Loop configures repeat behaviour. When nil the workflow runs once.
-	Loop *LoopConfig `json:"loop,omitempty" yaml:"loop,omitempty"`
 	// Steps is the ordered body of the workflow.
 	Steps []Step `json:"steps" yaml:"steps"`
 }
@@ -177,35 +175,6 @@ type WaitStep struct {
 // StopStep ends the workflow early. Reason is recorded in the run log.
 type StopStep struct {
 	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
-}
-
-// ── loop configuration ─────────────────────────────────────────────────
-
-// LoopMode controls whether and how a workflow repeats within its schedule window.
-type LoopMode string
-
-const (
-	LoopNone            LoopMode = ""                // single-shot (default)
-	LoopSkillControlled LoopMode = "skill_controlled" // LLM decides continue/stop each iteration
-)
-
-// StopMode controls external stop conditions for a looping workflow.
-type StopMode string
-
-const (
-	StopOnNone         StopMode = ""
-	StopOnNextSchedule StopMode = "next_schedule" // cancel when next schedule_trigger arrives
-)
-
-// LoopConfig is the optional loop behaviour attached to a workflow Definition.
-type LoopConfig struct {
-	Mode   LoopMode `json:"mode" yaml:"mode"`
-	StopOn StopMode `json:"stop_on,omitempty" yaml:"stop_on,omitempty"`
-}
-
-// IsLooping returns true when the workflow should repeat.
-func (l *LoopConfig) IsLooping() bool {
-	return l != nil && l.Mode != LoopNone
 }
 
 // ── JSON unmarshaling for Step (tagged union) ────────────────────────────

@@ -1,46 +1,12 @@
 id: mine_crawl
-description: "[experimental] 矿洞向下：破除附近资源 → 采集 → 存箱"
-version: "1"
+description: 矿洞探索——Agent 根据 smartnpc-mine-crawl skill 动态决策
+version: "2"
 inputs:
-  - name: break_radius
-    description: 破资源半径
+  - name: inspect_radius
+    description: 探测半径
     default: 8
 steps:
-  # 1. 观察矿洞环境
-  - kind: tool
-    name: npc_inspect_object
+  - kind: skill_call
+    skill: smartnpc-mine-crawl
     args:
-      what: resources
-      radius: "$break_radius"
-    save_as: obs
-
-  # 2. 有资源可破 → 破除
-  - kind: branch
-    when: "$obs.actions_available.break.count > 0"
-    then:
-      - kind: tool
-        name: npc_break_resource
-        args:
-          what: all
-          radius: "$break_radius"
-        on_nothing_to_do: skip
-
-  # 3. 有采集物 → 采集
-  - kind: branch
-    when: "$obs.actions_available.forage.count > 0"
-    then:
-      - kind: tool
-        name: npc_forage_collect
-        args:
-          x1: "$obs.actions_available.forage.bbox.x1"
-          y1: "$obs.actions_available.forage.bbox.y1"
-          x2: "$obs.actions_available.forage.bbox.x2"
-          y2: "$obs.actions_available.forage.bbox.y2"
-        on_nothing_to_do: skip
-
-  # 4. 入库
-  - kind: tool
-    name: npc_deposit_items
-    args:
-      auto_find: true
-    on_nothing_to_do: skip
+      inspect_radius: "$inspect_radius"

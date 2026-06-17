@@ -1,44 +1,20 @@
 id: social_interact
-description: 玩家互动：可选摸宠物 → 可选送货 → 走近 → LLM 聊天 → 气泡
-version: "3"
+description: 玩家互动——Agent 根据 smartnpc-social-interact skill 动态决策
+version: "6"
 inputs:
   - name: pet_first
     description: 是否先摸宠物再找玩家
     default: true
   - name: deliver_first
     description: 是否先送货再聊天
+    default: true
+  - name: give_gift
+    description: 聊天后是否送小礼物
     default: false
 steps:
-  # 可选先摸宠物
-  - kind: branch
-    when: "$pet_first"
-    then:
-      - kind: tool
-        name: npc_pet_animal
-        args: {}
-        on_nothing_to_do: skip
-
-  # 可选先送货
-  - kind: branch
-    when: "$deliver_first"
-    then:
-      - kind: tool
-        name: npc_deliver_items
-        args: {}
-        on_nothing_to_do: skip
-
-  # 走近玩家
-  - kind: tool
-    name: npc_approach_and_speak
-    args: {}
-    on_nothing_to_do: skip
-
-  # LLM 驱动的社交聊天 — 聊近期事件、今天做了什么、关心玩家
   - kind: skill_call
-    skill: smartnpc-social-chat
-
-  # 收尾气泡
-  - kind: tool
-    name: npc_show_text_bubble
+    skill: smartnpc-social-interact
     args:
-      text: "[和你聊天真开心~]"
+      pet_first: "$pet_first"
+      deliver_first: "$deliver_first"
+      give_gift: "$give_gift"

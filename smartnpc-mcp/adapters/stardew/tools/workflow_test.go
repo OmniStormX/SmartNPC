@@ -235,8 +235,10 @@ func TestWorkflowRunInline_RunsBuiltinByID(t *testing.T) {
 	if !out.OK {
 		t.Errorf("expected ok=true, got %+v", out)
 	}
-	if out.ToolCalls < 1 {
-		t.Errorf("farm_cleanup has tool steps, got %d tool calls", out.ToolCalls)
+	// farm_cleanup uses skill_call steps which count toward StepCount
+	// but not ToolCalls (only kind=tool steps increment ToolCalls).
+	if out.StepCount < 1 {
+		t.Errorf("farm_cleanup should have at least 1 step, got %d", out.StepCount)
 	}
 }
 

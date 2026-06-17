@@ -226,8 +226,13 @@ func main() {
 	// available even if the SDV adapter is detached.
 	agentbridge.RegisterMeta(server)
 
+	// Workflow runtime tracker — exposed via npc_workflow_status MCP tool.
+	tracker := &WorkflowTracker{}
+	tracker.sched = dayScheduler
+	tools.RegisterWorkflowStatusTool(server, tracker)
+
 	if br != nil {
-		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, hermesRelays, chatGuard, dayScheduler, workflowReg, workflowPump, *logLevel == "debug"))
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, hermesRelays, chatGuard, dayScheduler, workflowReg, workflowPump, *logLevel == "debug", tracker))
 		if err := br.Connect(ctx); err != nil {
 			// Mod may not be running yet. The ws client retries in the
 			// background; meanwhile non-mod tools (ping) still work.
@@ -314,6 +319,74 @@ func runHTTP(
 // relay may be nil; in that case the Hermes forwarding is skipped.
 // chatGuard may be nil; the reset hook becomes a no-op.
 // sched may be nil; in that case schedule dispatch is skipped.
+// ── WorkflowTracker ────────────────────────────────────────────────────────
+// WorkflowTracker holds runtime state that npc_workflow_status queries.
+// Populated by makeRouter and consumed by the status tool.
+type WorkflowTracker struct {
+	running sync.Map // map[npc]WorkflowRunInfo
+	queues  map[string]chan schedTriggerMsg
+	sched   *scheduler.Scheduler
+}
+
+// WorkflowRunInfo is stored in WorkflowTracker.Running while a workflow is
+// active. Its presence (even with empty WorkflowID) signals "running".
+type WorkflowRunInfo struct {
+	WorkflowID string
+	StartedAt  time.Time
+}
+
+// ── WorkflowStatusProvider interface (tools/workflow.go) ────────────────
+
+func (t *WorkflowTracker) RunningInfo(npc string) (tools.WorkflowStatusRunInfo, bool) {
+	v, ok := t.running.Load(npc)
+	if !ok {
+		return tools.WorkflowStatusRunInfo{}, false
+	}
+	info := v.(WorkflowRunInfo)
+	return tools.WorkflowStatusRunInfo{
+		WorkflowID: info.WorkflowID,
+		StartedAt:  info.StartedAt,
+	}, true
+}
+
+func (t *WorkflowTracker) AllNPCs() []string {
+	if t.sched == nil {
+		return nil
+	}
+	// Prefer agent NPCs (registered workers), fall back to schedule bearers.
+	if agents := t.sched.AgentNPCs(); len(agents) > 0 {
+		return agents
+	}
+	return t.sched.AllNPCs()
+}
+
+func (t *WorkflowTracker) QueueDepth(npc string) int {
+	if t.queues == nil {
+		return 0
+	}
+	ch, ok := t.queues[npc]
+	if !ok {
+		return 0
+	}
+	return len(ch)
+}
+
+func (t *WorkflowTracker) PendingSchedule(npc string) int {
+	if t.sched == nil {
+		return 0
+	}
+	return len(t.sched.PendingEntries(npc))
+}
+
+// exposed for npcWorkflowWorker to update running state.
+func (t *WorkflowTracker) setRunning(npc string, info WorkflowRunInfo) {
+	t.running.Store(npc, info)
+}
+
+func (t *WorkflowTracker) clearRunning(npc string) {
+	t.running.Delete(npc)
+}
+
 // schedTriggerMsg carries everything a per-NPC worker needs to process one
 // schedule_trigger event.
 type schedTriggerMsg struct {
@@ -323,9 +396,12 @@ type schedTriggerMsg struct {
 	action      string
 	reason      string
 	// ── P4 workflow fields ────────────────────────────────────────────
-	workflowID string
-	workflow   *workflow.Definition
-	args       map[string]any
+	workflowID     string
+	workflow       *workflow.Definition
+	args           map[string]any
+	precompiledDef *workflow.Definition // pre-generated concrete steps
+	gameTime       string               // "HH:MM" formatted game time for logging
+	gameMinutes    int                  // minute-of-day for precompile pipeline
 }
 
 // npcWorkerQueueSize is the buffer depth of each per-NPC trigger channel.
@@ -346,6 +422,7 @@ func makeRouter(
 	workflowReg *workflow.Registry,
 	workflowPump bool,
 	schedDebug bool,
+	tracker *WorkflowTracker,
 ) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
 
@@ -368,7 +445,7 @@ func makeRouter(
 			ch := make(chan schedTriggerMsg, npcWorkerQueueSize)
 			npcQueues[npc] = ch
 			if workflowPump {
-				go npcWorkflowWorker(ch, logger, br, relay, workflowReg, schedDebug, activeLoops)
+				go npcWorkflowWorker(ch, logger, br, relay, workflowReg, sched, schedDebug, activeLoops, tracker)
 			} else {
 				go npcTriggerWorker(ch, logger, br, relay, schedDebug)
 			}
@@ -380,6 +457,12 @@ func makeRouter(
 			}
 			logger.Info("scheduler: per-NPC workers started", "count", len(npcQueues), "mode", mode)
 		}
+	}
+
+	// Populate tracker so npc_workflow_status can read runtime state.
+	if tracker != nil {
+		tracker.queues = npcQueues
+		tracker.sched = sched
 	}
 
 	return func(ctx context.Context, name string, data json.RawMessage) {
@@ -474,14 +557,17 @@ func makeRouter(
 
 					// Dispatch to per-NPC worker queue for serial execution.
 					msg := schedTriggerMsg{
-						ctx:         ctx,
-						npc:         entry.NPC,
-						triggerData: triggerData,
-						action:      entry.Action,
-						reason:      entry.Reason,
-						workflowID:  entry.WorkflowID,
-						workflow:    entry.Workflow,
-						args:        entry.Args,
+						ctx:            ctx,
+						npc:            entry.NPC,
+						triggerData:    triggerData,
+						action:         entry.Action,
+						reason:         entry.Reason,
+						workflowID:     entry.WorkflowID,
+						workflow:       entry.Workflow,
+						args:           entry.Args,
+						precompiledDef: entry.PrecompiledDef,
+						gameTime:       fmt.Sprintf("%02d:%02d", entry.GameHour, entry.GameMinute),
+						gameMinutes:    entry.GameMinutes,
 					}
 					if ch, ok := npcQueues[entry.NPC]; ok {
 						select {
@@ -587,14 +673,21 @@ func npcTriggerWorker(
 // messages for a single NPC. When the entry carries a workflow definition,
 // it runs the workflow engine locally (no per-step LLM call). Falls back to
 // schedule_trigger relay when the entry has no workflow definition.
+//
+// When sched is non-nil, the worker uses the precompile pipeline:
+//   - PrecompiledDef on the message is used directly (zero LLM latency).
+//   - After a workflow completes, the next pending entry is precompiled
+//     in the background so it's ready when its trigger fires.
 func npcWorkflowWorker(
 	ch <-chan schedTriggerMsg,
 	logger *slog.Logger,
 	br *bridge.WSClient,
 	relay bridge.EventHandler,
 	workflowReg *workflow.Registry,
+	sched *scheduler.Scheduler,
 	schedDebug bool,
 	activeLoops *sync.Map,
+	tracker *WorkflowTracker,
 ) {
 	for msg := range ch {
 		logger.Debug("workflow worker: received trigger",
@@ -602,10 +695,18 @@ func npcWorkflowWorker(
 			"workflow_id", msg.workflowID,
 			"action", msg.action,
 			"has_inline", msg.workflow != nil,
+			"has_precompiled", msg.precompiledDef != nil,
 		)
 
-		// Resolve the workflow definition.
-		def := resolveDefinition(workflowReg, msg.workflowID, msg.workflow)
+		// Resolve the workflow definition. Precompiled wins — zero LLM latency.
+		var def *workflow.Definition
+		if msg.precompiledDef != nil {
+			def = msg.precompiledDef
+			logger.Info("workflow worker: using precompiled plan",
+				"npc", msg.npc, "steps", len(def.Steps), "game_time", msg.gameTime)
+		} else {
+			def = resolveDefinition(workflowReg, msg.workflowID, msg.workflow)
+		}
 		if def == nil {
 			// No workflow — fall back to old schedule_trigger path.
 			logger.Warn("workflow worker: no workflow definition, dispatching as schedule_trigger",
@@ -616,21 +717,55 @@ func npcWorkflowWorker(
 			if relay != nil {
 				relay(msg.ctx, bridge.EventScheduleTrigger, msg.triggerData)
 			}
+			// Try to precompile the next entry anyway.
+			maybePrecompileNext(msg.ctx, logger, br, relay, sched, workflowReg, msg.npc, msg.gameMinutes)
 			continue
 		}
 
-		// If a looping workflow is already running for this NPC,
-		// cancel it so the new schedule slot takes over.
+		// Cancel any running workflow for this NPC so the new
+		// schedule slot always takes over — not just looping ones.
 		if oldCancel, ok := activeLoops.Load(msg.npc); ok {
 			if cancel, ok := oldCancel.(context.CancelFunc); ok {
+				logger.Info("workflow worker: cancelling previous workflow for new schedule entry",
+					"npc", msg.npc, "new_workflow", def.ID)
 				cancel()
 			}
 			activeLoops.Delete(msg.npc)
 		}
 
+		// Probe NPC busy state before starting the workflow.
+		preMode := ""
+		if br != nil {
+			if raw, err := br.CallAs(context.Background(), msg.npc, "npc_get_behavior", map[string]any{"npc": msg.npc}); err == nil {
+				var bm map[string]any
+				if json.Unmarshal(raw, &bm) == nil {
+					if m, ok := bm["mode"]; ok {
+						preMode = fmt.Sprintf("%v", m)
+					}
+				}
+			}
+		}
+		source := "registry"
+		if msg.precompiledDef != nil {
+			source = "precompiled"
+		}
 		logger.Info("workflow worker: starting workflow",
 			"npc", msg.npc, "workflow_id", def.ID, "steps", len(def.Steps),
-			"loop", def.Loop.IsLooping())
+			"pre_mode", preMode, "game_time", msg.gameTime, "source", source,
+			"reason", msg.reason, "args", msg.args,
+		)
+
+		// Show [W] or [P] bubble above NPC head when workflow triggers.
+		if br != nil {
+			tag := "[W]"
+			if msg.precompiledDef != nil {
+				tag = "[P]"
+			}
+			_, _ = br.CallAs(context.Background(), msg.npc, bridge.ActionNpcShowTextBubble, map[string]any{
+				"npc":  msg.npc,
+				"text": fmt.Sprintf("%s %s", tag, def.ID),
+			})
+		}
 
 		runner := workflow.NewMCPRunner(workflow.MCPRunnerOptions{
 			Bridge: br,
@@ -638,72 +773,161 @@ func npcWorkflowWorker(
 			Relay:  relay,
 		})
 
-		// Run the workflow, potentially in a loop.
-		totalToolCalls := 0
-		totalNothing := 0
-		totalSteps := 0
-		iterations := 0
+		// Run the workflow once.
+		runCtx, runCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// Register so the next schedule entry can cancel us.
+		activeLoops.Store(msg.npc, runCancel)
+
 		started := time.Now()
+		if tracker != nil {
+			tracker.setRunning(msg.npc, WorkflowRunInfo{
+				WorkflowID: def.ID,
+				StartedAt:  started,
+			})
+		}
 
-		for {
-			iterations++
-			runCtx, runCancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			if def.Loop.IsLooping() && def.Loop.StopOn == workflow.StopOnNextSchedule {
-				activeLoops.Store(msg.npc, runCancel)
-			}
+		res, err := workflow.Run(runCtx, runner, msg.npc, def, msg.args)
+		runCancel()
+		activeLoops.Delete(msg.npc)
 
-			res, err := workflow.Run(runCtx, runner, msg.npc, def, msg.args)
-			runCancel()
+		if tracker != nil {
+			tracker.clearRunning(msg.npc)
+		}
 
-			if def.Loop.IsLooping() {
-				activeLoops.Delete(msg.npc)
-			}
+		elapsed := time.Since(started)
+		tools.LogWorkflowRun(msg.npc, "unknown", 0, 0, res, err, elapsed, msg.args)
 
-			totalToolCalls += res.ToolCalls
-			totalNothing += res.NothingToDoCt
-			totalSteps += res.StepCount
+		// ── precompile pipeline: precompile the NEXT pending entry ────
+		maybePrecompileNext(context.Background(), logger, br, relay, sched, workflowReg, msg.npc, msg.gameMinutes)
 
-			if err != nil {
-				logger.Warn("workflow iteration failed",
-					"npc", msg.npc, "workflow", def.ID, "iter", iterations, "err", err)
-			}
-
-			// Determine whether to loop again.
-			shouldLoop := def.Loop.IsLooping() && !res.Stopped && err == nil
-			if !shouldLoop {
-				elapsed := time.Since(started)
-				// Persist the run result with aggregated counts.
-				tools.LogWorkflowRun(msg.npc, "unknown", 0, 0,
-					&workflow.RunResult{
-						WorkflowID:    def.ID,
-						NPC:           msg.npc,
-						StepCount:     totalSteps,
-						ToolCalls:     totalToolCalls,
-						NothingToDoCt: totalNothing,
-						Stopped:       res.Stopped,
-						StopReason:    res.StopReason,
-					}, err, elapsed, msg.args)
-
-				if err != nil {
-					logger.Warn("workflow run failed",
-						"npc", msg.npc, "workflow", def.ID,
-						"iterations", iterations, "elapsed_ms", elapsed.Milliseconds(), "err", err)
-				} else {
-					logger.Info("workflow run completed",
-						"npc", msg.npc, "workflow", def.ID,
-						"iterations", iterations, "steps", totalSteps,
-						"tools", totalToolCalls, "nothing", totalNothing,
-						"stopped", res.Stopped, "stop_reason", res.StopReason,
-						"elapsed_ms", elapsed.Milliseconds())
+		// Probe NPC busy state after workflow completion.
+		postMode := ""
+		if br != nil {
+			if raw, pErr := br.CallAs(context.Background(), msg.npc, "npc_get_behavior", map[string]any{"npc": msg.npc}); pErr == nil {
+				var bm map[string]any
+				if json.Unmarshal(raw, &bm) == nil {
+					if m, ok := bm["mode"]; ok {
+						postMode = fmt.Sprintf("%v", m)
+					}
 				}
-				break
 			}
+		}
 
-			logger.Debug("workflow looping",
-				"npc", msg.npc, "workflow", def.ID, "iter", iterations,
-				"tools", res.ToolCalls, "stopped", res.Stopped)
+		if err != nil {
+			logger.Warn("workflow run failed",
+				"npc", msg.npc, "workflow", def.ID,
+				"steps", res.StepCount, "tools", res.ToolCalls,
+				"elapsed_ms", elapsed.Milliseconds(), "err", err,
+				"post_mode", postMode)
+		} else {
+			logger.Info("workflow run completed",
+				"npc", msg.npc, "workflow", def.ID,
+				"steps", res.StepCount, "tools", res.ToolCalls,
+				"nothing", res.NothingToDoCt,
+				"stopped", res.Stopped, "stop_reason", res.StopReason,
+				"elapsed_ms", elapsed.Milliseconds(),
+				"post_mode", postMode)
 		}
 	}
+}
+
+// maybePrecompileNext looks at the next pending schedule entry for the NPC and
+// precompiles its workflow (if it uses a skill_call) so it's ready at trigger
+// time with zero LLM latency. Called after each workflow completes.
+func maybePrecompileNext(
+	ctx context.Context,
+	logger *slog.Logger,
+	br *bridge.WSClient,
+	relay bridge.EventHandler,
+	sched *scheduler.Scheduler,
+	workflowReg *workflow.Registry,
+	npc string,
+	currentGameMinutes int,
+) {
+	if sched == nil || relay == nil || br == nil {
+		return
+	}
+
+	next := sched.NextPendingEntry(npc, currentGameMinutes)
+	if next == nil {
+		return
+	}
+
+	// Only precompile entries that reference a built-in workflow_id.
+	if next.WorkflowID == "" {
+		return
+	}
+
+	// Resolve the workflow definition to find the actual skill name.
+	wfDef := resolveDefinition(workflowReg, next.WorkflowID, next.Workflow)
+	if wfDef == nil {
+		return
+	}
+
+	// Find the first skill_call step — that's what we precompile.
+	var skillName string
+	var skillArgs map[string]any
+	for _, step := range wfDef.Steps {
+		if step.Kind == workflow.StepKindSkillCall && step.SkillCall != nil {
+			skillName = step.SkillCall.Skill
+			// Merge workflow-level args with step-level args.
+			skillArgs = make(map[string]any)
+			for k, v := range next.Args {
+				skillArgs[k] = v
+			}
+			for k, v := range step.SkillCall.Args {
+				skillArgs[k] = v
+			}
+			break
+		}
+	}
+	if skillName == "" {
+		// Workflow has no skill_call steps — nothing to precompile.
+		return
+	}
+
+	logger.Info("precompile pipeline: precompiling next entry",
+		"npc", npc,
+		"next_workflow", next.WorkflowID,
+		"skill", skillName,
+		"next_time", fmt.Sprintf("%02d:%02d", next.GameHour, next.GameMinute),
+	)
+
+	// Run precompilation in a goroutine so it doesn't block the worker.
+	go func() {
+		runner := workflow.NewMCPRunner(workflow.MCPRunnerOptions{
+			Bridge: br,
+			Logger: logger.With("npc", npc, "precompile", skillName),
+			Relay:  relay,
+		})
+
+		pcCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		plan, err := runner.PrecompileSkill(pcCtx, npc, skillName, skillArgs)
+		if err != nil {
+			logger.Warn("precompile pipeline: precompilation failed",
+				"npc", npc, "skill", skillName, "err", err)
+			return
+		}
+		if plan == nil {
+			logger.Info("precompile pipeline: empty plan (nothing to do)",
+				"npc", npc, "skill", skillName)
+			return
+		}
+
+		// Store the precompiled plan on the schedule entry.
+		ok := sched.SetPrecompiled(npc, next.MinutesOfDay(), plan)
+		if ok {
+			logger.Info("precompile pipeline: plan stored",
+				"npc", npc, "skill", skillName,
+				"steps", len(plan.Steps),
+				"for_time", fmt.Sprintf("%02d:%02d", next.GameHour, next.GameMinute))
+		} else {
+			logger.Warn("precompile pipeline: could not store plan (entry not found)",
+				"npc", npc, "skill", skillName)
+		}
+	}()
 }
 
 // resolveDefinition returns the workflow.Definition for the given entry,

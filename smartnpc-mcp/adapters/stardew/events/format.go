@@ -155,7 +155,22 @@ func FormatForHermes(name string, data json.RawMessage) string {
 		if err := json.Unmarshal(data, &p); err == nil {
 			return fmt.Sprintf("NPC %s broadcast a %s event.", p.From, p.Kind)
 		}
-	case bridge.EventGameTimeTick:
+	case bridge.EventNpcApproachedPlayer:
+			var p NpcApproachedPlayer
+			if err := json.Unmarshal(data, &p); err == nil && p.NPC != "" {
+				player := p.Player
+				if player == "" {
+					player = "the player"
+				}
+				return fmt.Sprintf(
+					"You just walked up to %s. Strike up a natural conversation — "+
+						"mention what you've been doing today (farming, gathering, exploring), "+
+						"ask how they're doing, or comment on the weather/season. "+
+						"Keep it brief and in-character. Call chat_say ONCE to speak, then stop.\n\n"+
+						"⚠️ You MUST call chat_say with speaker=%q. Plain text is invisible.",
+					player, p.NPC)
+			}
+		case bridge.EventGameTimeTick:
 		var p GameTimeTick
 		if err := json.Unmarshal(data, &p); err == nil {
 			// Rich format when mod sends day/season/year (M5.14+).

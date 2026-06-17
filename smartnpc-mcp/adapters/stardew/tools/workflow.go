@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -103,6 +104,11 @@ func (r *noopRunner) WaitIdle(_ context.Context, npc string, timeout time.Durati
 	return true, nil
 }
 
+func (r *noopRunner) PrecompileSkill(ctx context.Context, npc, skill string, args map[string]any) (*workflow.Definition, error) {
+	rec := workflow.NewRecordingRunner(r)
+	return rec.PrecompileSkill(ctx, npc, skill, args)
+}
+
 // ── pending choices registry (P4 LLMChoice protocol) ──────────────────
 
 var (
@@ -136,6 +142,7 @@ func CompletePendingChoice(requestID, choice string) bool {
 	}
 	return true
 }
+
 
 // ── registration ──────────────────────────────────────────────────────
 
@@ -270,13 +277,14 @@ func RegisterWorkflow(s *mcp.Server, reg *workflow.Registry, debug bool) {
 	}
 
 	// workflow_choice_reply is always registered.
-	registerChoiceReplyTool(s)
+		// workflow_choice_reply and workflow_precompile_result are always registered.
+		registerChoiceReplyTool(s)
+		registerPrecompileResultTool(s)
 
-	// workflow_run_history is always registered — reads from jsonl files.
-	registerRunHistoryTool(s)
-}
+		// workflow_run_history is always registered — reads from jsonl files.
+		registerRunHistoryTool(s)
+	}
 
-// registerChoiceReplyTool mounts workflow_choice_reply on the MCP server.
 func registerChoiceReplyTool(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "workflow_choice_reply",
@@ -319,6 +327,150 @@ type WorkflowRunHistoryOutput struct {
 }
 
 // registerRunHistoryTool mounts workflow_run_history on the MCP server.
+// ── npc_workflow_status ─────────────────────────────────────────────────
+
+// WorkflowStatusProvider is the interface main.go's WorkflowTracker satisfies
+// so the status tool can query runtime state without importing main.
+type WorkflowStatusProvider interface {
+	RunningInfo(npc string) (WorkflowStatusRunInfo, bool)
+	AllNPCs() []string
+	QueueDepth(npc string) int
+	PendingSchedule(npc string) int
+}
+
+// WorkflowStatusRunInfo describes a workflow currently running for an NPC.
+type WorkflowStatusRunInfo struct {
+	WorkflowID string
+	StartedAt  time.Time
+}
+
+// NpcWorkflowStatusInput selects which NPC(s) to query.
+type NpcWorkflowStatusInput struct {
+	NPC string `json:"npc,omitempty" jsonschema:"NPC internal name, or empty / \"*\" for all"`
+}
+
+// NpcWorkflowStatusNPCEntry is one NPC's status line.
+type NpcWorkflowStatusNPCEntry struct {
+	NPC             string `json:"npc"`
+	Running         bool   `json:"running"`
+	WorkflowID      string `json:"workflow_id,omitempty"`
+	ElapsedMs       int64  `json:"elapsed_ms,omitempty"`
+	QueueDepth      int    `json:"queue_depth"`
+	PendingSchedule int    `json:"pending_schedule"`
+}
+
+// NpcWorkflowStatusOutput returns per-NPC workflow execution status.
+type NpcWorkflowStatusOutput struct {
+	OK    bool                        `json:"ok"`
+	NPCs  []NpcWorkflowStatusNPCEntry `json:"npcs"`
+	Total int                         `json:"total"`
+}
+
+// RegisterWorkflowStatusTool mounts npc_workflow_status on the MCP server.
+// Called from main.go after the WorkflowTracker is populated.
+func RegisterWorkflowStatusTool(s *mcp.Server, provider WorkflowStatusProvider) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "npc_workflow_status",
+		Description: "Query per-NPC workflow execution status: which workflow is " +
+			"currently running (if any), how many triggers are queued, and how " +
+			"many schedule entries remain unfired.\n\n" +
+			"When to call: when you want to check what the NPCs are doing right " +
+			"now, whether the scheduler is backed up, or to diagnose why actions " +
+			"are repeating. Also callable by the player via debug commands.\n\n" +
+			"Pass an empty or \"*\" npc to get status for all NPCs.\n\n" +
+			"Side-effect: READ.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in NpcWorkflowStatusInput) (*mcp.CallToolResult, NpcWorkflowStatusOutput, error) {
+		var entries []NpcWorkflowStatusNPCEntry
+
+		allNPCs := provider.AllNPCs()
+		targets := allNPCs
+		if in.NPC != "" && in.NPC != "*" {
+			lower := strings.ToLower(in.NPC)
+			found := false
+			for _, n := range allNPCs {
+				if strings.ToLower(n) == lower {
+					targets = []string{n}
+					found = true
+					break
+				}
+			}
+			if !found {
+				targets = []string{in.NPC}
+			}
+		}
+
+		now := time.Now()
+		for _, npc := range targets {
+			entry := NpcWorkflowStatusNPCEntry{
+				NPC:             npc,
+				QueueDepth:      provider.QueueDepth(npc),
+				PendingSchedule: provider.PendingSchedule(npc),
+			}
+			if info, ok := provider.RunningInfo(npc); ok {
+				entry.Running = true
+				entry.WorkflowID = info.WorkflowID
+				entry.ElapsedMs = now.Sub(info.StartedAt).Milliseconds()
+			}
+			entries = append(entries, entry)
+		}
+
+		logToolCall("npc_workflow_status", in)
+		return nil, NpcWorkflowStatusOutput{
+			OK:    true,
+			NPCs:  entries,
+			Total: len(entries),
+		}, nil
+	})
+}
+
+
+// WorkflowPrecompileResultInput carries the precompiled plan.
+type WorkflowPrecompileResultInput struct {
+	PlanID string `json:"plan_id" jsonschema:"the plan_id from the workflow_skill_call precompile event"`
+	Plan   any    `json:"plan"    jsonschema:"the precompiled workflow definition as a JSON object with id + steps"`
+}
+
+// WorkflowPrecompileResultOutput acknowledges the plan submission.
+type WorkflowPrecompileResultOutput struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
+}
+
+// registerPrecompileResultTool mounts workflow_precompile_result on the MCP server.
+// The LLM calls this during precompile mode to submit the concrete tool plan.
+func registerPrecompileResultTool(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "workflow_precompile_result",
+		Description: "Submit a precompiled workflow plan during precompile mode. " +
+			"When you receive a workflow_skill_call event with precompile=true and a " +
+			"plan_id, inspect the environment (using read-only tools only), decide what " +
+			"tool calls you would make, and submit the complete plan via this tool. " +
+			"The plan must be a valid workflow definition JSON object with an id and " +
+			"steps array. Each step must have kind=tool, name, and args. " +
+			"IMPORTANT: Only call read-only tools (npc_inspect_*, npc_find_*, game_get_*, " +
+			"etc.) before calling this tool. Do NOT call mutating tools during " +
+			"precompilation -- just describe them in the plan.\n\n" +
+			"Side-effect: WRITE (stores the precompiled plan for later execution).",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in WorkflowPrecompileResultInput) (*mcp.CallToolResult, WorkflowPrecompileResultOutput, error) {
+		if in.PlanID == "" {
+			return nil, WorkflowPrecompileResultOutput{OK: false, Message: "plan_id is required"}, nil
+		}
+		if in.Plan == nil {
+			return nil, WorkflowPrecompileResultOutput{OK: false, Message: "plan is required"}, nil
+		}
+		planJSON, err := json.Marshal(in.Plan)
+		if err != nil {
+			return nil, WorkflowPrecompileResultOutput{OK: false, Message: fmt.Sprintf("plan marshal: %v", err)}, nil
+		}
+		ok := workflow.CompletePrecompile(in.PlanID, string(planJSON))
+		if ok {
+			logToolCall("workflow_precompile_result", in)
+			return nil, WorkflowPrecompileResultOutput{OK: true, Message: "plan submitted"}, nil
+		}
+		return nil, WorkflowPrecompileResultOutput{OK: false, Message: fmt.Sprintf("unknown or expired plan_id %q", in.PlanID)}, nil
+	})
+}
+
 func registerRunHistoryTool(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "workflow_run_history",

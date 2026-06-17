@@ -37,6 +37,13 @@ type Entry struct {
 	Fired       bool      `json:"fired"                jsonschema:"set true once dispatched"`
 	FiredAt     time.Time `json:"fired_at,omitempty"`
 
+	// ── Precompiled workflow (generated ahead of trigger time) ─────────
+	// When non-nil, the worker runs this inline definition instead of
+	// resolving WorkflowID / Workflow. Populated by the precompilation
+	// pipeline so trigger-time execution has no LLM latency.
+	PrecompiledDef *workflow.Definition `json:"precompiled_def,omitempty"`
+	PrecompiledAt  time.Time            `json:"precompiled_at,omitempty"`
+
 	// ── P3 workflow fields ────────────────────────────────────────────
 	// Every entry carries either WorkflowID (built-in), Workflow (inline), or
 	// both (legacy action auto-wrapped as a 1-step Workflow). The scheduler
@@ -77,6 +84,10 @@ type FiredEntry struct {
 	WorkflowID string               `json:"workflow_id,omitempty"`
 	Workflow   *workflow.Definition `json:"workflow,omitempty"`
 	Args       map[string]any       `json:"args,omitempty"`
+
+	// PrecompiledDef carries the pre-generated concrete steps. When set,
+	// the worker runs this inline instead of resolving WorkflowID/Workflow.
+	PrecompiledDef *workflow.Definition `json:"precompiled_def,omitempty"`
 }
 
 // Scheduler manages daily schedules for all NPCs. Thread-safe.
@@ -207,10 +218,55 @@ func (s *Scheduler) Tick(gameMinutes int) []FiredEntry {
 				WorkflowID:  e.WorkflowID,
 				Workflow:    e.Workflow,
 				Args:        e.Args,
+				PrecompiledDef: e.PrecompiledDef,
 			})
 		}
 	}
 	return fired
+}
+
+// SetPrecompiled stores a precompiled workflow definition on the matching
+// unfired entry. Returns true if an entry was found and updated.
+func (s *Scheduler) SetPrecompiled(npc string, gameMinutes int, def *workflow.Definition) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sched := s.schedules[npc]
+	if sched == nil {
+		return false
+	}
+	for i := range sched.Entries {
+		e := &sched.Entries[i]
+		if e.Fired {
+			continue
+		}
+		if e.MinutesOfDay() == gameMinutes {
+			e.PrecompiledDef = def
+			e.PrecompiledAt = time.Now()
+			return true
+		}
+	}
+	return false
+}
+
+// NextPendingEntry returns the first unfired entry for an NPC whose fire time
+// is after gameMinutes. Returns nil if no such entry exists.
+func (s *Scheduler) NextPendingEntry(npc string, afterGameMinutes int) *Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sched := s.schedules[npc]
+	if sched == nil {
+		return nil
+	}
+	for i := range sched.Entries {
+		e := &sched.Entries[i]
+		if e.Fired {
+			continue
+		}
+		if e.MinutesOfDay() > afterGameMinutes {
+			return e
+		}
+	}
+	return nil
 }
 
 // PendingEntries returns all entries that have NOT yet fired for an NPC,

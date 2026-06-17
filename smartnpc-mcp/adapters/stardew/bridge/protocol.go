@@ -53,6 +53,9 @@ const (
 	// testing proactive behavior without waiting for the scheduled
 	// */15 minute cron.
 	EventDebugProactiveTrigger = "debug_proactive_trigger"
+	// Fired by FollowSystem when an NPC arrives at the player via
+	// npc_approach_and_speak. Carries {npc, player}.
+	EventNpcApproachedPlayer = "npc_approached_player"
 )
 
 // ActionName constants — the canonical set of client-issued requests.

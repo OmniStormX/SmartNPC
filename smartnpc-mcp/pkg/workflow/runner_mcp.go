@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
@@ -78,13 +79,27 @@ func (r *MCPRunner) CallTool(ctx context.Context, npc, name string, args map[str
 	if _, ok := args["npc"]; !ok {
 		args["npc"] = npc
 	}
+
+	callStart := time.Now()
 	raw, err := r.bridge.CallAs(ctx, npc, name, args)
+	callElapsed := time.Since(callStart)
+
 	if err != nil {
+		r.logger.Warn("MCPRunner.CallTool: bridge call failed",
+			"npc", npc, "tool", name,
+			"elapsed_ms", callElapsed.Milliseconds(), "err", err,
+		)
 		return nil, fmt.Errorf("tool %s: %w", name, err)
 	}
+
+	r.logger.Debug("MCPRunner.CallTool: bridge call ok",
+		"npc", npc, "tool", name,
+		"elapsed_ms", callElapsed.Milliseconds(),
+		"response_bytes", len(raw),
+	)
+
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
-		// Fall back to wrapping the raw bytes so the engine gets a usable map.
 		return map[string]any{"ok": true, "_raw": string(raw)}, nil
 	}
 	return out, nil
@@ -134,6 +149,8 @@ func (r *MCPRunner) CallSkill(ctx context.Context, npc, skill string, args map[s
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	pollCount := 0
+	lastMode := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -141,20 +158,24 @@ func (r *MCPRunner) CallSkill(ctx context.Context, npc, skill string, args map[s
 		case <-ticker.C:
 			if time.Now().After(deadline) {
 				r.logger.Warn("MCPRunner.CallSkill: wait for idle timed out",
-					"npc", npc, "skill", skill, "timeout", maxWait)
+					"npc", npc, "skill", skill, "timeout", maxWait,
+					"polls", pollCount, "last_mode", lastMode)
 				return nil // soft timeout — don't fail the workflow
 			}
 
+			pollCount++
 			mode := r.getBehaviorMode(ctx, npc)
+			lastMode = mode
 			r.logger.Debug("MCPRunner.CallSkill: polling behavior",
-				"npc", npc, "mode", mode)
+				"npc", npc, "mode", mode, "poll", pollCount)
 
-			if mode == "Idle" || mode == "" {
+			if strings.EqualFold(mode, "idle") || mode == "" {
 				if idleSince.IsZero() {
 					idleSince = time.Now()
 				} else if time.Since(idleSince) >= stableIdleDuration {
 					r.logger.Info("MCPRunner.CallSkill: agent turn completed",
-						"npc", npc, "skill", skill, "stable_idle", time.Since(idleSince).String())
+						"npc", npc, "skill", skill, "stable_idle", time.Since(idleSince).String(),
+						"polls", pollCount)
 					return nil
 				}
 			} else {
@@ -198,6 +219,57 @@ func (r *MCPRunner) LLMChoice(ctx context.Context, npc, prompt string, options [
 	return options[0], nil
 }
 
+// PrecompileSkill sends the skill to Hermes with precompile=true and waits
+// for the LLM to submit a plan via workflow_precompile_result. Returns the
+// precompiled workflow definition with concrete tool steps, or nil if the
+// LLM determined there was nothing to do.
+func (r *MCPRunner) PrecompileSkill(ctx context.Context, npc, skill string, args map[string]any) (*Definition, error) {
+	if r.relay == nil {
+		r.logger.Warn("MCPRunner.PrecompileSkill: no relay configured, skip", "npc", npc, "skill", skill)
+		return nil, nil
+	}
+
+	planID := fmt.Sprintf("%s_%s_%d", npc, skill, time.Now().UnixNano())
+	ch := RegisterPrecompile(planID)
+	defer UnregisterPrecompile(planID)
+
+	data, err := EncodePrecompilePayload(npc, skill, planID, args)
+	if err != nil {
+		return nil, fmt.Errorf("precompile: encode payload: %w", err)
+	}
+
+	r.logger.Info("MCPRunner.PrecompileSkill: sending to Hermes", "npc", npc, "skill", skill, "plan_id", planID)
+	r.relay(ctx, "workflow_skill_call", data)
+
+	// Wait for the LLM to submit the plan via workflow_precompile_result.
+	const precompileTimeout = 60 * time.Second
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("precompile: context cancelled: %w", ctx.Err())
+	case planJSON := <-ch:
+		var plan Definition
+		if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+			return nil, fmt.Errorf("precompile: invalid plan JSON: %w", err)
+		}
+		if plan.ID == "" {
+			plan.ID = "precompiled_" + skill
+		}
+		if len(plan.Steps) == 0 {
+			r.logger.Info("MCPRunner.PrecompileSkill: empty plan (nothing to do)", "npc", npc, "skill", skill)
+			return nil, nil
+		}
+		if err := Validate(&plan); err != nil {
+			return nil, fmt.Errorf("precompile: invalid plan: %w", err)
+		}
+		r.logger.Info("MCPRunner.PrecompileSkill: plan received",
+			"npc", npc, "skill", skill, "steps", len(plan.Steps))
+		return &plan, nil
+	case <-time.After(precompileTimeout):
+		r.logger.Warn("MCPRunner.PrecompileSkill: timed out", "npc", npc, "skill", skill, "timeout", precompileTimeout)
+		return nil, nil // soft timeout — don't fail, just skip precompilation
+	}
+}
+
 // WaitIdle polls FollowSystem at 250ms intervals until the NPC is idle or
 // the timeout expires. Returns true when idle was reached, false on timeout.
 func (r *MCPRunner) WaitIdle(ctx context.Context, npc string, timeout time.Duration) (bool, error) {
@@ -218,7 +290,7 @@ func (r *MCPRunner) WaitIdle(ctx context.Context, npc string, timeout time.Durat
 				return false, nil // timeout is not an error
 			}
 			mode := r.follow.GetMode(npc)
-			if mode == "Idle" || mode == "" {
+			if strings.EqualFold(mode, "idle") || mode == "" {
 				return true, nil
 			}
 		}

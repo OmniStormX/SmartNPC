@@ -93,7 +93,7 @@ func TestPipeline_ChatMessageReachesHermes(t *testing.T) {
 
 	// Bridge ws client, with the same makeRouter the production main() uses.
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false, nil))
 
 	// Register tools so the MCP server is realistic — they aren't
 	// exercised in this test but ensure RegisterAll didn't change shape.
@@ -176,7 +176,7 @@ func TestPipeline_NonMatchingNPCDropped(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -225,7 +225,7 @@ func TestPipeline_RelayOff(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", nil, nil, nil, nil, nil, false, false)) // ← relay disabled
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", nil, nil, nil, nil, nil, false, false, nil)) // ← relay disabled
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -296,7 +296,7 @@ func TestPipeline_AudibleChatReceivedSynthesizesChatMessage(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -482,7 +482,7 @@ func TestPipeline_GameTimeTickFiresScheduleTrigger(t *testing.T) {
 
 	// Wire the router with the scheduler.
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, nil, sched, nil, false, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, nil, sched, nil, false, false, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -616,7 +616,7 @@ func TestPipeline_WorkflowPump_PlanDayToEngine(t *testing.T) {
 
 	// ── 6. Wire the bridge router with workflow pump ON ─────────────────
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, chatGuard, sched, workflowReg, true, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, chatGuard, sched, workflowReg, true, false, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

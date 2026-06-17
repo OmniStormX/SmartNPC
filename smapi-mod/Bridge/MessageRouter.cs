@@ -31,13 +31,17 @@ namespace SmartNPC.Bridge
             if (string.IsNullOrEmpty(req.Action))
                 return Response.Failure(req.Id!, "invalid_request", "missing action");
             if (!_handlers.TryGetValue(req.Action!, out RequestHandler? h))
-            //  这一步是查 handlers 的注册表，并把 handler 提取到 h 
+            //  这一步是查 handlers 的注册表，并把 handler 提取到 h
                 return Response.Failure(req.Id!, "unknown_action", $"no handler for '{req.Action}'");
 
             try
             {
                 // 使用 handler 来处理事件
-                return await h(req.Id!, req.Params).ConfigureAwait(false);
+                var t0 = DateTime.UtcNow;
+                var resp = await h(req.Id!, req.Params).ConfigureAwait(false);
+                var elapsed = (DateTime.UtcNow - t0).TotalMilliseconds;
+                _log.Log($"[timing] dispatch req={req.Id} action={req.Action} elapsed={elapsed:F0}ms ok={resp?.Ok}", LogLevel.Info);
+                return resp;
             }
             catch (Exception ex)
             {

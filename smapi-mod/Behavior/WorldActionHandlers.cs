@@ -129,11 +129,12 @@ namespace SmartNPC.Bridge
         protected override void Execute(NPC npc, string npcName, JsonElement @params)
         {
             int radius   = ParseInt(@params, "radius",    5, 1, 30);
-            int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
+            int maxCount = ParseInt(@params, "max_count", 10, 1, 9999);
             int extend   = ParseInt(@params, "extend",    0, 0, 10);
             var (bboxOn, x1, y1, x2, y2) = ParseBBox(@params);
-            // bbox itself is the area cap — only apply max_count in radius mode.
-            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
+            // Hard cap at 15 debris per call (~10-15s real time). bbox mode also respects it.
+            const int CLEAR_HARD_CAP = 15;
+            int effectiveCap = Math.Min(maxCount, CLEAR_HARD_CAP);
 
             var location = npc.currentLocation;
             if (location is null) return;
@@ -2024,8 +2025,10 @@ namespace SmartNPC.Bridge
             int extend   = ParseInt(@params, "extend",    0, 0, 10);
             string what  = ParseWhat(@params);
             var (bboxOn, bx1, by1, bx2, by2) = ClearDebrisHandler.ParseBBox(@params);
-            // bbox itself bounds the work; max_count is a radius-mode safety knob only.
-            int effectiveCap = bboxOn ? int.MaxValue : maxCount;
+            // Hard cap at 10 resources per call to prevent excessive gathering.
+            // max_count is configurable; bbox mode also respects it (no longer defaults to unlimited).
+            const int HARD_CAP = 10;
+            int effectiveCap = Math.Min(maxCount, HARD_CAP);
             bool wantTrees  = what == "trees" || what == "all";
             bool wantStones = what == "stones" || what == "all";
 

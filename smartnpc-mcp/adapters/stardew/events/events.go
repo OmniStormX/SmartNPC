@@ -58,6 +58,13 @@ type NpcInteract struct {
 	Source string `json:"source"` // always "player" today
 }
 
+// NpcApproachedPlayer — NPC walked up to the player via npc_approach_and_speak.
+// Carries the NPC name and the player name they are approaching.
+type NpcApproachedPlayer struct {
+	NPC    string `json:"npc"`
+	Player string `json:"player"`
+}
+
 // GroupCreate — legacy group chat session was opened in the mod UI.
 // Carries the list of NPC names included.
 type GroupCreate struct {

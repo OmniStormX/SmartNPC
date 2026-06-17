@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,6 +40,13 @@ type Runner interface {
 	// long-running mode) or the timeout elapses. The bool indicates
 	// whether the wait condition succeeded (true) or timed out (false).
 	WaitIdle(ctx context.Context, npc string, timeout time.Duration) (bool, error)
+
+	// PrecompileSkill runs the Hermes skill in recording mode: the LLM
+	// processes the skill, inspects the environment, and calls tools, but
+	// mutating tool calls are captured instead of executed. Returns a
+	// precompiled workflow definition whose concrete tool steps can be
+	// replayed at trigger time with zero LLM latency.
+	PrecompileSkill(ctx context.Context, npc, skill string, args map[string]any) (*Definition, error)
 }
 
 // Run drives a workflow definition to completion against the given runner.
@@ -56,6 +62,16 @@ func Run(ctx context.Context, runner Runner, npc string, def *Definition, inputs
 	if runner == nil {
 		return nil, errors.New("workflow.Run: nil runner")
 	}
+
+	runStart := time.Now()
+	slog.Info("workflow: run start",
+		"npc", npc,
+		"workflow", def.ID,
+		"version", def.Version,
+		"total_steps", len(def.Steps),
+		"inputs", inputs,
+	)
+
 	scope := NewScope()
 	// Bind declared inputs. Caller-supplied values win; defaults fill
 	// the rest. Inputs not declared in the spec are still bound (caller
@@ -85,6 +101,24 @@ func Run(ctx context.Context, runner Runner, npc string, def *Definition, inputs
 	}
 	stopped, err := eng.runSteps(ctx, def.Steps, scope)
 	eng.result.Stopped = stopped
+
+	elapsed := time.Since(runStart)
+	level := slog.LevelInfo
+	if err != nil {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, "workflow: run done",
+		"npc", npc,
+		"workflow", def.ID,
+		"steps", eng.result.StepCount,
+		"tools", eng.result.ToolCalls,
+		"nothing_to_do", eng.result.NothingToDoCt,
+		"stopped", stopped,
+		"stop_reason", eng.result.StopReason,
+		"elapsed_ms", elapsed.Milliseconds(),
+		"err", err,
+	)
+
 	return eng.result, err
 }
 
@@ -110,11 +144,6 @@ type RunResult struct {
 	// pointer to the step in question without re-walking the def.
 	FailedStep int
 }
-
-// StopReasonAllZero is recorded when a looping workflow auto-stops after
-// observing that every actionable group in the farm_actions output has zero
-// work (the NPC has nothing left to do this iteration).
-const StopReasonAllZero = "workflow.auto_stop.all_zero"
 
 // SetSeed sets the RNG seed for deterministic tests. Production callers
 // should not need this.
@@ -157,27 +186,68 @@ func (e *engine) runSteps(ctx context.Context, steps []Step, scope *Scope) (bool
 
 func (e *engine) runStep(ctx context.Context, s *Step, scope *Scope) (bool, error) {
 	e.result.StepCount++
+	stepNum := e.result.StepCount
+	kind := string(s.Kind)
+	label := s.Label
+	if label == "" {
+		label = "-"
+	}
+
+	slog.Debug("workflow: step start",
+		"npc", e.npc,
+		"workflow", e.def.ID,
+		"step", stepNum,
+		"kind", kind,
+		"label", label,
+	)
+
+	var stop bool
+	var err error
+	start := time.Now()
+
 	switch s.Kind {
 	case StepKindTool:
-		return e.runTool(ctx, s.Tool, scope)
+		stop, err = e.runTool(ctx, s.Tool, scope)
 	case StepKindBranch:
-		return e.runBranch(ctx, s.Branch, scope)
+		stop, err = e.runBranch(ctx, s.Branch, scope)
 	case StepKindRandom:
-		return e.runRandom(ctx, s.Random, scope)
+		stop, err = e.runRandom(ctx, s.Random, scope)
 	case StepKindForEach:
-		return e.runForEach(ctx, s.ForEach, scope)
+		stop, err = e.runForEach(ctx, s.ForEach, scope)
 	case StepKindSkillCall:
-		return e.runSkill(ctx, s.SkillCall, scope)
+		stop, err = e.runSkill(ctx, s.SkillCall, scope)
 	case StepKindLLMChoice:
-		return e.runLLMChoice(ctx, s.LLMChoice, scope)
+		stop, err = e.runLLMChoice(ctx, s.LLMChoice, scope)
 	case StepKindWait:
-		return e.runWait(ctx, s.Wait, scope)
+		stop, err = e.runWait(ctx, s.Wait, scope)
 	case StepKindStop:
 		e.result.StopReason = s.Stop.reasonOr("workflow.stop")
-		return true, nil
+		stop = true
 	default:
-		return true, fmt.Errorf("unknown step kind %q", s.Kind)
+		stop = true
+		err = fmt.Errorf("unknown step kind %q", s.Kind)
 	}
+
+	elapsed := time.Since(start)
+	level := slog.LevelDebug
+	if err != nil {
+		level = slog.LevelWarn
+	} else if stop {
+		level = slog.LevelInfo
+	}
+
+	slog.Log(ctx, level, "workflow: step done",
+		"npc", e.npc,
+		"workflow", e.def.ID,
+		"step", stepNum,
+		"kind", kind,
+		"label", label,
+		"elapsed_ms", elapsed.Milliseconds(),
+		"stop", stop,
+		"err", err,
+	)
+
+	return stop, err
 }
 
 // reasonOr is a tiny helper so StopStep can carry an empty reason.
@@ -204,41 +274,67 @@ func (e *engine) runTool(ctx context.Context, t *ToolStep, scope *Scope) (bool, 
 	if err != nil {
 		return true, fmt.Errorf("tool %s args: %w", t.Name, err)
 	}
-		slog.Info("workflow: runTool", "npc", e.npc, "tool", t.Name, "args", args)
 
+	callStart := time.Now()
+	slog.Info("workflow: tool calling",
+		"npc", e.npc,
+		"workflow", e.def.ID,
+		"tool", t.Name,
+		"args", args,
+		"save_as", t.SaveAs,
+		"on_nothing_to_do", t.OnNothingToDo,
+	)
 
-	// Tool timeout disabled — parent workflow ctx and FollowSystem MaxActionTicks provide sufficient guardrails.
 	callCtx := ctx
+	if deadline, ok := callCtx.Deadline(); ok {
+		slog.Debug("workflow: tool ctx deadline",
+			"npc", e.npc, "tool", t.Name,
+			"deadline_remaining", time.Until(deadline).String(),
+		)
+	}
 
 	out, err := e.runner.CallTool(callCtx, e.npc, t.Name, args)
+	callElapsed := time.Since(callStart)
 	if err != nil {
+		slog.Warn("workflow: tool failed",
+			"npc", e.npc, "tool", t.Name,
+			"elapsed_ms", callElapsed.Milliseconds(), "err", err,
+		)
 		return true, fmt.Errorf("tool %s: %w", t.Name, err)
 	}
 	e.result.ToolCalls++
 
-	// Check for the structured "no work was found" ack the mod returns
-	// from MarkNothingToDo. This is success at the protocol layer but a
-	// signal to the workflow that the area was empty.
+	// Check for the structured "no work was found" ack.
 	if v, ok := out["nothing_to_do"]; ok && truthy(v) {
 		e.result.NothingToDoCt++
+		reason, _ := out["reason"].(string)
+		slog.Info("workflow: tool nothing_to_do",
+			"npc", e.npc, "tool", t.Name,
+			"reason", reason, "policy", t.OnNothingToDo,
+			"elapsed_ms", callElapsed.Milliseconds(),
+		)
 		policy := strings.ToLower(strings.TrimSpace(t.OnNothingToDo))
-		switch policy {
-		case "", "skip":
-			// Default: record it but continue.
-		case "stop":
-			reason, _ := out["reason"].(string)
-			if reason == "" {
-				reason = fmt.Sprintf("%s returned nothing_to_do", t.Name)
-			}
-			e.result.StopReason = reason
-			return true, nil
-		case "fail":
-			reason, _ := out["reason"].(string)
-			return true, fmt.Errorf("tool %s nothing_to_do: %s", t.Name, reason)
-		default:
-			return true, fmt.Errorf("tool %s: unknown on_nothing_to_do %q", t.Name, t.OnNothingToDo)
+	switch policy {
+	case "", "skip":
+		// Default: record it but continue.
+	case "stop":
+		if reason == "" {
+			reason = fmt.Sprintf("%s returned nothing_to_do", t.Name)
 		}
+		e.result.StopReason = reason
+		return true, nil
+	case "fail":
+		return true, fmt.Errorf("tool %s nothing_to_do: %s", t.Name, reason)
+	default:
+		return true, fmt.Errorf("tool %s: unknown on_nothing_to_do %q", t.Name, t.OnNothingToDo)
 	}
+	}
+
+	slog.Debug("workflow: tool ok",
+		"npc", e.npc, "tool", t.Name,
+		"elapsed_ms", callElapsed.Milliseconds(),
+		"save_as", t.SaveAs,
+	)
 
 	if t.SaveAs != "" {
 		if err := scope.Set(t.SaveAs, anyOrMap(out)); err != nil {
@@ -269,9 +365,16 @@ func (e *engine) runBranch(ctx context.Context, b *BranchStep, scope *Scope) (bo
 		return true, fmt.Errorf("branch when=%q: %w", b.When, err)
 	}
 	body := b.Then
+	branch := "then"
 	if !cond {
 		body = b.Else
+		branch = "else"
 	}
+	slog.Debug("workflow: branch",
+		"npc", e.npc, "when", b.When,
+		"result", cond, "branch", branch,
+		"then_steps", len(b.Then), "else_steps", len(b.Else),
+	)
 	return e.runSteps(ctx, body, scope)
 }
 
@@ -292,22 +395,36 @@ func (e *engine) runRandom(ctx context.Context, r *RandomStep, scope *Scope) (bo
 	}
 	pick := e.rng.Float64() * total
 	var acc float64
-	for _, w := range r.Weighted {
+	var chosen int
+	for i, w := range r.Weighted {
 		if w.Weight <= 0 {
 			continue
 		}
 		acc += w.Weight
 		if pick <= acc {
+			chosen = i
+			slog.Debug("workflow: random picked",
+				"npc", e.npc,
+				"total_weight", total,
+				"pick", pick,
+				"chosen_index", i,
+				"chosen_weight", w.Weight,
+				"options", len(r.Weighted),
+			)
 			return e.runSteps(ctx, w.Do, scope)
 		}
 	}
 	// Float rounding can fall through; run the last enabled branch.
 	for i := len(r.Weighted) - 1; i >= 0; i-- {
 		if r.Weighted[i].Weight > 0 {
-			return e.runSteps(ctx, r.Weighted[i].Do, scope)
+			chosen = i
+			break
 		}
 	}
-	return false, nil
+	slog.Debug("workflow: random fallback",
+		"npc", e.npc, "chosen_index", chosen,
+	)
+	return e.runSteps(ctx, r.Weighted[chosen].Do, scope)
 }
 
 // ── foreach ─────────────────────────────────────────────────────────────
@@ -319,16 +436,21 @@ func (e *engine) runForEach(ctx context.Context, f *ForEachStep, scope *Scope) (
 	listVal, _ := scope.Resolve(f.Over)
 	list, ok := listVal.([]any)
 	if !ok {
-		// Missing or wrong-typed value: treat as empty list (no error,
-		// caller's data shape may legitimately omit the field).
 		return false, nil
 	}
 	max := f.MaxIter
 	if max <= 0 {
 		max = 50
 	}
+	slog.Debug("workflow: foreach start",
+		"npc", e.npc, "over", f.Over, "as", f.As,
+		"item_count", len(list), "max_iter", max,
+	)
 	for i, item := range list {
 		if i >= max {
+			slog.Debug("workflow: foreach max_iter reached",
+				"npc", e.npc, "max", max, "total", len(list),
+			)
 			break
 		}
 		child := scope.Child()
@@ -351,7 +473,7 @@ func (e *engine) runForEach(ctx context.Context, f *ForEachStep, scope *Scope) (
 func (e *engine) runSkill(ctx context.Context, s *SkillCallStep, scope *Scope) (bool, error) {
 	select {
 	case <-ctx.Done():
-		return true, nil // graceful stop on cancel
+		return true, nil
 	default:
 	}
 	if s == nil || s.Skill == "" {
@@ -361,52 +483,29 @@ func (e *engine) runSkill(ctx context.Context, s *SkillCallStep, scope *Scope) (
 	if err != nil {
 		return true, fmt.Errorf("skill_call %s args: %w", s.Skill, err)
 	}
+
+	skillStart := time.Now()
+	slog.Info("workflow: skill_call start",
+		"npc", e.npc,
+		"workflow", e.def.ID,
+		"skill", s.Skill,
+		"args", args,
+	)
+
 	if err := e.runner.CallSkill(ctx, e.npc, s.Skill, args); err != nil {
+		slog.Warn("workflow: skill_call failed",
+			"npc", e.npc, "skill", s.Skill,
+			"elapsed_ms", time.Since(skillStart).Milliseconds(),
+			"err", err,
+		)
 		return true, fmt.Errorf("skill_call %s: %w", s.Skill, err)
 	}
-	// For looping workflows: check if the observed state is all-zero
-	// (NPC has nothing left to do).
-	if e.def.Loop.IsLooping() && e.checkAutoStop(scope) {
-		e.result.StopReason = StopReasonAllZero
-		return true, nil // signal stop
-	}
-	return false, nil
-}
 
-// checkAutoStop returns true when the observed farm_actions output
-// has zero work across all actionable groups — meaning the NPC
-// has nothing left to do this iteration.
-func (e *engine) checkAutoStop(scope *Scope) bool {
-	if scope == nil {
-		return false
-	}
-	raw, ok := scope.Get("obs")
-	if !ok || raw == nil {
-		return false
-	}
-	// Try to read the structured content. The tool output's first
-	// content block is typically the JSON result.
-	type actions struct {
-		ActionsAvailable map[string]struct {
-			Count int `json:"count"`
-		} `json:"actions_available"`
-	}
-	var out actions
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return false
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return false
-	}
-	// Check the actionable groups — if all are zero, auto-stop.
-	groups := []string{"harvest", "water", "clear", "till", "forage", "plant", "fill", "fill_blocked"}
-	for _, g := range groups {
-		if a, ok := out.ActionsAvailable[g]; ok && a.Count > 0 {
-			return false
-		}
-	}
-	return len(out.ActionsAvailable) > 0
+	slog.Info("workflow: skill_call done",
+		"npc", e.npc, "skill", s.Skill,
+		"elapsed_ms", time.Since(skillStart).Milliseconds(),
+	)
+	return false, nil
 }
 
 // ── llm_choice ──────────────────────────────────────────────────────────
@@ -415,13 +514,14 @@ func (e *engine) runLLMChoice(ctx context.Context, l *LLMChoiceStep, scope *Scop
 	if l == nil || l.SaveAs == "" || len(l.Options) == 0 {
 		return true, errors.New("llm_choice missing save_as / options")
 	}
+	slog.Debug("workflow: llm_choice asking",
+		"npc", e.npc, "prompt", l.Prompt,
+		"options", l.Options, "save_as", l.SaveAs,
+	)
 	choice, err := e.runner.LLMChoice(ctx, e.npc, l.Prompt, l.Options)
 	if err != nil {
 		return true, fmt.Errorf("llm_choice: %w", err)
 	}
-	// Validate against the option list — defensive against models that
-	// drift off-menu. Fall back to options[0] silently rather than
-	// blowing up the run; the bound variable will still be a valid choice.
 	valid := false
 	for _, o := range l.Options {
 		if o == choice {
@@ -430,8 +530,14 @@ func (e *engine) runLLMChoice(ctx context.Context, l *LLMChoiceStep, scope *Scop
 		}
 	}
 	if !valid {
+		slog.Debug("workflow: llm_choice invalid choice, falling back",
+			"npc", e.npc, "chosen", choice, "fallback", l.Options[0],
+		)
 		choice = l.Options[0]
 	}
+	slog.Debug("workflow: llm_choice result",
+		"npc", e.npc, "choice", choice, "save_as", l.SaveAs,
+	)
 	if err := scope.Set(l.SaveAs, choice); err != nil {
 		return true, err
 	}
@@ -449,15 +555,19 @@ func (e *engine) runWait(ctx context.Context, w *WaitStep, scope *Scope) (bool, 
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	slog.Debug("workflow: wait start",
+		"npc", e.npc, "condition", cond, "timeout_s", timeout.Seconds(),
+	)
 	switch cond {
 	case "", "idle":
 		ok, err := e.runner.WaitIdle(ctx, e.npc, timeout)
+		slog.Debug("workflow: wait done",
+			"npc", e.npc, "condition", cond,
+			"ok", ok, "err", err,
+		)
 		if err != nil {
 			return true, err
 		}
-		// Timeout is not a hard error — workflows may legitimately move
-		// on if the previous step is still running. Engine records it
-		// in the result so log can flag it.
 		_ = ok
 		return false, nil
 	default:

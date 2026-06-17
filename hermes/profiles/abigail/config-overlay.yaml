@@ -80,6 +80,7 @@ mcp_servers:
         - npc_express_emotion
         - npc_shy_retreat
         - npc_show_text_bubble
+        - npc_inventory_get
         - npc_idle_activity
         - npc_dance_happy
         - npc_react_surprise

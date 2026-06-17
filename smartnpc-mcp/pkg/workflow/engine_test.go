@@ -71,6 +71,11 @@ func (s *stubRunner) WaitIdle(_ context.Context, _ string, _ time.Duration) (boo
 	return s.waitOK, s.waitErr
 }
 
+func (s *stubRunner) PrecompileSkill(ctx context.Context, npc, skill string, args map[string]any) (*Definition, error) {
+	rec := NewRecordingRunner(s)
+	return rec.PrecompileSkill(ctx, npc, skill, args)
+}
+
 // ── scope / expressions ─────────────────────────────────────────────────
 
 func TestScope_GetSetChain(t *testing.T) {
