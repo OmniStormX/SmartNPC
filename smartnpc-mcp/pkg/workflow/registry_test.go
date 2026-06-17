@@ -294,7 +294,7 @@ steps:
 	if overridden.Version != "2" {
 		t.Errorf("version = %q, want 2", overridden.Version)
 	}
-	if len(overridden.Steps) != 1 || overridden.Steps[0].Tool == nil || overridden.Steps[0].Tool.Name != "npc_pet_animal" {
+	if len(overridden.Steps) != 1 || overridden.Steps[0].Tool == nil || overridden.Steps[0].Tool.Name != "npc_clear_debris" {
 		t.Error("steps mismatch in overridden definition")
 	}
 
