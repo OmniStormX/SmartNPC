@@ -7,7 +7,7 @@ loop:
 inputs:
   - name: inspect_radius
     description: 巡视半径
-    default: 12
+    default: 30
 steps:
   # 1. 观测农场
   - kind: tool

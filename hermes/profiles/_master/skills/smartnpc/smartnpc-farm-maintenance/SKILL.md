@@ -70,7 +70,7 @@ water_crops  可随时对干燥砖格进行
 
 **典型序列：**
 ```
-npc_inspect_object(radius=15, what="farm_actions")
+npc_inspect_object(radius=30, what="farm_actions")
   → 查看 till.count 高，clear.count 可能有，plant.count 低
 
 npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
@@ -115,7 +115,7 @@ npc_water_crops(x1,y1,x2,y2 = plant.bbox)
 
 **典型序列：**
 ```
-npc_inspect_object(radius=12, what="farm_actions")
+npc_inspect_object(radius=30, what="farm_actions")
 
 [如果 water.count > 0]
   npc_water_crops(x1,y1,x2,y2 = water.bbox)
@@ -147,7 +147,7 @@ npc_inspect_object(radius=12, what="farm_actions")
 
 **典型序列：**
 ```
-npc_inspect_object(radius=12, what="farm_actions")
+npc_inspect_object(radius=30, what="farm_actions")
   → 确认：plant.count 高，harvest.count ≈ 0
 
 [如果 clear.count > 0]
@@ -214,7 +214,7 @@ npc_fertilize(fertilizer_id="(O)368",
 
 **典型序列：**
 ```
-npc_inspect_object(radius=8, what="farm_actions")
+npc_inspect_object(radius=30, what="farm_actions")
   → 快速扫描
 
 恰好选择以下之一：
@@ -241,7 +241,7 @@ npc_show_text_bubble "顺手弄了一下~"
 
 **典型序列：**
 ```
-npc_inspect_object(radius=15, what="farm_actions")
+npc_inspect_object(radius=30, what="farm_actions")
   → 查看 fill.count 和 fill_blocked.count
 
 [如果 fill_blocked.count > 0]
@@ -272,7 +272,7 @@ npc_inspect_object(radius=15, what="farm_actions")
 ## 决策流程（严格按顺序执行，不可跳过）
 
 ### 1. 观察
-调用 `npc_inspect_object(radius=12, what="farm_actions")`。读取结果。
+调用 `npc_inspect_object(radius=30, what="farm_actions")`。读取结果。
 响应会给出 9 个桶（每个都有 `count` + `bbox`）：
 
 - `till` — 可变为农田的空置可挖掘地面（**最高优先级！**）

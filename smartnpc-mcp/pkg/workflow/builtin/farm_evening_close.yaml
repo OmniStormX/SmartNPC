@@ -4,7 +4,7 @@ version: "1"
 inputs:
   - name: inspect_radius
     description: 巡视半径
-    default: 25
+    default: 30
   - name: target_seed
     description: 补种的种子 Qualified ID
     default: "(O)472"
