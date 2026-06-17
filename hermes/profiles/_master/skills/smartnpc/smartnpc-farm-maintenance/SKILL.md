@@ -29,6 +29,7 @@ metadata:
 | `npc_till_soil` | 将空地变为可耕种土壤 | 未耕种的空地砖格，可挖掘，非冬季 |
 | `npc_water_crops` | 浇灌干燥的作物 / 干燥的已耕土壤 | 边界框内存在干燥的 HoeDirt |
 | `npc_fertilize` | 对已耕土壤施肥。| 空置已耕土壤（dirt.crop == null），未施过肥。**播种前调用——品质肥必须在种子发芽前施加。** |
+| `npc_fill_gaps` | 填充农田 bbox 内的空隙——翻耕成完整矩形。**不清杂物不砍树。** | 空隙为净空（agent 已处理完 `fill_blocked`）；bbox 内已有 HoeDirt |
 | `npc_inspect_object` | 调查周围的土地状态 | —（始终可用） |
 | `npc_show_text_bubble` | 显示一句符合角色性格的简短想法 | —（始终可用） |
 
@@ -233,13 +234,50 @@ npc_show_text_bubble "顺手弄了一下~"
 
 ---
 
+### 示例 F — 农田形状修正
+
+**情况：** Inspect 显示 `fill.count > 0` 或 `fill_blocked.count > 0`。
+农田 bbox 内存在空隙——收获后留下的空地，或杂物/树占据了本该是耕地的地方。形状变得不规则。
+
+**典型序列：**
+```
+npc_inspect_object(radius=15, what="farm_actions")
+  → 查看 fill.count 和 fill_blocked.count
+
+[如果 fill_blocked.count > 0]
+  npc_clear_debris(x1,y1,x2,y2 = fill_blocked.bbox)
+    → 清除空隙中的杂草、树枝、石头、树桩
+  [如果 fill_blocked 中包含成熟树]
+    npc_break_resource(what="trees", x1,y1,x2,y2 = fill_blocked.bbox)
+    → 砍掉空隙中的树
+
+[然后 — 如果 fill.count > 0]
+  npc_fill_gaps(x1,y1,x2,y2 = fill.bbox)
+    → 把清干净的空隙全部翻耕，填平成完整矩形
+
+[可选]
+  npc_water_crops(x1,y1,x2,y2 = fill.bbox)
+    → 新翻的土壤浇水保湿
+  npc_plant_seeds(seed_id = 当季种子, x1,y1,x2,y2 = fill.bbox)
+    → 在刚填充的空地上补种
+```
+
+**关键决策：**
+- fill_blocked **必须先清再 fill**——`npc_fill_gaps` 不会帮你清杂物砍树。
+- 如果 `fill_blocked.count > 0` 但 `fill.count == 0`：只做清理步骤，不调 fill_gaps（清了之后下次 inspect 就会出现在 fill 组）。
+- 不需要 fill_gaps 时跳过此示例。
+
+---
+
 ## 决策流程（严格按顺序执行，不可跳过）
 
 ### 1. 观察
 调用 `npc_inspect_object(radius=12, what="farm_actions")`。读取结果。
-响应会给出 7 个桶（每个都有 `count` + `bbox`）：
+响应会给出 9 个桶（每个都有 `count` + `bbox`）：
 
 - `till` — 可变为农田的空置可挖掘地面（**最高优先级！**）
+- `fill` — 农田 bbox 内的净空空隙（直接可翻耕）
+- `fill_blocked` — 农田 bbox 内被杂物/树占据的空隙（需先清/砍）
 - `clear` — 农田上/附近的杂物
 - `plant` — 等待种子的空置已耕土壤
 - `water` — 需要浇水的干燥作物（**已有作物才浇！**）
@@ -254,6 +292,7 @@ npc_show_text_bubble "顺手弄了一下~"
 | 优先级 | 条件 | 你必须做的事 | 你禁止做的事 |
 |--------|------|-------------|-------------|
 | **P0** | `till.count > 0` | 执行示例 A（开垦新地）完整链路：clear → till → re-inspect → plant → water → fertilize | **禁止**调用 npc_water_crops（无作物可浇）、**禁止**调用 npc_break_resource（不是采集轮）、**禁止**调用 npc_harvest_crops |
+| **P0.5** | `fill_blocked.count > 0` 或 `fill.count > 0` | 执行示例 F（农田形状修正）：先清 fill_blocked → 再 fill_gaps fill | **禁止**在清 fill_blocked 之前调 npc_fill_gaps（会被杂物挡住） |
 | P1 | `harvest.count >= 3` | 切换到 `smartnpc-farm-harvest` skill |
 | P2 | `water.count > 0` **且** `till.count == 0` | 执行示例 B（日常养护）：water → clear → plant（如有空地） | 禁止 break_resource，这不是采集轮 |
 | P3 | `plant.count > 0` **且** `till.count == 0` | 执行示例 C（补种轮作）：plant → water | |
