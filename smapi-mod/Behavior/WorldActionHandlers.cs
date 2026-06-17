@@ -1,4 +1,4 @@
-// Per-action handler files for world actions.
+﻿// Per-action handler files for world actions.
 // Each is a minimal subclass of NpcActionHandlerBase. Override Execute
 // when ready to implement real game logic.
 
@@ -130,6 +130,7 @@ namespace SmartNPC.Bridge
         {
             int radius   = ParseInt(@params, "radius",    5, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
+            int extend   = ParseInt(@params, "extend",    0, 0, 10);
             var (bboxOn, x1, y1, x2, y2) = ParseBBox(@params);
             // bbox itself is the area cap — only apply max_count in radius mode.
             int effectiveCap = bboxOn ? int.MaxValue : maxCount;
@@ -183,6 +184,26 @@ namespace SmartNPC.Bridge
                     if (tx > fx2) fx2 = tx;
                     if (ty > fy2) fy2 = ty;
                 }
+            }
+
+            Log.Log(
+                $"[npc_clear_debris] {npcName}: farmland bbox BEFORE extend: " +
+                $"({fx1},{fy1})-({fx2},{fy2}) farmlandFound={farmlandFound}",
+                LogLevel.Info);
+
+            // Extend the farmland bbox outward so the NPC clears the perimeter
+            // around the crop area, not just the dirt itself.
+            if (farmlandFound && extend > 0)
+            {
+                fx1 = Math.Max(0, fx1 - extend);
+                fy1 = Math.Max(0, fy1 - extend);
+                fx2 = fx2 + extend;
+                fy2 = fy2 + extend;
+
+                Log.Log(
+                    $"[npc_clear_debris] {npcName}: farmland bbox AFTER extend({extend}): " +
+                    $"({fx1},{fy1})-({fx2},{fy2})",
+                    LogLevel.Info);
             }
 
             // 2. Scan for clearable objects, restricted to the farmland
@@ -257,7 +278,7 @@ namespace SmartNPC.Bridge
 
         // ── helpers ───────────────────────────────────────────────────
 
-        private static bool IsDebris(StardewValley.Object obj)
+        internal static bool IsDebris(StardewValley.Object obj)
         {
             if (obj is null) return false;
             return obj.IsWeeds() || obj.IsTwig()
@@ -265,11 +286,34 @@ namespace SmartNPC.Bridge
                 || (obj.Name == "Stone" && obj.ParentSheetIndex >= 0);
         }
 
-        private static string DebrisDropId(StardewValley.Object obj)
+        internal static string DebrisDropId(StardewValley.Object obj)
         {
             if (obj.IsTwig())  return "(O)388"; // Wood
             if (obj.IsWeeds()) return "(O)771"; // Mixed Seeds
             return "(O)390";  // Stone
+        }
+
+        /// <summary>
+        /// TerrainFeature counterpart of IsDebris: tree stumps (chopped-down trees)
+        /// and saplings (growthStage &lt; 5) are clearable; mature trees are not
+        /// (they belong to npc_break_resource).
+        /// </summary>
+        internal static bool IsTerrainDebris(StardewValley.TerrainFeatures.TerrainFeature tf)
+        {
+            if (tf is StardewValley.TerrainFeatures.Tree tree)
+            {
+                if (tree.stump.Value) return true;
+                if (tree.growthStage.Value < 5) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Drop id for terrain debris: stump→Hardwood, sapling→Wood.</summary>
+        internal static string TerrainDebrisDropId(StardewValley.TerrainFeatures.TerrainFeature tf)
+        {
+            if (tf is StardewValley.TerrainFeatures.Tree tree && tree.stump.Value)
+                return "(O)709"; // Hardwood
+            return "(O)388"; // Wood
         }
 
         private static int ParseInt(JsonElement p, string key, int def, int min, int max)
@@ -687,6 +731,7 @@ namespace SmartNPC.Bridge
         {
             int radius   = ParseInt(@params, "radius",    8, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
+            int extend   = ParseInt(@params, "extend",    0, 0, 10);
             var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
             int effectiveCap = bboxOn ? int.MaxValue : maxCount;
 
@@ -1766,6 +1811,7 @@ namespace SmartNPC.Bridge
         {
             int radius   = ParseInt(@params, "radius",    6, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
+            int extend   = ParseInt(@params, "extend",    0, 0, 10);
             string what  = ParseWhat(@params);
             return $"[伐木] r={radius} max={maxCount} {what}";
         }
@@ -1774,6 +1820,7 @@ namespace SmartNPC.Bridge
         {
             int radius   = ParseInt(@params, "radius",    6, 1, 30);
             int maxCount = ParseInt(@params, "max_count", 3, 1, 9999);
+            int extend   = ParseInt(@params, "extend",    0, 0, 10);
             string what  = ParseWhat(@params);
             var (bboxOn, bx1, by1, bx2, by2) = ClearDebrisHandler.ParseBBox(@params);
             // bbox itself bounds the work; max_count is a radius-mode safety knob only.
