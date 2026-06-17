@@ -1156,6 +1156,10 @@ namespace SmartNPC.Bridge
                     patchTiles.Add(new Microsoft.Xna.Framework.Point(rect.X + dx, rect.Y + dy));
             }
             var tilePoints = PathPlanner.PlanBy(npcPt, patchTiles, p => p);
+            // TODO: uncomment after Task C — StartTillSoil will accept preClearTiles/preBreakTiles
+            // _follow.StartTillSoil(npcName, tilePoints,
+            //     preClearTiles: plan.Value.TilesToClear,
+            //     preBreakTiles: plan.Value.TilesToBreak);
             _follow.StartTillSoil(npcName, tilePoints);
 
             BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
@@ -1529,7 +1533,11 @@ namespace SmartNPC.Bridge
                     bool blockedByObject = location.Objects.TryGetValue(tileV2, out var tillObj)
                         && tillObj != null && !IsDebrisObj(tillObj);
                     bool blockedByTerrain = location.terrainFeatures.TryGetValue(tileV2, out var tillTf)
-                        && tillTf != null && !IsDebrisTerrainFeature(tillTf);
+                        && tillTf != null
+                        && !IsDebrisTerrainFeature(tillTf)
+                        && !(tillTf is StardewValley.TerrainFeatures.Tree tillTree
+                             && tillTree.growthStage.Value >= 5
+                             && !tillTree.tapped.Value);
                     if (!blockedByObject && !blockedByTerrain
                         && location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)
                         && location.doesTileHaveProperty(tx, ty, "Diggable", "Back") == "T")
