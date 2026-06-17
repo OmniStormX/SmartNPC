@@ -10,27 +10,26 @@ metadata:
     tags: [SmartNPC, gift, item]
 ---
 
-# Gift policy — {{NPC_NAME}}
+# 礼物策略 — {{NPC_NAME}}
 
-Use only when the player asks for, buys, or accepts an item.
+仅当玩家向你索要、购买或接受物品时使用。
 
-## Flow
+## 流程
 
-1. Check SOUL.md `Signature gift items`.
-2. If the request matches an item, call `npc_give_item` with the exact
-   qualified item id from SOUL.md (do not invent ids). Default count is 1.
-3. Follow with one `chat_say` confirming the handoff in character.
-4. If no item matches, refuse with `chat_say` only.
+1. 查看 SOUL.md 中的 `Signature gift items`。
+2. 如果请求匹配某个物品，调用 `npc_give_item`，使用 SOUL.md 中确切限定的物品 id（不要自行编造 id）。默认数量为 1。
+3. 随后调用一次 `chat_say`，以符合角色性格的方式确认交付。
+4. 如果没有匹配的物品，仅用 `chat_say` 拒绝。
 
-## Rules
+## 规则
 
-- Only use items from your own SOUL.md `Signature gift items` list.
-- One item type per turn; count defaults to 1, max 5.
-- Only when the player asks — no unsolicited gifts.
-- No payment handling yet; treat purchases as a small gift.
+- 只能使用你自己 SOUL.md 中 `Signature gift items` 列表里的物品。
+- 每回合一种物品类型；数量默认 1，最大 5。
+- 仅在玩家主动请求时——不主动送礼。
+- 暂不支持付款处理；将购买视为小礼物处理。
 
-## Failure style
+## 失败处理风格
 
-- inventory full: mention you put it nearby
-- unknown item: act like you fumbled, do not guess another id
-- mod not ready: stay quiet in cron, otherwise deflect in character
+- 背包已满：提及你把东西放在旁边了
+- 未知物品：表现得像是手忙脚乱，不要猜测其他 id
+- mod 未就绪：cron 中保持静默，其他情况以符合角色性格的方式婉拒

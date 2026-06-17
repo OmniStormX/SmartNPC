@@ -10,39 +10,33 @@ metadata:
     tags: [SmartNPC, farm, schedule, deprecated]
 ---
 
-# Farm round — {{NPC_NAME}} (DEPRECATED)
+# 农场巡查 — {{NPC_NAME}}（已弃用）
 
-> ⚠️ **This skill is deprecated.** Use `smartnpc-farm-maintenance` for
-> maintenance work (clear→till→plant→water→fertilize) and
-> `smartnpc-farm-harvest` for harvest work (harvest→deposit→replant).
-> These new skills are example-driven and adapt to live game state.
+> ⚠️ **此技能已弃用。** 维护类工作（清障→耕地→种植→浇水→施肥）请使用
+> `smartnpc-farm-maintenance`，收获类工作（收获→存入→补种）请使用
+> `smartnpc-farm-harvest`。新技能由示例驱动，能适应实时游戏状态。
 >
-> This skill remains only as a delegate. Older priority lists were
-> removed because they implicitly demoted till/plant/fertilize to low
-> priority and added incorrect "seeds in backpack" preconditions —
-> both factors that biased the agent away from soil expansion. Do
-> NOT bring back a priority table here.
+> 此技能仅保留作为委派入口。旧的优先级列表已移除，因为它们隐式将耕地/种植/施肥降为
+> 低优先级，并添加了错误的"背包有种子"前置条件——这两个因素都会让 agent 偏离扩耕方向。
+> 不要在此处恢复优先级表。
 
-Triggered when a `schedule_trigger` fires with `action="farm_round"`.
+此技能已弃用，仅作为旧版 `schedule_trigger action="farm_round"` 条目的委派 shim 保留。新工作流应使用 `smartnpc-farm-maintenance` 或 `smartnpc-farm-harvest`，由工作流引擎通过 `kind: skill_call` 直接调用。
 
-## What to do
+## 做什么
 
-1. Call `npc_inspect_object(radius=12, what="farm_actions")`.
-2. Read the response. Identify the bucket with the highest non-zero count
-   that fits the situation:
+1. 调用 `npc_inspect_object(radius=12, what="farm_actions")`。
+2. 阅读响应内容。找出计数非零且适合当前情况的最高优先级桶：
 
-   | Bucket non-zero | Delegate to |
+   | 桶非零情况 | 委派到 |
    |---|---|
-   | `harvest.count > 0` | Load `smartnpc-farm-harvest` and follow it from there. |
-   | `till.count > 0` OR `plant.count > 0` OR `clear.count > 0` OR `water.count > 0` | Load `smartnpc-farm-maintenance` and follow it from there. |
-   | All buckets 0 | One short `npc_show_text_bubble` ("[今天没什么要弄的]"), write `farm_round: <date> nothing` to memory, stop. |
+   | `harvest.count > 0` | 加载 `smartnpc-farm-harvest` 并从那里继续。 |
+   | `till.count > 0` 或 `plant.count > 0` 或 `clear.count > 0` 或 `water.count > 0` | 加载 `smartnpc-farm-maintenance` 并从那里继续。 |
+   | 所有桶均为 0 | 发一条简短的 `npc_show_text_bubble`（"[今天没什么要弄的]"），写入记忆 `farm_round: <date> nothing`，结束。 |
 
-3. Do NOT execute farm tools directly from this skill. Always delegate.
+3. 不要从此技能直接执行农场工具。始终委派。
 
-## Guardrails
+## 护栏
 
-- Do not call `chat_say` — this is a schedule trigger, not a player turn.
-- Do not call `npc_plan_day` from this skill.
-- On rainy/stormy days, stop immediately and write a skip-reason memory
-  line. The new skills handle weather themselves; only the wholesale
-  skip belongs here.
+- 不要调用 `chat_say`——这是日程触发器，不是玩家回合。
+- 不要从此技能调用 `npc_plan_day`。
+- 雨雪天立即停止，写一行跳过的记忆。新技能自行处理天气；只有整体跳过属于这里。

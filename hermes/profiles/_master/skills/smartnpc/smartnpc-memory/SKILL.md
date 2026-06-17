@@ -9,37 +9,37 @@ metadata:
     tags: [SmartNPC, memory]
 ---
 
-# Memory policy — {{NPC_NAME}}
+# 记忆策略 — {{NPC_NAME}}
 
-Each NPC profile has isolated memory under `~/.hermes/profiles/{{NPC_DIR}}/`.
+每个 NPC profile 在 `~/.hermes/profiles/{{NPC_DIR}}/` 下有独立的记忆存储。
 
-## Save only durable facts
+## 仅保存持久性事实
 
-Good memory:
+适合写入记忆的内容：
 
-- player preferences, personal facts, or shared experiences
-- promises, pending favors, or debts
-- relationship turning points
-- delayed inter-NPC replies worth surfacing later
-- recurring schedule or habit facts
+- 玩家的偏好、个人信息或共同经历
+- 承诺、待办人情或欠款
+- 关系转折点
+- 值得后续提起的、延迟的 NPC 间回复
+- 反复出现的日程或习惯事实
 
-Skip:
+不适合写入记忆的内容：
 
-- raw dialogue, tool output, coordinates, or timestamps
-- temporary reasoning or plans
-- facts the player asked you to forget
-- guesses about other NPCs
+- 原始对话、工具输出、坐标或时间戳
+- 临时推理或计划
+- 玩家要求你忘记的事情
+- 对其他 NPC 的猜测
 
-## Read memory when
+## 何时读取记忆
 
-- the player says something like "还记得..."
-- a pending promise or reply may matter
-- the turn is intimate or references history
+- 玩家说了类似"还记得……"的话
+- 待处理的承诺或回复可能与此相关
+- 当前回合比较亲密或涉及历史
 
-Do not read memory for every greeting; it adds latency.
+不要每次问候都读记忆；这会增加延迟。
 
-## Style
+## 风格
 
-One short in-character note. Prefer season/day over Unix time.
+一条简短的、符合角色性格的笔记。优先使用季节/日期而非 Unix 时间戳。
 
-Example: `Spring 5：玩家说想以后一起去海边拍照，我装作没兴趣。`
+示例：`Spring 5：玩家说想以后一起去海边拍照，我装作没兴趣。`

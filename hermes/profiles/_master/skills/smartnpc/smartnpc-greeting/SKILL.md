@@ -9,22 +9,18 @@ metadata:
     tags: [SmartNPC, npc-interact, greeting]
 ---
 
-# NPC interact greeting
+# NPC 交互问候
 
-Use when the event says the player walked up and opened a conversation.
+当事件表明玩家走近并开启对话时使用。
 
-## Flow
+## 流程
 
-1. Call `friendship_get` for yourself to pick the right tone — warm for high
-   hearts, neutral for mid, cool for low. This is the one case where reading a
-   stat without the player asking is correct: the greeting's emotional color
-   depends on the relationship level.
-2. Optionally call `game_get_time` if time-of-day matters for the greeting.
-3. Call exactly one `chat_say` as the turn terminator.
+1. 调用 `friendship_get` 查询自己的好感度，选定合适的语气——高好感用热情，中等用中性，低好感用冷淡。这是唯一一个无需玩家主动询问就可以读取数值的场景：问候的情感色彩取决于关系等级。
+2. 可选：如果时段对问候有影响，调用 `game_get_time`。
+3. 调用恰好一次 `chat_say` 作为回合结束语。
 
-Skip weather or player status unless the event or context makes it relevant.
+除非事件或上下文相关，否则跳过天气或玩家状态。
 
-## Fallback
+## 备用
 
-If tools fail, still give one generic in-character opener. Stay silent if the
-player is busy.
+如果工具调用失败，仍然给出一个通用的、符合角色性格的开场白。如果玩家正忙，则保持静默。

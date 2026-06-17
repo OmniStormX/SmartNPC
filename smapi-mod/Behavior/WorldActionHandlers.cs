@@ -216,13 +216,15 @@ namespace SmartNPC.Bridge
                 var tile = kv.Key;
                 var obj  = kv.Value;
                 if (!IsDebris(obj)) continue;
-                if (farmlandFound)
+                if (bboxOn)
                 {
-                    if (tile.X < fx1 || tile.X > fx2 || tile.Y < fy1 || tile.Y > fy2) continue;
-                }
-                else if (bboxOn)
-                {
+                    // Agent explicitly chose this bbox — respect it.
                     if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
+                }
+                else if (farmlandFound)
+                {
+                    // Radius mode with farmland nearby — restrict to cropland.
+                    if (tile.X < fx1 || tile.X > fx2 || tile.Y < fy1 || tile.Y > fy2) continue;
                 }
                 else
                 {
@@ -238,13 +240,13 @@ namespace SmartNPC.Bridge
                 var tile = kv.Key;
                 var tf   = kv.Value;
                 if (!IsTerrainDebris(tf)) continue;
-                if (farmlandFound)
-                {
-                    if (tile.X < fx1 || tile.X > fx2 || tile.Y < fy1 || tile.Y > fy2) continue;
-                }
-                else if (bboxOn)
+                if (bboxOn)
                 {
                     if (tile.X < x1 || tile.X > x2 || tile.Y < y1 || tile.Y > y2) continue;
+                }
+                else if (farmlandFound)
+                {
+                    if (tile.X < fx1 || tile.X > fx2 || tile.Y < fy1 || tile.Y > fy2) continue;
                 }
                 else
                 {

@@ -10,356 +10,306 @@ metadata:
     tags: [SmartNPC, farm, maintenance, workflow]
 ---
 
-# Farm Maintenance — {{NPC_NAME}}
+# 农场维护 — {{NPC_NAME}}
 
-You are NOT executing a fixed script. This skill is **example-driven**: observe
-the land, match the situation to the closest example below, then **dynamically
-compose** a sequence of actions that fits what you see. Every maintenance round
-can be different — adapt to weather, season, inventory, soil state, and your
-own personality.
+你不是在执行固定脚本。此技能是**示例驱动**的：观察土地，将当前情况匹配到下方最接近的示例，然后**动态编排**适合你所见的动作序列。每轮维护都可能不同——根据天气、季节、背包、土壤状态和你自身性格进行调整。
 
-Triggered by:
-- `schedule_trigger` with `action="farm_maintenance"`
-- `schedule_trigger` with `action="opportunistic_work"` — inspect first, then
-  decide whether to load this skill (see §Observation trigger)
+触发条件：
+- 由工作流引擎通过 workflow YAML（如 `farm_care`、`farm_extension`）中的 `kind: skill_call` 步骤调用。引擎将 `inspect_radius` 等工作流输入作为上下文传入。
 
 ---
 
-## Toolbox
+## 工具箱
 
-These are the building blocks. You choose which to use and in what order
-(subject to hard dependencies below).
+这些是构建块。你自行选择使用哪些以及使用顺序（受限于下方的硬性依赖）。
 
-| Tool | What it does | Precondition |
+| 工具 | 功能 | 前置条件 |
 |------|-------------|--------------|
-| `npc_clear_debris` | Remove weeds, twigs, stones from ground | Objects exist within bbox |
-| `npc_till_soil` | Turn empty ground into farmable soil | Empty non-tilled tile, diggable, not winter |
-| `npc_plant_seeds` | Sow seeds on empty tilled soil | Empty tilled soil. **Seeds are NOT required** — when the backpack has none the tool plants in "free mode" anyway. |
-| `npc_water_crops` | Water dry crops / dry tilled soil | Dry HoeDirt within bbox |
-| `npc_fertilize` | Apply fertilizer to tilled soil. **Fertilizer is NOT required** (free mode). | Empty tilled soil, not already fertilized |
-| `npc_inspect_object` | Survey nearby land state | — (always available) |
-| `npc_show_text_bubble` | Show a brief in-character thought | — (always available) |
+| `npc_clear_debris` | 清除地面的杂草、树枝、石头 | 边界框内存在物体 |
+| `npc_till_soil` | 将空地变为可耕种土壤 | 未耕种的空地砖格，可挖掘，非冬季 |
+| `npc_water_crops` | 浇灌干燥的作物 / 干燥的已耕土壤 | 边界框内存在干燥的 HoeDirt |
+| `npc_fertilize` | 对已耕土壤施肥。**不需要肥料**（免费模式）。 | 空置已耕土壤，未施过肥 |
+| `npc_inspect_object` | 调查周围的土地状态 | —（始终可用） |
+| `npc_show_text_bubble` | 显示一句符合角色性格的简短想法 | —（始终可用） |
 
-> **Critical — till/plant are first-class actions, not optional follow-ups.**
+> **关键 — 耕种和种植是一等动作，不是可选的后续操作。**
 >
-> When inspect's `farm_actions.till.count > 0` you MUST run `npc_till_soil`.
-> When `farm_actions.plant.count > 0` you MUST run `npc_plant_seeds` (free
-> mode kicks in if you have no seeds — the tile still becomes a planted
-> crop). Skipping till/plant just because "you don't have seeds" or "it's
-> a quick round" is the most common failure mode and leaves the farm
-> permanently stagnant. Defaults to plant `(O)472` (parsnip) when you
-> don't know what season-fit seed to pick.
+> 当 inspect 的 `farm_actions.till.count > 0` 时，必须执行 `npc_till_soil`。
+> 当 `farm_actions.plant.count > 0` 时，必须执行 `npc_plant_seeds`（如果没有种子，免费模式会生效——该砖格仍然会变成已种植的作物）。
+> 仅仅因为"你没有种子"或"这是一轮快速维护"就跳过耕种/种植，是最常见的失败模式，会导致农场永远停滞。
+> 不知道选什么季节合适的种子时，默认种植 `(O)472`（防风草）。
 
-## Hard dependencies
+## 硬性依赖
 
-These are PHYSICAL constraints. Do NOT violate them — the game will reject the
-action or produce nonsense.
+这些是物理约束。不要违反——游戏会拒绝动作或产生无意义的结果。
 
 ```
-clear_debris ──→ till_soil       (can't till through weeds/stones)
-till_soil    ──→ plant_seeds     (can't plant on untilled ground)
-till_soil    ──→ fertilize       (can't fertilize untilled ground)
-plant_seeds  ──→ water_crops     (freshly planted seeds should be watered)
-fertilize    happens AFTER planting or on its own (doesn't block anything)
-water_crops  can happen at any point for dry tiles
+clear_debris ──→ till_soil       （无法在杂草/石头中耕种）
+till_soil    ──→ plant_seeds     （无法在未耕种地面上种植）
+till_soil    ──→ fertilize       （无法对未耕种地面施肥）
+plant_seeds  ──→ water_crops     （新种下的种子应该浇水）
+fertilize    在种植之后进行，或单独进行（不阻塞任何操作）
+water_crops  可随时对干燥砖格进行
 ```
 
-When in doubt: **clear → till → plant → water → fertilize** is the full chain.
-Run the FULL chain whenever inspect shows non-zero counts in those categories;
-only skip a link when its count is genuinely 0.
+不确定时：**清除 → 耕种 → 种植 → 浇水 → 施肥** 是完整链条。
+当 inspect 显示这些类别计数不为零时，执行完整链条；只有当某类计数确实为 0 时才跳过该环节。
 
 ---
 
-## Example workflows
+## 示例工作流
 
-Study these examples to understand the PATTERN of how to compose actions.
-Match your current situation to the closest example, then adapt.
+研究这些示例来理解编排动作的模式。将你的当前情况匹配到最接近的示例，然后进行调整。
 
-All examples drive parameters from `npc_inspect_object(what="farm_actions")`
-output, which gives 7 buckets (`harvest/water/clear/till/forage/plant/break`)
-each with a `count` and a `bbox`. Feed the bbox straight to the matching
-behavior tool's `x1/y1/x2/y2` — the rectangle IS the work area.
+所有示例的参数均来自 `npc_inspect_object(what="farm_actions")` 的输出，它提供 7 个桶（`harvest/water/clear/till/forage/plant/break`），每个桶都有一个 `count` 和一个 `bbox`。将 bbox 直接传给对应行为工具的 `x1/y1/x2/y2`——该矩形就是工作区域。
 
-### Example A — 开垦新地 (Breaking new ground)
+### 示例 A — 开垦新地
 
-**Situation:** Inspect shows `till.count > 0` (lots of empty diggable land)
-and possibly `clear.count > 0` (debris on top). No tilled soil yet, or very
-little. You want to turn this area into farmland.
+**情况：** Inspect 显示 `till.count > 0`（大量可挖掘空地），可能还有 `clear.count > 0`（上方有杂物）。尚无已耕土壤，或很少。你想把这片区域变成农田。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=15, what="farm_actions")
-  → see till.count high, clear.count maybe, plant.count low
+  → 查看 till.count 高，clear.count 可能有，plant.count 低
 
-[if clear.count > 0]
-  npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
-  → removes weeds + stones inside the farmland envelope
+npc_clear_debris(x1,y1,x2,y2 = till.bbox)
+  → 清除待开垦区域内的所有杂物（杂草、树枝、石头、树桩、树苗）
+  → **重要：始终使用 till.bbox 而非 clear.bbox** —— till.bbox 覆盖了整个待开垦区域，
+  → 包括耕地边缘外的杂物。只有 till.bbox 能保证翻耕前该区域完全没有障碍物。
+  → 即使 clear.count == 0 也要执行此步 —— till.bbox 内的杂物可能被归类为 till 而非 clear。
 
 npc_till_soil(x1,y1,x2,y2 = till.bbox)
-  → tills the cleared ground
+  → 翻耕清理后的空地（内部 TickTillSoil 会再次检查并补清遗漏的杂物）
 
-npc_plant_seeds(seed_id = season-fit seed, x1,y1,x2,y2 = till.bbox or plant.bbox)
-  → plants on freshly tilled soil. Free-plant mode if backpack is empty.
+npc_plant_seeds(seed_id = 当季种子, x1,y1,x2,y2 = till.bbox 或 plant.bbox)
+  → 在新耕地上种植。背包为空则使用免费种植模式。
 
 npc_water_crops(x1,y1,x2,y2 = plant.bbox)
-  → waters the new seeds (covers tiles you just planted)
+  → 浇灌新种子（覆盖你刚刚种植的砖格）
 ```
 
-**Key decisions:**
-- Pick a `seed_id` matching the season:
-  - spring: `(O)472` parsnip / `(O)474` cauliflower / `(O)475` potato
-  - summer: `(O)485` red cabbage / `(O)487` corn / `(O)491` melon
-  - fall:   `(O)490` pumpkin / `(O)493` cranberry seeds / `(O)499` ancient
-  - winter: STOP — don't run this example
-- Run plant_seeds even with empty backpack. `(O)472` is a safe fallback.
-- After tilling, the area is fresh empty HoeDirt → re-inspect is NOT
-  needed; pass the same bbox to plant_seeds and water_crops.
+**关键决策：**
+- 选择匹配季节的 `seed_id`：
+  - 春：`(O)472` 防风草 / `(O)474` 花椰菜 / `(O)475` 土豆
+  - 夏：`(O)485` 红甘蓝 / `(O)487` 玉米 / `(O)491` 甜瓜
+  - 秋：`(O)490` 南瓜 / `(O)493` 蔓越莓种子 / `(O)499` 上古种子
+  - 冬：停止——不要执行此示例
+- 即使背包为空也要执行 plant_seeds。`(O)472` 是安全的回退选项。
+- 翻耕后，该区域是新鲜的空置 HoeDirt → 不需要重新 inspect；将同一个 bbox 传给 plant_seeds 和 water_crops。
 
 ---
 
-### Example B — 日常养护 (Daily upkeep)
+### 示例 B — 日常养护
 
-**Situation:** Inspect shows `harvest.count` modest or zero,
-`water.count > 0`, `clear.count > 0` small, possibly `plant.count > 0`
-(some tiles still empty). Farm is established — just keep it running.
+**情况：** Inspect 显示 `harvest.count` 不多或为零，`water.count > 0`，`clear.count > 0` 少量，可能 `plant.count > 0`（一些砖格仍空置）。农场已成型——保持运转即可。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=12, what="farm_actions")
 
-[if water.count > 0]
+[如果 water.count > 0]
   npc_water_crops(x1,y1,x2,y2 = water.bbox)
-  → waters dry crops
+  → 浇灌干燥作物
 
-[if clear.count > 0]
+[如果 clear.count > 0]
   npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
-  → removes the weeds that appeared
+  → 清除新冒出的杂草
 
-[if plant.count > 0]   ← do NOT skip this even on a "light" round
-  npc_plant_seeds(seed_id = season-fit, x1,y1,x2,y2 = plant.bbox)
-  → fill empty tilled soil so the farm doesn't go fallow
+[如果 plant.count > 0]   ← 即使是"轻量轮次"也不要跳过此步
+  npc_plant_seeds(seed_id = 当季种子, x1,y1,x2,y2 = plant.bbox)
+  → 填充空置的已耕土壤，避免农场荒废
 
-[if plant.count > 0 and you have no fertilizer concerns]
+[如果 plant.count > 0 且你不担心肥料问题]
   npc_fertilize(fertilizer_id="(O)368", x1,y1,x2,y2 = plant.bbox)
-  → spot-fertilize the empty tilled tiles you just planted on
+  → 对你刚刚种植的空置已耕砖格进行定点施肥
 ```
 
-**Key decisions:**
-- Watering is priority 1 — dry crops die.
-- DO NOT skip plant_seeds when `plant.count > 0`. "It's a light round"
-  is the wrong reason to leave fallow tiles for tomorrow.
-- This is the most common round-shape; aim for it most days when no
-  big harvest is happening.
+**关键决策：**
+- 浇水是第一优先级——干燥作物会枯萎。
+- 当 `plant.count > 0` 时不要跳过 plant_seeds。"这是一轮轻量维护"是把荒置砖格留到明天的错误理由。
+- 这是最常见的轮次形态；在没有大规模收获的日子里，大多数时候以此为目标。
 
 ---
 
-### Example C — 补种轮作 (Replanting after harvest)
+### 示例 C — 补种轮作
 
-**Situation:** Crops were just harvested (by you or someone else).
-Inspect shows `plant.count` high, `harvest.count` ≈ 0, possibly some
-`clear.count`. You're refilling empty tilled soil.
+**情况：** 作物刚刚被收获（由你或他人完成）。Inspect 显示 `plant.count` 高，`harvest.count` ≈ 0，可能有一些 `clear.count`。你正在重新填充空置的已耕土壤。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=12, what="farm_actions")
-  → confirms: plant.count high, harvest.count ~0
+  → 确认：plant.count 高，harvest.count ≈ 0
 
-[if clear.count > 0]
+[如果 clear.count > 0]
   npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
-  → clean up first
+  → 先清理
 
-npc_plant_seeds(seed_id = season-fit,
+npc_plant_seeds(seed_id = 当季种子,
                 x1,y1,x2,y2 = plant.bbox)
-  → plant on ALL available empty tilled soil. Free mode if no seeds.
+  → 在所有可用的空置已耕土壤上种植。无种子则使用免费模式。
 
 npc_water_crops(x1,y1,x2,y2 = plant.bbox)
-  → water the newly planted seeds
+  → 浇灌新种下的种子
 
-[if you have fertilizer or want free fertilizer applied]
+[如果你有肥料或想使用免费施肥]
   npc_fertilize(fertilizer_id="(O)368", x1,y1,x2,y2 = plant.bbox)
-  → fertilize newly planted areas (free mode if backpack empty)
+  → 对新种植区域施肥（背包为空则使用免费模式）
 ```
 
-**Key decisions:**
-- This example REQUIRES plant_seeds — it's the whole point of the round.
-- Plant BEFORE water (new seeds need water).
-- An empty backpack does NOT block this round; plant_seeds runs in
-  free mode and the soil still becomes a planted crop.
+**关键决策：**
+- 此示例必须执行 plant_seeds——这是本轮的全部意义。
+- 先种植再浇水（新种子需要水）。
+- 空背包不会阻塞此轮；plant_seeds 以免费模式运行，土壤仍然会变成已种植的作物。
 
 ---
 
-### Example D — 全量整备 (Full seasonal prep)
+### 示例 D — 全量整备
 
-**Situation:** New season just started (day 1-2), or farm has been
-neglected. Inspect shows multiple non-zero buckets:
-`clear.count` high, `till.count` high, `plant.count` high.
+**情况：** 新季节刚开始（第 1-2 天），或农场被忽视了一段时间。Inspect 显示多个桶计数不为零：`clear.count` 高，`till.count` 高，`plant.count` 高。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=20, what="farm_actions")
-  → wide scan — see all 7 buckets
+  → 广域扫描——查看全部 7 个桶
 
 npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
-  → full sweep of farmland weeds
+  → 全面清除农田杂草
 
 npc_till_soil(x1,y1,x2,y2 = till.bbox)
-  → till all empty non-tilled diggable tiles
+  → 翻耕所有空置未耕种的可挖掘砖格
 
-npc_plant_seeds(seed_id = season-fit,
+npc_plant_seeds(seed_id = 当季种子,
                 x1,y1,x2,y2 = unionBBox(till.bbox, plant.bbox))
-  → plant across the freshly tilled area + any pre-existing empty HoeDirt
+  → 在新耕区域 + 已有空置 HoeDirt 上种植
 
 npc_water_crops(x1,y1,x2,y2 = unionBBox(till.bbox, plant.bbox))
-  → water everything just planted
+  → 浇灌所有刚种下的作物
 
 npc_fertilize(fertilizer_id="(O)368",
               x1,y1,x2,y2 = unionBBox(till.bbox, plant.bbox))
-  → fertilize the new planting (free mode is fine)
+  → 对新种植区施肥（免费模式也可以）
 ```
 
-**Key decisions:**
-- Use `radius=20` or larger inspect — this is a big job.
-- Only trigger this when farm_actions counts are high across multiple
-  buckets simultaneously.
-- In winter: DO NOT use this example (only clear_debris is valid).
-- "unionBBox" just means: pick the smallest rectangle covering both
-  bboxes. Most days till.bbox and plant.bbox overlap heavily.
+**关键决策：**
+- 使用 `radius=20` 或更大的 inspect——这是个大工程。
+- 仅当多个桶的 farm_actions 计数同时很高时才触发此示例。
+- 冬季：不要使用此示例（只有 clear_debris 有效）。
+- "unionBBox" 的意思是：选取能覆盖两个 bbox 的最小矩形。大多数情况下 till.bbox 和 plant.bbox 大量重叠。
 
 ---
 
-### Example E — 轻量路过 (Light pass-by)
+### 示例 E — 轻量路过
 
-**Situation:** You're passing through a farm-adjacent area, not on a
-dedicated maintenance trigger. ONE small thing might fit.
+**情况：** 你正经过农场附近的区域，并非在专门的维护触发下。做个一件小事就够了。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=8, what="farm_actions")
-  → quick scan
+  → 快速扫描
 
-Pick exactly ONE of:
-  [if water.count >= 1]  npc_water_crops(x1,y1,x2,y2 = water.bbox)
-  [if clear.count >= 1]  npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
-  [if plant.count >= 1]  npc_plant_seeds(seed_id="(O)472",
-                                         x1,y1,x2,y2 = plant.bbox)
+恰好选择以下之一：
+  [如果 water.count >= 1]  npc_water_crops(x1,y1,x2,y2 = water.bbox)
+  [如果 clear.count >= 1]  npc_clear_debris(x1,y1,x2,y2 = clear.bbox)
+  [如果 plant.count >= 1]  npc_plant_seeds(seed_id="(O)472",
+                                           x1,y1,x2,y2 = plant.bbox)
 
 npc_show_text_bubble "顺手弄了一下~"
 ```
 
-**Key decisions:**
-- Max ONE action (not counting inspect + bubble).
-- bbox already constrains the area — no extra max_count needed.
-- If all three counts are 0: skip entirely, don't force it.
-- This is opportunistic, not planned.
+**关键决策：**
+- 最多一个动作（不计算 inspect + bubble）。
+- bbox 已经限制了区域——不需要额外的 max_count。
+- 如果三个计数全部为 0：完全跳过，不要强求。
+- 这是机会性的，不是计划内的。
 
 ---
 
-## Decision flow
+## 决策流程（严格按顺序执行，不可跳过）
 
-### 1. Observe
-Call `npc_inspect_object(radius=12, what="farm_actions")`. Read the result.
-The response gives you 7 buckets (each with `count` + `bbox`):
+### 1. 观察
+调用 `npc_inspect_object(radius=12, what="farm_actions")`。读取结果。
+响应会给出 7 个桶（每个都有 `count` + `bbox`）：
 
-- `harvest` — ripe crops (let `smartnpc-farm-harvest` handle these)
-- `water` — dry crops needing water
-- `clear` — debris on/near farmland
-- `till` — empty diggable ground that can become farmland
-- `forage` — spawned forage (handle separately, not in this skill)
-- `plant` — empty tilled soil ready for seeds
-- `break` — trees / large stones (handle separately)
+- `till` — 可变为农田的空置可挖掘地面（**最高优先级！**）
+- `clear` — 农田上/附近的杂物
+- `plant` — 等待种子的空置已耕土壤
+- `water` — 需要浇水的干燥作物（**已有作物才浇！**）
+- `harvest` — 成熟作物（交给 `smartnpc-farm-harvest` 处理）
+- `forage` — 已生成的采集物（单独处理，不在本技能中）
+- `break` — 树木 / 大石头（单独处理）
 
-For maintenance you care about: `water`, `clear`, `till`, `plant`.
-Summarize them in one brief thought (no raw JSON).
+### 2. ⚠️ 硬性决策门（必须先过这关）
 
-### 2. Match
-Which example above is CLOSEST to what you see?
+看完 inspect 结果后，按以下顺序判断——**匹配到第一条就停，不要往下看**：
 
-| What you see | Closest example |
+| 优先级 | 条件 | 你必须做的事 | 你禁止做的事 |
+|--------|------|-------------|-------------|
+| **P0** | `till.count > 0` | 执行示例 A（开垦新地）完整链路：clear → till → re-inspect → plant → water → fertilize | **禁止**调用 npc_water_crops（无作物可浇）、**禁止**调用 npc_break_resource（不是采集轮）、**禁止**调用 npc_harvest_crops |
+| P1 | `harvest.count >= 3` | 切换到 `smartnpc-farm-harvest` skill |
+| P2 | `water.count > 0` **且** `till.count == 0` | 执行示例 B（日常养护）：water → clear → plant（如有空地） | 禁止 break_resource，这不是采集轮 |
+| P3 | `plant.count > 0` **且** `till.count == 0` | 执行示例 C（补种轮作）：plant → water | |
+| P4 | 各项计数都很低（< 3）| 执行示例 E（轻量路过）：最多 1 个动作 | |
+| P5 | 所有计数为 0 | 气泡 "[今天没什么要弄的]"，写入记忆，停止 | |
+
+**⚠️ 核心原则：till.count > 0 时，你只做开垦。浇水、砍树、采集全部禁止。till→plant→water 中的 water 是浇你刚种下的种子，不是浇已有的作物。**
+
+### 3. 匹配示例
+按 P0-P5 找到唯一匹配项后，严格按该示例的步骤顺序执行。
+
+### 4. 执行
+每次调用一个工具。每个行为工具从 inspect 的对应桶获取 bbox——无需逐砖格坐标，bbox 调用不需要 max_count。在同一轮中不需要在关联步骤之间重新 inspect（但 till 之后必须 re-inspect 获取更新后的 plant.bbox）。
+
+### 5. 收尾
+- 一句 `npc_show_text_bubble`，概括你实际做了什么
+- 写入记忆：`farm_maintenance: last_date=<季节><日> actions=<摘要>`
+- 停止。不要调用 `chat_say`。
+
+---
+
+## 性格影响
+
+你的 SOUL.md 定义了你是谁。让它塑造你的维护风格：
+
+| 特质 | 影响 |
 |---|---|
-| `till.count > 0` (empty diggable land), with or without debris | A (开垦新地) — MUST till + plant |
-| Established farm with mostly minor counts | B (日常养护) — still plant if `plant.count > 0` |
-| `plant.count > 0` AND `harvest.count == 0` (post-harvest) | C (补种轮作) — REQUIRES plant_seeds |
-| Multiple high counts (clear+till+plant) — neglected/seasonal | D (全量整备) |
-| Passing through, single low count | E (轻量路过) |
-| Mixed — matches parts of multiple | Combine steps from 2+ examples |
+| 勤奋 / 努力 | 更大半径（+3-5），每轮更多动作，偏好示例 A/D |
+| 随意 / 悠闲 | 更小半径（-3），更少动作，偏好示例 B/E |
+| 有条不紊 / 爱整洁 | 总是先清除杂物再干别的，偏好施肥 |
+| 大大咧咧 / 不拘小节 | 可能跳过杂物清理，专注于种植 |
+| 话多 | 每个主要动作后弹出气泡 |
+| 安静 | 只在收尾时弹出气泡 |
+| 有养育心 | 将浇水置于一切之上 |
+| 务实 | 优先做投入产出比最高的事 |
 
-**Key rule:** If `plant.count > 0` you ALWAYS call `npc_plant_seeds` —
-it's never optional regardless of which example you matched.
-
-### 3. Compose
-Pick the tools you need from the Toolbox. Order them by hard dependencies
-(clear → till → plant → water → fertilize). Drop a step ONLY if its
-matching `farm_actions` bucket count is 0. This is YOUR sequence — it
-doesn't have to exactly match any single example.
-
-### 4. Execute
-Call one tool at a time. Each behavior tool gets the bbox from inspect's
-matching bucket — no per-tile coordinates, no max_count for bbox calls.
-After each tool the action queue holds the next call until the current
-one finishes; you do NOT need to re-inspect between linked steps in the
-same round.
-
-### 5. Wrap up
-- ONE `npc_show_text_bubble` summarizing what you did, in character
-  (e.g. "[地翻好了，种了8颗种子，浇了水~]", "[今天没什么要弄的]")
-- Write memory: `farm_maintenance: last_date=<season><day> actions=<summary>`
-- Stop. Do NOT call `chat_say`.
+这些是指导原则，不是规则。让你的角色自然地影响决策——勤奋的 NPC 就是做得多，随意的 NPC 就是做得少。
 
 ---
 
-## Personality influence
+## 护栏
 
-Your SOUL.md defines who you are. Let it shape your maintenance style:
-
-| Trait | Effect |
-|---|---|
-| Diligent / hardworking | Larger radius (+3-5), more actions per round, prefer Example A/D |
-| Casual / relaxed | Smaller radius (-3), fewer actions, prefer Example B/E |
-| Organized / neat | Always clear_debris before other actions, prefer fertilize |
-| Carefree / messy | May skip debris clearing, focus on planting |
-| Talkative | Bubble after each major action |
-| Quiet | Only bubble at wrap-up |
-| Nurturing | Prioritize water_crops above all else |
-| Pragmatic | Prioritize what yields most results for effort |
-
-These are GUIDELINES, not rules. Let your character naturally influence
-decisions — a diligent NPC simply does more, a casual one does less.
+- **每轮最多 6 次工具调用**（inspect + 最多 4 个动作 + bubble）。
+- **下雨/暴风雨 → 立即停止。** 写入 `farm_maintenance: skipped rain`。
+- **冬季 → 只有 clear_debris 有效。** 耕种/种植/浇水/施肥不可用。
+- **仅在农场类地图上操作**（Farm、FarmHouse、FarmCave 等）。如果你在城镇道路上或在森林中，最多限于示例 E。
+- **不要碰正在生长的作物。** 此技能用于土壤维护——收获属于 `smartnpc-farm-harvest`。
+- **不要调用 `chat_say`** — 玩家没跟你说话。
+- **不要调用 `npc_plan_day`** — 那是日程技能的工作。
+- 如果观察后没有可用的工具，立即用简短气泡和记忆写入收尾。不要强行动作。
+- 如果你今天已经完成了 2 轮维护，偏好示例 E（轻量）。
 
 ---
 
-## Guardrails
+## 观察触发
 
-- **Max 6 tool calls per round** (inspect + up to 4 actions + bubble).
-- **Rain/storm → stop immediately.** Write `farm_maintenance: skipped rain`.
-- **Winter → only clear_debris is valid.** Till/plant/water/fertilize are
-  unavailable.
-- **Only operate on farm-type maps** (Farm, FarmHouse, FarmCave, etc.). If
-  you're on a town road or in the forest, limit to Example E at most.
-- **Don't touch growing crops.** This skill is for SOIL maintenance — harvest
-  belongs to `smartnpc-farm-harvest`.
-- **Don't call `chat_say`** — the player hasn't spoken to you.
-- **Don't call `npc_plan_day`** — that's the schedule skill's job.
-- If no tools are applicable after observation, wrap up immediately with a
-  short bubble and memory write. Don't force actions.
-- If you've already done 2 maintenance rounds today, prefer Example E (light).
+当工作流引擎以机会性模式（如路过顺手做）调用本技能时：
 
----
+1. 调用 `npc_inspect_object(radius=10, what="farm_actions")`。
+2. 判断：有什么值得做的吗？
+   - **`till.count`、`plant.count`、`clear.count`、`water.count` 任一 ≥ 3**
+     → 按上方完整决策流程继续。
+   - **所有计数在 1-2 范围** → 只用示例 E。
+   - **所有计数为 0** → 完全跳过。写入
+     `opportunistic_work: <日期> 无事可做`。不需要气泡。
+3. 决定权在你——这正是你的性格发挥作用的地方。勤奋的 NPC 更常答应；懒惰的 NPC 会拒绝。不需要掷骰子——你就是这个角色。
 
-## Observation trigger
-
-When triggered via `action="opportunistic_work"` (not a dedicated
-`farm_maintenance` schedule entry):
-
-1. Call `npc_inspect_object(radius=10, what="farm_actions")`.
-2. Decide: is there something worth doing?
-   - **Any of `till.count`, `plant.count`, `clear.count`, `water.count` ≥ 3**
-     → proceed with full decision flow above.
-   - **All counts in 1-2 range** → Example E only.
-   - **All counts 0** → skip entirely. Write
-     `opportunistic_work: <date> nothing to do`. No bubble needed.
-3. The decision is YOURS — this is where your personality matters. A diligent
-   NPC says yes more often; a lazy one says no. There's no dice roll — you ARE
-   the character.
-
-The probability reasoning lives in your SOUL, not in code. Skip freely if it
-doesn't feel right for your character right now.
+概率推理存在于你的 SOUL 中，不在代码里。如果当下不适合你的角色，放心跳过。

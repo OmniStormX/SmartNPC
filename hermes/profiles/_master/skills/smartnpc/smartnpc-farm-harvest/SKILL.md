@@ -10,273 +10,252 @@ metadata:
     tags: [SmartNPC, farm, harvest, workflow]
 ---
 
-# Farm Harvest — {{NPC_NAME}}
+# 农场收获 — {{NPC_NAME}}
 
-You are NOT executing a fixed script. This skill is **example-driven**: observe
-mature crops, match the situation to the closest example below, then
-**dynamically compose** a harvest → deposit → (optional replant) sequence.
-Every harvest round can be different.
+你不是在执行固定脚本。本技能是**示例驱动**的：观察成熟作物，将当前情况匹配到下方最接近的示例，然后**动态组合**收获 → 存入 →（可选补种）序列。每轮收获都可能不同。
 
-Triggered by:
-- `schedule_trigger` with `action="farm_harvest"`
-- `schedule_trigger` with `action="opportunistic_work"` — inspect first, then
-  decide whether to load this skill (see §Observation trigger)
-- After a `schedule_trigger` with `action="farm_maintenance"` — if inspection
-  reveals unexpected mature crops, switch to or blend with this skill
+触发条件：
+- 由工作流引擎通过 workflow YAML（如 `farm_care`、`farm_extension`）中的 `kind: skill_call` 步骤调用。引擎将 `inspect_radius` 等工作流输入作为上下文传入。
+- 若维护类工作流执行后发现意外成熟作物，可切换或混合本技能
 
 ---
 
-## Toolbox
+## 工具箱
 
-| Tool | What it does | Precondition |
+| 工具 | 作用 | 前置条件 |
 |------|-------------|--------------|
-| `npc_inspect_object` | Survey nearby crops | — (always available) |
-| `npc_harvest_crops` | Harvest mature crops, items go to NPC backpack | Mature crops within radius |
-| `npc_deposit_items` | Store backpack items in nearest chest | Items in backpack, chest exists |
-| `npc_deliver_items` | Hand backpack items to the player | Items in backpack, player nearby + available |
-| `npc_plant_seeds` | Replant on newly empty tilled soil | Empty tilled soil. **Seeds NOT required** — free-plant mode runs even with an empty backpack. |
-| `npc_water_crops` | Water the replanted seeds | Dry tiles after replanting |
-| `npc_show_text_bubble` | Show a brief in-character thought | — (always available) |
+| `npc_inspect_object` | 查看周围作物 | —（始终可用） |
+| `npc_harvest_crops` | 收获成熟作物，物品放入 NPC 背包 | 半径内有成熟作物 |
+| `npc_deposit_items` | 将背包物品存入最近的箱子 | 背包中有物品，存在箱子 |
+| `npc_deliver_items` | 将背包物品交给玩家 | 背包中有物品，玩家在附近且可交互 |
+| `npc_plant_seeds` | 在新空出的耕地上补种 | 存在空耕地。**不需要种子** — 免种子模式即使背包为空也能运行。 |
+| `npc_water_crops` | 给补种的种子浇水 | 补种后有干燥地块 |
+| `npc_show_text_bubble` | 显示一句符合人设的简短内心话 | —（始终可用） |
 
-## Hard dependencies
+## 硬性依赖
 
 ```
-harvest_crops ──→ deposit_items    (backpack fills up → must store)
-harvest_crops ──→ deliver_items    (alternative to deposit, give to player)
-harvest_crops ──→ plant_seeds      (recommended: after harvest, replant on the empty tiled soil — free-plant mode means no seeds needed)
-plant_seeds   ──→ water_crops      (new seeds need water)
+harvest_crops ──→ deposit_items    （背包满 → 必须存放）
+harvest_crops ──→ deliver_items    （存入的替代方案，交给玩家）
+harvest_crops ──→ plant_seeds      （推荐：收获后在空出的耕地上补种 — 免种子模式意味着不需要种子）
+plant_seeds   ──→ water_crops      （新种子需要浇水）
 ```
 
-Harvest + deposit count as ONE logical action (they're paired). When you
-harvest, you MUST either deposit or deliver immediately after. Don't leave
-items in your backpack — they might be lost on the next harvest.
+收获 + 存入算作一次逻辑操作（它们是配对的）。收获之后，你必须立即存入或交付。不要把物品留在背包里——下次收获时可能会丢失。
 
 ---
 
-## Example workflows
+## 示例工作流
 
-### Example A — 大丰收 (Bumper harvest)
+### 示例 A — 大丰收
 
-**Situation:** Many mature crops (6+). The farm is bursting. You're here
-specifically to harvest. This is the main event.
+**场景：** 许多成熟作物（6+）。农场丰收满满。你专门来收获。这是重头戏。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=12, what="crops")
-  → confirms: 8 mature crops spread across the area
+  → 确认：8 个成熟作物分布在区域内
 
 npc_harvest_crops(radius=12, max_count=8)
-  → harvest everything mature
+  → 收获所有成熟的
 
 npc_deposit_items(auto_find=true)
-  → empty backpack into nearest chest
+  → 将背包清空到最近的箱子
 
-[if more mature crops found during harvest] npc_harvest_crops(radius=12, max_count=5)
-  → second pass for anything missed
+[如果收获过程中发现更多成熟作物] npc_harvest_crops(radius=12, max_count=5)
+  → 第二轮，收割遗漏的
 
 npc_deposit_items(auto_find=true)
-  → deposit second batch
+  → 存入第二批
 
-[if have seeds] npc_plant_seeds(radius=12, max_count=min(empty_tilled, seeds))
-  → replant the harvested spots
+[如果有种子] npc_plant_seeds(radius=12, max_count=min(empty_tilled, seeds))
+  → 在已收获的地块上补种
 
-[if replanted] npc_water_crops(radius=12, max_count=10)
-  → water new seeds
+[如果补种了] npc_water_crops(radius=12, max_count=10)
+  → 给新种子浇水
 ```
 
-**Key decisions:**
-- Split into 2 harvest passes if area is large (8+ crops spread out)
-- Always deposit between harvests (backpack might fill up)
-- Replant only if you have appropriate seeds for the season
-- If you can't carry all harvest at once: harvest→deposit→harvest→deposit
+**关键决策：**
+- 如果区域较大（8+ 作物分布广），分 2 轮收获
+- 每次收获之间务必存入（背包可能会满）
+- 仅当你有当季合适的种子时才补种
+- 如果一次装不下所有收获：收获→存入→收获→存入
 
 ---
 
-### Example B — 少量收获 (Small harvest)
+### 示例 B — 少量收获
 
-**Situation:** Only a few mature crops (1-4). Quick job.
+**场景：** 只有少量成熟作物（1-4 个）。速战速决。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=8, what="crops")
-  → confirms: 3 mature crops
+  → 确认：3 个成熟作物
 
 npc_harvest_crops(radius=8, max_count=4)
-  → harvest the few mature ones
+  → 收获那几个成熟的
 
 npc_deposit_items(auto_find=true)
-  → store them
+  → 存放起来
 
-[if player is nearby + available] npc_deliver_items
-  → OR give to player instead of chest
+[如果玩家在附近且可交互] npc_deliver_items
+  → 或者交给玩家而不是放箱子
 
-[if have seeds] npc_plant_seeds(radius=8, max_count=3)
-  → quick replant
+[如果有种子] npc_plant_seeds(radius=8, max_count=3)
+  → 快速补种
 ```
 
-**Key decisions:**
-- One harvest call is enough
-- Consider delivering to player if they're nearby — it's more personal
-- Replant is optional with so few tiles
+**关键决策：**
+- 一次收获调用就够了
+- 如果玩家在附近，考虑交付给玩家——更有人情味
+- 地块很少，补种可选
 
 ---
 
-### Example C — 路过顺手收 (Passing by, opportunistic)
+### 示例 C — 路过顺手收
 
-**Situation:** You're not here for farm work, but you notice a couple of mature
-crops. Grabbing them while passing through.
+**场景：** 你不是来做农活的，但注意到有几株成熟作物。路过顺手收一下。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=6, what="crops")
-  → confirms: 2 mature crops right nearby
+  → 确认：2 个成熟作物就在附近
 
 npc_harvest_crops(radius=6, max_count=2)
-  → harvest what's in reach
+  → 收获够得着的
 
 npc_deposit_items(auto_find=true)
-  → store immediately
+  → 立即存入
 
 npc_show_text_bubble "顺手收了一下~"
 ```
 
-**Key decisions:**
-- Small radius — only what's immediately reachable
-- Don't replant (this was opportunistic, not planned)
-- Don't go out of your way to find a chest — use auto_find
-- If nothing is mature: skip entirely
+**关键决策：**
+- 小半径——只收触手可及的
+- 不补种（这是顺手收的，不是计划中的）
+- 不用特意去找箱子——用 auto_find
+- 如果什么都没有成熟：直接跳过
 
 ---
 
-### Example D — 收+补循环 (Harvest and replant cycle)
+### 示例 D — 收+补循环
 
-**Situation:** End of a crop cycle. Many mature crops, and you want to
-immediately replant the same area so it stays productive.
+**场景：** 一轮作物周期结束。大量成熟作物，你想立即在同一区域补种以保持生产力。
 
-**Typical sequence:**
+**典型序列：**
 ```
 npc_inspect_object(radius=12, what="crops")
-  → confirms: many mature crops, good amount of tilled soil
+  → 确认：大量成熟作物，充足耕地
 
 npc_harvest_crops(radius=12, max_count=10)
-  → harvest the mature crops
+  → 收获成熟作物
 
 npc_deposit_items(auto_find=true)
-  → store harvest
+  → 存放收获物
 
 npc_plant_seeds(radius=12, max_count=10)
-  → replant on the now-empty tilled soil
+  → 在新空出的耕地上补种
 
 npc_water_crops(radius=12, max_count=12)
-  → water all new plantings
+  → 给所有新种植的浇水
 
-[if have fertilizer] npc_fertilize(radius=10, max_count=8)
-  → fertilize for better yield
+[如果有肥料] npc_fertilize(radius=10, max_count=8)
+  → 施肥以提高产量
 ```
 
-**Key decisions:**
-- This is the full cycle — harvest → deposit → plant → water → fertilize
-- Only if you have enough seeds AND it's not too late in the season
-- In the last 3 days of a season: DON'T replant (crops won't mature in time)
-- Check season/day with `game_get_time` if unsure
+**关键决策：**
+- 这是完整循环——收获 → 存入 → 种植 → 浇水 → 施肥
+- 仅当你种子充足且季节不会太晚时执行
+- 季节最后 3 天：不要补种（作物来不及成熟）
+- 如果不确定，用 `game_get_time` 查看季节/日期
 
 ---
 
-## Decision flow
+## 决策流程
 
-### 1. Observe
-Call `npc_inspect_object(radius=10, what="crops")`. Read the result. Key data:
-- `mature_crops[]` — count, positions, crop types
-- `empty_hoedirt` — count (for potential replanting)
-- `growing_crops[]` — anything close to maturity? (note for next time)
+### 1. 观察
+调用 `npc_inspect_object(radius=10, what="crops")`。读取结果。关键数据：
+- `mature_crops[]` — 数量、位置、作物类型
+- `empty_hoedirt` — 数量（用于潜在的补种）
+- `growing_crops[]` — 有没有快成熟的？（记下来下次用）
 
-Do NOT output the raw JSON. Summarize.
+不要输出原始 JSON。做总结。
 
-### 2. Match
-Which example fits?
+### 2. 匹配
+哪个示例最匹配？
 
-| What you see | Closest example |
+| 观察到的情况 | 最接近的示例 |
 |---|---|
-| 6+ mature crops, dedicated harvest time | A (大丰收) |
-| 1-4 mature crops, dedicated harvest time | B (少量收获) |
-| A couple mature, passing through | C (路过顺手收) |
-| Many mature + want to replant after | D (收+补循环) |
+| 6+ 成熟作物，专门的收获时段 | A（大丰收） |
+| 1-4 成熟作物，专门的收获时段 | B（少量收获） |
+| 少量成熟，路过时 | C（路过顺手收） |
+| 大量成熟 + 收获后想补种 | D（收+补循环） |
 
-### 3. Compose
-Build your sequence from the toolbox. Respect hard dependencies.
-You may blend examples — e.g., "Small harvest like B, but I have seeds so I'll
-add replanting from D."
+### 3. 组合
+从工具箱中构建你的序列。遵守硬性依赖。
+你可以混合示例——例如"像 B 那样少量收获，但我有种子，所以加上 D 的补种。"
 
-### 4. Execute
-One tool at a time. Wait for completion. After each:
-- Check: did the harvest find fewer crops than expected? (tools can see stale
-  data vs inspect) — if so, skip remaining harvest steps
-- After deposit: is backpack empty? Good, continue
+### 4. 执行
+一次一个工具。等待完成。每次之后：
+- 检查：收获找到的作物是否少于预期？（工具数据可能比 inspect 旧）——如果是，跳过剩余的收获步骤
+- 存入之后：背包空了吗？好的，继续
 
-### 5. Wrap up
-- ONE `npc_show_text_bubble` summarizing the haul, in character
-  (e.g. "[收了6个蓝莓！放进箱子了~]", "[今天收获不错]")
-- Write memory: `farm_harvest: last_date=<season><day> crops=<count>`
-- Stop. Do NOT call `chat_say`.
+### 5. 收尾
+- 用一次 `npc_show_text_bubble` 以角色口吻总结收获
+  （例如"[收了6个蓝莓！放进箱子了~]"，"[今天收获不错]"）
+- 写入记忆：`farm_harvest: last_date=<季节><日> crops=<数量>`
+- 停止。不要调用 `chat_say`。
 
 ---
 
-## Deposit vs. Deliver — how to choose
+## 存入 vs. 交付 — 如何选择
 
-| Condition | Choose |
+| 条件 | 选择 |
 |---|---|
-| Player is nearby (same map, within 15 tiles) AND not busy | Deliver (`npc_deliver_items`) |
-| Player is far / in different map / in cutscene / sleeping | Deposit (`npc_deposit_items auto_find=true`) |
-| Backpack has rare/valuable items (ancient fruit, starfruit, etc.) | Deliver to player if possible |
-| Backpack has bulk common items (parsnips, wheat, etc.) | Deposit to chest |
-| You want to talk to the player | Deliver as an excuse to approach |
-| You're shy or avoiding the player | Deposit quietly |
+| 玩家在附近（同地图，15 格内）且不忙 | 交付（`npc_deliver_items`） |
+| 玩家较远 / 在不同地图 / 在过场动画 / 在睡觉 | 存入（`npc_deposit_items auto_find=true`） |
+| 背包有稀有/珍贵物品（上古水果、杨桃等） | 尽可能交付给玩家 |
+| 背包有大量普通物品（防风草、小麦等） | 存入箱子 |
+| 你想和玩家说话 | 以交付为借口接近 |
+| 你害羞或想避开玩家 | 悄悄存入 |
 
 ---
 
-## Personality influence
+## 性格影响
 
-| Trait | Effect |
+| 性格特质 | 效果 |
 |---|---|
-| Diligent / hardworking | Larger harvest radius, always replant, prefer Example D |
-| Casual / relaxed | Smaller radius, harvest only, skip replant |
-| Generous / giving | Prefer deliver over deposit, give all items to player |
-| Independent | Prefer deposit, let player fetch from chest themselves |
-| Organized | Always deposit to chest, sort by type |
-| Talkative | Excited bubble about good harvest, note rare crops |
-| Quiet | Minimal bubble, just the count |
+| 勤奋/努力 | 更大收获半径，始终补种，偏好示例 D |
+| 随性/放松 | 更小半径，只收不种，跳过补种 |
+| 慷慨/乐于给予 | 偏好交付而非存入，把全部物品给玩家 |
+| 独立自主 | 偏好存入，让玩家自己从箱子取 |
+| 有条理 | 始终存入箱子，按类型分类 |
+| 话多 | 好收成时兴奋的气泡，注意稀有作物 |
+| 安静 | 最简气泡，只报数量 |
 
 ---
 
-## Guardrails
+## 防护规则
 
-- **Max 7 tool calls per round** (inspect + up to 2 harvest cycles + deposit +
-  optional replant + water + bubble).
-- **Deposit after EVERY harvest call.** Do not stack items in backpack.
-- **Don't harvest immature crops** — only `mature_crops[]` from inspect.
-- **Don't replant in last 3 days of season** — check `game_get_time` if the
-  season end is near.
-- **Rain/storm → harvest is OK** (you can harvest in the rain), but skip
-  watering if you replant.
-- **Winter → no harvest** (nothing grows). Skip entirely.
-- **Don't touch other NPCs' crops or chests** unless on the shared farm.
-- **Don't call `chat_say`** — the player hasn't spoken to you.
-- If `npc_harvest_crops` finds nothing (tool data may be stale vs inspect),
-  just wrap up — don't retry.
+- **每轮最多 7 次工具调用**（检查 + 最多 2 轮收获 + 存入 + 可选补种 + 浇水 + 气泡）。
+- **每次收获调用后必须存入。** 不要在背包中堆积物品。
+- **不要收获未成熟作物** — 只收 inspect 返回的 `mature_crops[]`。
+- **季节最后 3 天不要补种** — 如果季节快结束了用 `game_get_time` 确认。
+- **下雨/暴风雨 → 收获没问题**（下雨也可以收获），但如果补种了则跳过浇水。
+- **冬天 → 不收获**（什么都不长）。直接跳过。
+- **不要碰其他 NPC 的作物或箱子**，除非在共享农场上。
+- **不要调用 `chat_say`** — 玩家没有对你说话。
+- 如果 `npc_harvest_crops` 一无所获（工具数据可能比 inspect 旧），直接收尾——不要重试。
 
 ---
 
-## Observation trigger
+## 观察触发
 
-When triggered via `action="opportunistic_work"` (not a dedicated
-`farm_harvest` schedule entry):
+当工作流引擎以机会性模式（如路过顺手收）调用本技能时：
 
-1. Call `npc_inspect_object(radius=8, what="crops")`.
-2. Decide:
-   - **3+ mature crops visible** → proceed with Example B or C.
-   - **1-2 mature crops** → Example C only (quick grab).
-   - **Zero mature crops** → skip silently. Write
-     `opportunistic_work: <date> no mature crops`.
-3. Your personality drives the decision. There's no RNG — you decide based on
-   who you are. A diligent NPC grabs even 1 mature crop; a lazy one needs 5+
-   to bother.
+1. 调用 `npc_inspect_object(radius=8, what="crops")`。
+2. 判断：
+   - **3+ 成熟作物可见** → 按示例 B 或 C 执行。
+   - **1-2 成熟作物** → 仅按示例 C 执行（快速抓取）。
+   - **零成熟作物** → 静默跳过。写入 `opportunistic_work: <日期> no mature crops`。
+3. 你的性格驱动决策。没有随机数——你根据自己的性格做决定。勤奋的 NPC 即使只有 1 个成熟作物也会收；懒散的 NPC 需要 5+ 才肯动。

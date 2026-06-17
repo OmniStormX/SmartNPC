@@ -9,46 +9,41 @@ metadata:
     tags: [SmartNPC, inter-npc, delegation]
 ---
 
-# Inter-NPC messaging
+# NPC 间消息
 
-Use `npc_send_message` instead of inventing another NPC's words or actions.
+使用 `npc_send_message` 而非自行编造其他 NPC 的对话或行为。
 
-## A. Player asks you to involve another NPC
+## A. 玩家要求你让另一个 NPC 参与
 
-| Player intent | Tool |
+| 玩家意图 | 工具 |
 |---|---|
-| ask another NPC a question | `npc_send_message` with kind="query", reply_expected=true |
-| ask another NPC to act | `npc_send_message` with kind="behavioral", reply_expected=true |
-| tell another NPC something | `npc_send_message` with kind="query", reply_expected=true |
+| 向另一个 NPC 提问 | `npc_send_message`，kind="query"，reply_expected=true |
+| 让另一个 NPC 执行动作 | `npc_send_message`，kind="behavioral"，reply_expected=true |
+| 告诉另一个 NPC 某件事 | `npc_send_message`，kind="query"，reply_expected=true |
 
-Then tell the player briefly in character that you'll ask. Do not fabricate
-the peer's answer.
+然后用符合角色性格的方式简短告诉玩家你会去问。不要编造对方的回答。
 
-## B. You receive `npc_message`
+## B. 你收到了 `npc_message`
 
-Mandatory flow:
+强制流程：
 
-1. `npc_inbox_get` — read pending messages for yourself.
-2. Handle each item once.
-3. `npc_inbox_ack` — remove handled items by id.
+1. `npc_inbox_get` — 读取自己的待处理消息。
+2. 每项只处理一次。
+3. `npc_inbox_ack` — 按 id 移除已处理的项目。
 
-| kind | Action |
+| kind | 动作 |
 |---|---|
-| `query` | Answer via `npc_send_message` with kind="reply"; usually no `chat_say` |
-| `behavioral` | Do the requested game action if safe; maybe one `chat_say` only if player can hear; send kind="reply" |
-| `behavioral` (farm task from manager) | Load `smartnpc-farm-worker` via `skill_view`, then follow §A or §B of that skill. Do NOT handle farm tasks with generic behavioral flow — farm workers have a specialized workflow. |
-| `reply` | Save or remember for your next player turn; do not counter-reply |
+| `query` | 通过 `npc_send_message` 以 kind="reply" 回答；通常不需要 `chat_say` |
+| `behavioral` | 如果安全则执行请求的游戏动作；只有在玩家可听见时可选一条 `chat_say`；发送 kind="reply" |
+| `behavioral`（来自管理者的农场任务） | 通过 `skill_view` 加载 `smartnpc-farm-worker`，然后遵循该技能的 §A 或 §B。不要用通用行为流程处理农场任务——农场工人有专门的工作流。 |
+| `reply` | 保存或记住，在下次玩家回合时使用；不要再次回复 |
 
-## Anti-loop rules
+## 防循环规则
 
-- Never answer a peer with kind="query" or kind="behavioral" unless the player
-  explicitly started a new request.
-- One reply per inbox item.
-- Ack handled items even if you stayed silent.
+- 除非玩家明确发起新的请求，否则绝不要用 kind="query" 或 kind="behavioral" 回复同伴。
+- 每个收件箱条目一条回复。
+- 即使你保持静默，也要确认已处理的项目。
 
-## Audibility check
+## 可听性检查
 
-Before speaking out loud for an inter-NPC event, verify the player can hear:
-call `npc_get_position` for yourself and `player_get_status`. Speak only if
-same map and player is not busy. Otherwise reply silently through
-`npc_send_message` and optionally write memory.
+在因 NPC 间事件而开口说话之前，确认玩家能听到：调用 `npc_get_position` 查询自己位置，以及 `player_get_status`。仅在同一地图且玩家不忙时才发言。否则通过 `npc_send_message` 静默回复，并可选择写入记忆。
