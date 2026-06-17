@@ -1156,11 +1156,9 @@ namespace SmartNPC.Bridge
                     patchTiles.Add(new Microsoft.Xna.Framework.Point(rect.X + dx, rect.Y + dy));
             }
             var tilePoints = PathPlanner.PlanBy(npcPt, patchTiles, p => p);
-            // TODO: uncomment after Task C — StartTillSoil will accept preClearTiles/preBreakTiles
-            // _follow.StartTillSoil(npcName, tilePoints,
-            //     preClearTiles: plan.Value.TilesToClear,
-            //     preBreakTiles: plan.Value.TilesToBreak);
-            _follow.StartTillSoil(npcName, tilePoints);
+            _follow.StartTillSoil(npcName, tilePoints,
+                preClearTiles: plan.Value.TilesToClear,
+                preBreakTiles: plan.Value.TilesToBreak);
 
             BBoxOverlay.Instance.MarkAction(npcName, location.Name ?? "",
                 rect.X, rect.Y, rect.X + rect.Width - 1, rect.Y + rect.Height - 1);
