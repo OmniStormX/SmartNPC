@@ -41,12 +41,20 @@ namespace SmartNPC.Bridge
             public Rectangle Rect { get; }   // inclusive of (X+Width-1, Y+Height-1)
             public bool AdjacentToExisting { get; }
             public int AdjacencyLen { get; }
+            /// <summary>Tiles in the patch that have clearable debris (weeds, twigs, stones, stumps, saplings) — must be cleared before tilling.</summary>
+            public System.Collections.Generic.List<Point> TilesToClear { get; }
+            /// <summary>Tiles in the patch that have mature non-tapped trees — must be chopped before tilling.</summary>
+            public System.Collections.Generic.List<Point> TilesToBreak { get; }
 
-            public Plan(Rectangle rect, bool adjacent, int adjacencyLen)
+            public Plan(Rectangle rect, bool adjacent, int adjacencyLen,
+                System.Collections.Generic.List<Point>? tilesToClear = null,
+                System.Collections.Generic.List<Point>? tilesToBreak = null)
             {
                 Rect = rect;
                 AdjacentToExisting = adjacent;
                 AdjacencyLen = adjacencyLen;
+                TilesToClear = tilesToClear ?? new System.Collections.Generic.List<Point>();
+                TilesToBreak = tilesToBreak ?? new System.Collections.Generic.List<Point>();
             }
         }
 
@@ -73,7 +81,7 @@ namespace SmartNPC.Bridge
             {
                 for (int ty = bbox.Top; ty <= bbox.Bottom; ty++)
                 {
-                    if (IsTillable(location, tx, ty))
+                    if (IsExpandable(location, tx, ty))
                         candidates.Add(new Point(tx, ty));
                 }
             }
@@ -90,10 +98,10 @@ namespace SmartNPC.Bridge
 
             // 3 + 4. Try both orientations. If patchW == patchH only one
             // orientation matters (skip the duplicate to halve work).
-            Plan? best = TryBest(bbox, candidates, existing, npcTile, patchW, patchH);
+            Plan? best = TryBest(bbox, candidates, existing, npcTile, patchW, patchH, location);
             if (patchW != patchH)
             {
-                Plan? alt = TryBest(bbox, candidates, existing, npcTile, patchH, patchW);
+                Plan? alt = TryBest(bbox, candidates, existing, npcTile, patchH, patchW, location);
                 if (alt.HasValue && (!best.HasValue || ScoreOf(alt.Value, npcTile) > ScoreOf(best.Value, npcTile)))
                     best = alt;
             }
@@ -103,7 +111,7 @@ namespace SmartNPC.Bridge
         // ── internals ────────────────────────────────────────────────────
 
         private static Plan? TryBest(Rectangle bbox, HashSet<Point> candidates,
-            HashSet<Point> existing, Point npcTile, int W, int H)
+            HashSet<Point> existing, Point npcTile, int W, int H, GameLocation location)
         {
             if (W > bbox.Width + 1 || H > bbox.Height + 1) return null;
 
@@ -116,15 +124,39 @@ namespace SmartNPC.Bridge
             {
                 for (int y = bbox.Top; y + H - 1 <= bbox.Bottom; y++)
                 {
-                    // Every tile in the patch must be tillable. We allow
+                    // Every tile in the patch must be expandable. We allow
                     // ZERO existing-HoeDirt overlap by design — we want to
                     // PRODUCE new field, not reissue till on existing soil.
-                    if (!AllTillable(candidates, x, y, W, H)) continue;
+                    if (!AllExpandable(candidates, x, y, W, H)) continue;
+
+                    // Classify each tile in the patch.
+                    var toClear = new System.Collections.Generic.List<Point>();
+                    var toBreak = new System.Collections.Generic.List<Point>();
+                    for (int dx = 0; dx < W; dx++)
+                    {
+                        for (int dy = 0; dy < H; dy++)
+                        {
+                            var tv = new Microsoft.Xna.Framework.Vector2(x + dx, y + dy);
+                            if (location.Objects.TryGetValue(tv, out var obj) && obj != null
+                                && ClearDebrisHandler.IsDebris(obj))
+                            {
+                                toClear.Add(new Point(x + dx, y + dy));
+                            }
+                            else if (location.terrainFeatures.TryGetValue(tv, out var tf) && tf != null)
+                            {
+                                if (ClearDebrisHandler.IsTerrainDebris(tf))
+                                    toClear.Add(new Point(x + dx, y + dy));
+                                else if (tf is StardewValley.TerrainFeatures.Tree tree
+                                    && tree.growthStage.Value >= 5 && !tree.tapped.Value)
+                                    toBreak.Add(new Point(x + dx, y + dy));
+                            }
+                        }
+                    }
 
                     int adj = AdjacencyLength(existing, x, y, W, H);
                     var rect = new Rectangle(x, y, W, H);
                     bool adjacent = adj > 0;
-                    var plan = new Plan(rect, adjacent, adj);
+                    var plan = new Plan(rect, adjacent, adj, toClear, toBreak);
                     double s = ScoreOf(plan, npcTile);
                     if (s > bestScore)
                     {
@@ -142,13 +174,14 @@ namespace SmartNPC.Bridge
             {
                 // Mark `adjacent=false` regardless of adj==0 random hits.
                 var b = best.Value;
-                best = new Plan(b.Rect, adjacent: false, adjacencyLen: 0);
+                best = new Plan(b.Rect, adjacent: false, adjacencyLen: 0,
+                    b.TilesToClear, b.TilesToBreak);
             }
 
             return best;
         }
 
-        private static bool AllTillable(HashSet<Point> candidates, int x, int y, int W, int H)
+        private static bool AllExpandable(HashSet<Point> candidates, int x, int y, int W, int H)
         {
             for (int dx = 0; dx < W; dx++)
             for (int dy = 0; dy < H; dy++)
@@ -194,22 +227,24 @@ namespace SmartNPC.Bridge
         {
             int perim = 2 * (p.Rect.Width + p.Rect.Height);
             double sharedFrac = perim > 0 ? (double)p.AdjacencyLen / perim : 0;
-            // Weights: a fully-shared edge dominates distance; distance is
-            // a tiebreaker among similarly-adjacent positions. A cold-start
-            // patch (adj=0) collapses to "closest to NPC".
+            int obstacleCount = p.TilesToClear.Count + p.TilesToBreak.Count;
+            // Weights: adjacency dominates, distance is tiebreaker among
+            // similarly-adjacent positions. Obstacle penalty prefers cleaner
+            // patches — each obstacle costs ~2 adjacency points.
             return 10.0 * p.AdjacencyLen
                  + 200.0 * sharedFrac
+                 - 5.0 * obstacleCount
                  - 0.5 * DistToNpc(p.Rect, npc);
         }
 
         /// <summary>
-        /// Mirrors TillSoilHandler.Execute's per-tile precondition, with one
-        /// relaxation: tiles that hold clearable debris (weeds, twigs, small stones,
-        /// tree stumps, saplings) are allowed — the debris will be removed before
-        /// tilling. Non-debris objects (chests, machines, fences) and non-clearable
-        /// terrain features (mature trees, bushes, flooring) still block.
+        /// Expands the tillable candidate set to include tiles that currently have
+        /// clearable debris (weeds, twigs, stones, tree stumps, saplings) or mature
+        /// non-tapped trees. These obstacles will be cleared/chopped before tilling
+        /// by TickTillSoil. Only non-clearable objects (chests, fences, machines)
+        /// and non-clearable terrain (bushes, HoeDirt, tapped trees) still block.
         /// </summary>
-        private static bool IsTillable(GameLocation location, int tx, int ty)
+        private static bool IsExpandable(GameLocation location, int tx, int ty)
         {
             var v = new Microsoft.Xna.Framework.Vector2(tx, ty);
 
@@ -219,10 +254,15 @@ namespace SmartNPC.Bridge
                 if (!ClearDebrisHandler.IsDebris(obj)) return false;
             }
 
-            // TerrainFeatures: only block if NOT clearable debris.
+            // TerrainFeatures: allow clearable debris (stumps, saplings) and
+            // mature non-tapped trees; block everything else.
             if (location.terrainFeatures.TryGetValue(v, out var tf) && tf != null)
             {
-                if (!ClearDebrisHandler.IsTerrainDebris(tf)) return false;
+                if (ClearDebrisHandler.IsTerrainDebris(tf)) return true;
+                if (tf is StardewValley.TerrainFeatures.Tree tree
+                    && tree.growthStage.Value >= 5
+                    && !tree.tapped.Value) return true;
+                return false;
             }
 
             if (!location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)) return false;
