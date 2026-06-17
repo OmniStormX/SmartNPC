@@ -1633,6 +1633,48 @@ namespace SmartNPC.Bridge
                     {
                         Hit("till", tx, ty);
                     }
+
+                    // ── fill / fill_blocked: gaps inside farmland bbox ──
+                    // After all other hits, check if this tile is a gap
+                    // inside the farmland bbox. Only fires when farmlandFound
+                    // and the tile is inside (fx1..fx2, fy1..fy2).
+                    if (farmlandFound
+                        && tx >= fx1 && tx <= fx2 && ty >= fy1 && ty <= fy2)
+                    {
+                        // Already HoeDirt -> not a gap.
+                        if (tf is StardewValley.TerrainFeatures.HoeDirt)
+                        {
+                            // nothing — already farmland
+                        }
+                        else if (location.Objects.TryGetValue(tileV2, out var gapObj) && gapObj != null
+                            && IsDebrisObj(gapObj))
+                        {
+                            // Debris object in the gap — needs clearing first.
+                            Hit("fill_blocked", tx, ty);
+                        }
+                        else if (tf != null && IsDebrisTerrainFeature(tf))
+                        {
+                            // Terrain debris in the gap — needs clearing first.
+                            Hit("fill_blocked", tx, ty);
+                        }
+                        else if (tf is StardewValley.TerrainFeatures.Tree gapTree
+                            && gapTree.growthStage.Value >= 5
+                            && !gapTree.tapped.Value)
+                        {
+                            // Mature non-tapped tree in the gap — needs breaking.
+                            Hit("fill_blocked", tx, ty);
+                        }
+                        else if (!location.Objects.ContainsKey(tileV2)
+                            && !location.terrainFeatures.ContainsKey(tileV2)
+                            && location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)
+                            && location.doesTileHaveProperty(tx, ty, "Diggable", "Back") == "T")
+                        {
+                            // Empty tillable gap — ready to fill directly.
+                            Hit("fill", tx, ty);
+                        }
+                        // Permanent obstacles (buildings, fences, bushes, water,
+                        // non-diggable) are not added to either group.
+                    }
                 }
             }
 
@@ -1688,10 +1730,12 @@ namespace SmartNPC.Bridge
             AddActionGroup("forage");
             AddActionGroup("plant");
             AddActionGroup("break");
+            AddActionGroup("fill");
+            AddActionGroup("fill_blocked");
 
             // ── Summary ────────────────────────────────────────────────
             var parts = new List<string>();
-            foreach (var key in new[] { "harvest", "water", "clear", "till", "forage", "plant", "break" })
+            foreach (var key in new[] { "harvest", "water", "clear", "till", "forage", "plant", "break", "fill", "fill_blocked" })
             {
                 if (buckets.TryGetValue(key, out var v) && v.count > 0)
                     parts.Add($"{key}={v.count}");
@@ -2253,6 +2297,112 @@ namespace SmartNPC.Bridge
                 el.TryGetInt32(out int v))
                 return System.Math.Clamp(v, min, max);
             return def;
+        }
+    }
+
+    internal sealed class FillGapsHandler : NpcActionHandlerBase
+    {
+        private readonly FollowSystem _follow;
+
+        protected override string ActionName => "npc_fill_gaps";
+        protected override bool RefuseWhileBusy => true;
+
+        public FillGapsHandler(IMonitor log, Func<bool> showBubble, FollowSystem follow)
+            : base(log, showBubble)
+        {
+            _follow = follow;
+            SetBusyGate(follow);
+        }
+
+        protected override string ResolveBubble(JsonElement @params)
+        {
+            return "[填充空隙]";
+        }
+
+        protected override void Execute(NPC npc, string npcName, JsonElement @params)
+        {
+            var (bboxOn, x1, y1, x2, y2) = ClearDebrisHandler.ParseBBox(@params);
+            if (!bboxOn)
+            {
+                MarkNothingToDo("fill_gaps requires x1/y1/x2/y2 bbox");
+                return;
+            }
+
+            var location = npc.currentLocation;
+            if (location is null) return;
+
+            // Scan bbox for empty gap tiles: no HoeDirt, no Object, no terrainFeature,
+            // passable, Diggable=T. Does NOT clear debris or chop trees — agent must
+            // have already handled fill_blocked.
+            var npcTile = npc.Tile;
+            var targets = new System.Collections.Generic.List<Microsoft.Xna.Framework.Vector2>();
+            int skipped = 0;
+
+            for (int tx = x1; tx <= x2; tx++)
+            {
+                for (int ty = y1; ty <= y2; ty++)
+                {
+                    var tv = new Microsoft.Xna.Framework.Vector2(tx, ty);
+
+                    // Skip if already HoeDirt.
+                    if (location.terrainFeatures.TryGetValue(tv, out var tf)
+                        && tf is StardewValley.TerrainFeatures.HoeDirt)
+                        continue;
+
+                    // Skip if occupied by Object or non-HoeDirt terrainFeature.
+                    if (location.Objects.ContainsKey(tv))
+                    {
+                        skipped++;
+                        continue;
+                    }
+                    if (location.terrainFeatures.ContainsKey(tv))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    if (!location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport))
+                    {
+                        skipped++;
+                        continue;
+                    }
+                    if (location.doesTileHaveProperty(tx, ty, "Diggable", "Back") != "T")
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    targets.Add(tv);
+                }
+            }
+
+            if (targets.Count == 0)
+            {
+                Log.Log(
+                    $"[npc_fill_gaps] {npcName}: no empty gaps in bbox ({x1},{y1})-({x2},{y2}), skipped={skipped}",
+                    LogLevel.Info);
+                MarkNothingToDo($"no empty gaps in bbox ({x1},{y1})-({x2},{y2}), {skipped} tiles occupied/blocked");
+                return;
+            }
+
+            // Sort by distance and TSP-order.
+            targets.Sort((a, b) =>
+                Microsoft.Xna.Framework.Vector2.Distance(npcTile, a)
+                    .CompareTo(Microsoft.Xna.Framework.Vector2.Distance(npcTile, b)));
+
+            var startPt = new Microsoft.Xna.Framework.Point((int)npcTile.X, (int)npcTile.Y);
+            var tilePoints = targets
+                .Select(t => new Microsoft.Xna.Framework.Point((int)t.X, (int)t.Y))
+                .ToList();
+            var ordered = PathPlanner.PlanBy(startPt, tilePoints, p => p);
+            // TODO(Task 3): _follow.StartFillGaps(npcName, ordered);
+            Log.Log(
+                $"[npc_fill_gaps] {npcName}: TODO(Task 3) PathPlanner ordered {ordered.Count()} tiles, FollowSystem hook pending",
+                LogLevel.Warn);
+
+            Log.Log(
+                $"[npc_fill_gaps] {npcName}: queued {targets.Count} gap tiles in bbox ({x1},{y1})-({x2},{y2}), skipped={skipped}",
+                LogLevel.Info);
         }
     }
 }
