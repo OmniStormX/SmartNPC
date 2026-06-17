@@ -202,13 +202,29 @@ namespace SmartNPC.Bridge
                  - 0.5 * DistToNpc(p.Rect, npc);
         }
 
-        // Mirrors TillSoilHandler.Execute's per-tile precondition so the
-        // planner and the handler agree on what counts as "tillable".
+        /// <summary>
+        /// Mirrors TillSoilHandler.Execute's per-tile precondition, with one
+        /// relaxation: tiles that hold clearable debris (weeds, twigs, small stones,
+        /// tree stumps, saplings) are allowed — the debris will be removed before
+        /// tilling. Non-debris objects (chests, machines, fences) and non-clearable
+        /// terrain features (mature trees, bushes, flooring) still block.
+        /// </summary>
         private static bool IsTillable(GameLocation location, int tx, int ty)
         {
             var v = new Microsoft.Xna.Framework.Vector2(tx, ty);
-            if (location.Objects.ContainsKey(v)) return false;
-            if (location.terrainFeatures.ContainsKey(v)) return false;
+
+            // Objects: only block if NOT clearable debris.
+            if (location.Objects.TryGetValue(v, out var obj) && obj != null)
+            {
+                if (!ClearDebrisHandler.IsDebris(obj)) return false;
+            }
+
+            // TerrainFeatures: only block if NOT clearable debris.
+            if (location.terrainFeatures.TryGetValue(v, out var tf) && tf != null)
+            {
+                if (!ClearDebrisHandler.IsTerrainDebris(tf)) return false;
+            }
+
             if (!location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)) return false;
             if (location.doesTileHaveProperty(tx, ty, "Diggable", "Back") != "T") return false;
             return true;
