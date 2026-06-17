@@ -362,12 +362,13 @@ func makeRouter(
 	//   - Per-NPC serial execution (no race on ws calls for same NPC)
 	//   - Backpressure via channel buffer (drops with warning on overflow)
 	npcQueues := make(map[string]chan schedTriggerMsg)
+	activeLoops := &sync.Map{} // map[npc string]context.CancelFunc
 	if sched != nil {
 		for _, npc := range sched.AgentNPCs() {
 			ch := make(chan schedTriggerMsg, npcWorkerQueueSize)
 			npcQueues[npc] = ch
 			if workflowPump {
-				go npcWorkflowWorker(ch, logger, br, relay, workflowReg, schedDebug)
+				go npcWorkflowWorker(ch, logger, br, relay, workflowReg, schedDebug, activeLoops)
 			} else {
 				go npcTriggerWorker(ch, logger, br, relay, schedDebug)
 			}
@@ -593,6 +594,7 @@ func npcWorkflowWorker(
 	relay bridge.EventHandler,
 	workflowReg *workflow.Registry,
 	schedDebug bool,
+	activeLoops *sync.Map,
 ) {
 	for msg := range ch {
 		logger.Debug("workflow worker: received trigger",
@@ -617,36 +619,89 @@ func npcWorkflowWorker(
 			continue
 		}
 
-		logger.Info("workflow worker: starting workflow",
-			"npc", msg.npc, "workflow_id", def.ID, "steps", len(def.Steps))
+		// If a looping workflow is already running for this NPC,
+		// cancel it so the new schedule slot takes over.
+		if oldCancel, ok := activeLoops.Load(msg.npc); ok {
+			if cancel, ok := oldCancel.(context.CancelFunc); ok {
+				cancel()
+			}
+			activeLoops.Delete(msg.npc)
+		}
 
-		// Run the workflow engine.
+		logger.Info("workflow worker: starting workflow",
+			"npc", msg.npc, "workflow_id", def.ID, "steps", len(def.Steps),
+			"loop", def.Loop.IsLooping())
+
 		runner := workflow.NewMCPRunner(workflow.MCPRunnerOptions{
 			Bridge: br,
 			Logger: logger.With("npc", msg.npc, "workflow", def.ID),
 			Relay:  relay,
 		})
 
-		runCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// Run the workflow, potentially in a loop.
+		totalToolCalls := 0
+		totalNothing := 0
+		totalSteps := 0
+		iterations := 0
 		started := time.Now()
-		res, err := workflow.Run(runCtx, runner, msg.npc, def, msg.args)
-		elapsed := time.Since(started)
-		cancel()
 
-		// Persist the run result to logs/mcp/workflow_runs/.
-		// Season/day/year default to 0/"unknown" since the schedule entry
-		// doesn't carry game date info — the player can filter later.
-		tools.LogWorkflowRun(msg.npc, "unknown", 0, 0, res, err, elapsed, msg.args)
+		for {
+			iterations++
+			runCtx, runCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			if def.Loop.IsLooping() && def.Loop.StopOn == workflow.StopOnNextSchedule {
+				activeLoops.Store(msg.npc, runCancel)
+			}
 
-		if err != nil {
-			logger.Warn("workflow run failed",
-				"npc", msg.npc, "workflow", def.ID, "elapsed_ms", elapsed.Milliseconds(), "err", err)
-		} else {
-			logger.Info("workflow run completed",
-				"npc", msg.npc, "workflow", def.ID,
-				"steps", res.StepCount, "tools", res.ToolCalls,
-				"nothing", res.NothingToDoCt, "stopped", res.Stopped,
-				"elapsed_ms", elapsed.Milliseconds())
+			res, err := workflow.Run(runCtx, runner, msg.npc, def, msg.args)
+			runCancel()
+
+			if def.Loop.IsLooping() {
+				activeLoops.Delete(msg.npc)
+			}
+
+			totalToolCalls += res.ToolCalls
+			totalNothing += res.NothingToDoCt
+			totalSteps += res.StepCount
+
+			if err != nil {
+				logger.Warn("workflow iteration failed",
+					"npc", msg.npc, "workflow", def.ID, "iter", iterations, "err", err)
+			}
+
+			// Determine whether to loop again.
+			shouldLoop := def.Loop.IsLooping() && !res.Stopped && err == nil
+			if !shouldLoop {
+				elapsed := time.Since(started)
+				// Persist the run result with aggregated counts.
+				tools.LogWorkflowRun(msg.npc, "unknown", 0, 0,
+					&workflow.RunResult{
+						WorkflowID:    def.ID,
+						NPC:           msg.npc,
+						StepCount:     totalSteps,
+						ToolCalls:     totalToolCalls,
+						NothingToDoCt: totalNothing,
+						Stopped:       res.Stopped,
+						StopReason:    res.StopReason,
+					}, err, elapsed, msg.args)
+
+				if err != nil {
+					logger.Warn("workflow run failed",
+						"npc", msg.npc, "workflow", def.ID,
+						"iterations", iterations, "elapsed_ms", elapsed.Milliseconds(), "err", err)
+				} else {
+					logger.Info("workflow run completed",
+						"npc", msg.npc, "workflow", def.ID,
+						"iterations", iterations, "steps", totalSteps,
+						"tools", totalToolCalls, "nothing", totalNothing,
+						"stopped", res.Stopped, "stop_reason", res.StopReason,
+						"elapsed_ms", elapsed.Milliseconds())
+				}
+				break
+			}
+
+			logger.Debug("workflow looping",
+				"npc", msg.npc, "workflow", def.ID, "iter", iterations,
+				"tools", res.ToolCalls, "stopped", res.Stopped)
 		}
 	}
 }
