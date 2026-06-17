@@ -1548,14 +1548,21 @@ namespace SmartNPC.Bridge
             }
 
             // Post-pass: commit debris candidates into the `clear` bucket,
-            // restricted to the farmland bbox if we saw any HoeDirt this
-            // sweep. On non-farm maps (no HoeDirt found) we keep every
-            // debris candidate so the agent can still clean trails.
+            // restricted to an extended farmland bbox (farmland + margin).
+            // Without the margin, `clear.bbox` is exactly the HoeDirt envelope
+            // and the agent clears only debris ON the crops — missing debris
+            // in the adjacent tillable area where the NPC will extend the field.
+            const int clearExtend = 6;
+            int cfx1 = farmlandFound ? Math.Max(0, fx1 - clearExtend) : 0;
+            int cfy1 = farmlandFound ? Math.Max(0, fy1 - clearExtend) : 0;
+            int cfx2 = farmlandFound ? fx2 + clearExtend : 0;
+            int cfy2 = farmlandFound ? fy2 + clearExtend : 0;
+
             foreach (var (tx, ty) in debrisCandidates)
             {
                 if (farmlandFound)
                 {
-                    if (tx < fx1 || tx > fx2 || ty < fy1 || ty > fy2) continue;
+                    if (tx < cfx1 || tx > cfx2 || ty < cfy1 || ty > cfy2) continue;
                 }
                 Hit("clear", tx, ty);
             }
