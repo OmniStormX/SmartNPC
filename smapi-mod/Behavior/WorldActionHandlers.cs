@@ -1513,9 +1513,24 @@ namespace SmartNPC.Bridge
                             Hit("break", tx, ty);
                     }
 
-                    // ── till: empty, passable, Diggable=T ────────────
-                    if (!location.Objects.ContainsKey(tileV2)
-                        && !location.terrainFeatures.ContainsKey(tileV2)
+                    // ── TerrainFeature debris: clear group ────────
+                    // Tree stumps and saplings are clearable; contribute
+                    // to the `clear` group same as small Objects.
+                    // Reuse `tf` from the HoeDirt TryGetValue above —
+                    // it is non-null iff there is any terrainFeature at this tile.
+                    if (tf != null && IsDebrisTerrainFeature(tf))
+                        debrisCandidates.Add((tx, ty));
+
+                    // ── till: empty or clearable-debris, passable, Diggable=T ─
+                    // Tiles with clearable debris (weeds, twigs, saplings,
+                    // stumps) are counted as tillable — the debris will be
+                    // removed before tilling. Non-debris objects/terrain still
+                    // block.
+                    bool blockedByObject = location.Objects.TryGetValue(tileV2, out var tillObj)
+                        && tillObj != null && !IsDebrisObj(tillObj);
+                    bool blockedByTerrain = location.terrainFeatures.TryGetValue(tileV2, out var tillTf)
+                        && tillTf != null && !IsDebrisTerrainFeature(tillTf);
+                    if (!blockedByObject && !blockedByTerrain
                         && location.isTilePassable(new xTile.Dimensions.Location(tx, ty), Game1.viewport)
                         && location.doesTileHaveProperty(tx, ty, "Diggable", "Back") == "T")
                     {
@@ -1616,6 +1631,20 @@ namespace SmartNPC.Bridge
             return obj.IsWeeds() || obj.IsTwig()
                 || (obj.Category == StardewValley.Object.litterCategory)
                 || (obj.Name == "Stone" && obj.ParentSheetIndex >= 0 && obj.ParentSheetIndex < 44);
+        }
+
+        /// <summary>
+        /// TerrainFeature counterpart of IsDebrisObj: tree stumps and saplings
+        /// are clearable debris and belong in the `clear` action group.
+        /// </summary>
+        private static bool IsDebrisTerrainFeature(StardewValley.TerrainFeatures.TerrainFeature tf)
+        {
+            if (tf is StardewValley.TerrainFeatures.Tree tree)
+            {
+                if (tree.stump.Value) return true;
+                if (tree.growthStage.Value < 5) return true;
+            }
+            return false;
         }
 
         private static object Error(string code, string message)
