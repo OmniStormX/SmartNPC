@@ -2,6 +2,7 @@
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -110,6 +111,11 @@ type RunResult struct {
 	FailedStep int
 }
 
+// StopReasonAllZero is recorded when a looping workflow auto-stops after
+// observing that every actionable group in the farm_actions output has zero
+// work (the NPC has nothing left to do this iteration).
+const StopReasonAllZero = "workflow.auto_stop.all_zero"
+
 // SetSeed sets the RNG seed for deterministic tests. Production callers
 // should not need this.
 func (r *RunResult) String() string {
@@ -134,7 +140,8 @@ func (e *engine) runSteps(ctx context.Context, steps []Step, scope *Scope) (bool
 	for i := range steps {
 		select {
 		case <-ctx.Done():
-			return true, ctx.Err()
+			e.result.StopReason = "workflow.cancelled"
+			return true, nil
 		default:
 		}
 		stop, err := e.runStep(ctx, &steps[i], scope)
@@ -347,6 +354,11 @@ func (e *engine) runForEach(ctx context.Context, f *ForEachStep, scope *Scope) (
 // ── skill_call ──────────────────────────────────────────────────────────
 
 func (e *engine) runSkill(ctx context.Context, s *SkillCallStep, scope *Scope) (bool, error) {
+	select {
+	case <-ctx.Done():
+		return true, nil // graceful stop on cancel
+	default:
+	}
 	if s == nil || s.Skill == "" {
 		return true, errors.New("skill_call missing skill")
 	}
@@ -357,7 +369,49 @@ func (e *engine) runSkill(ctx context.Context, s *SkillCallStep, scope *Scope) (
 	if err := e.runner.CallSkill(ctx, e.npc, s.Skill, args); err != nil {
 		return true, fmt.Errorf("skill_call %s: %w", s.Skill, err)
 	}
+	// For looping workflows: check if the observed state is all-zero
+	// (NPC has nothing left to do).
+	if e.def.Loop.IsLooping() && e.checkAutoStop(scope) {
+		e.result.StopReason = StopReasonAllZero
+		return true, nil // signal stop
+	}
 	return false, nil
+}
+
+// checkAutoStop returns true when the observed farm_actions output
+// has zero work across all actionable groups — meaning the NPC
+// has nothing left to do this iteration.
+func (e *engine) checkAutoStop(scope *Scope) bool {
+	if scope == nil {
+		return false
+	}
+	raw, ok := scope.Get("obs")
+	if !ok || raw == nil {
+		return false
+	}
+	// Try to read the structured content. The tool output's first
+	// content block is typically the JSON result.
+	type actions struct {
+		ActionsAvailable map[string]struct {
+			Count int `json:"count"`
+		} `json:"actions_available"`
+	}
+	var out actions
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return false
+	}
+	// Check the actionable groups — if all are zero, auto-stop.
+	groups := []string{"harvest", "water", "clear", "till", "forage", "plant", "fill", "fill_blocked"}
+	for _, g := range groups {
+		if a, ok := out.ActionsAvailable[g]; ok && a.Count > 0 {
+			return false
+		}
+	}
+	return len(out.ActionsAvailable) > 0
 }
 
 // ── llm_choice ──────────────────────────────────────────────────────────
