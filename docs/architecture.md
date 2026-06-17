@@ -229,6 +229,24 @@ identity — and gives each layer one job. Soft rules go into Hermes
 prompts/skills; hard rules go into MCP handlers; spatial/thread-bound
 rules go into smapi-mod.
 
+## Workflow engine (P1-P6)
+
+Schedule entries can now reference **named workflows** — multi-step YAML
+definitions that the engine runs locally without per-step LLM calls. See:
+
+| Doc | What's in it |
+|---|---|
+| `adr/0005-schedule-as-workflow.md` | Decision record for the workflow engine |
+| `superpowers/specs/2026-06-17-schedule-workflow-refactor-design.md` | Full design spec (P1–P6 roadmap) |
+| `workflow-authoring.md` | How to write and validate workflow YAML files |
+
+Key files:
+- `pkg/workflow/definition.go` — DSL types (8 step kinds)
+- `pkg/workflow/engine.go` — `Run()` entry point + `Runner` interface
+- `pkg/workflow/registry.go` — YAML loader + `go:embed builtin/`
+- `pkg/workflow/builtin/*.yaml` — 10 built-in workflows
+- `cmd/workflow-lint/` — CI validation tool
+
 ## Doc map
 
 | Doc | What's in it |
@@ -240,3 +258,4 @@ rules go into smapi-mod.
 | `protocol.md` | ws envelope spec, action / event schemas |
 | `hermes-event-trigger.md` | The Plan A/B/C research that locked Plan B |
 | `roadmap.md` | Milestone status + acceptance criteria |
+| `workflow-authoring.md` | Writing and validating workflow YAML files |

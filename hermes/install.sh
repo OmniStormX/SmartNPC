@@ -191,8 +191,38 @@ for profile_dir in "$REPO_PROFILES"/*/; do
         sed "s|__HOST_IP__|$HOST_IP|g" "$overlay" > "$rendered_overlay"
 
         if [[ ! -f "$target_cfg" ]]; then
+            # First-time bootstrap: create config.yaml directly from the
+            # overlay with ${VAR} expansion, using the profile's .env.
+            # Hermes gateway can start immediately — no manual hermes run needed.
+            "$PY" - "$rendered_overlay" "$target_cfg" "$profile_dir/.env" <<'PYBOOT'
+import os, pathlib, re, sys, yaml
+
+overlay_path = pathlib.Path(sys.argv[1])
+target_cfg   = pathlib.Path(sys.argv[2])
+env_path     = pathlib.Path(sys.argv[3])
+
+# Load .env
+env = dict(os.environ)
+if env_path.exists():
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key.strip()] = value.strip().strip('"').strip("'")
+
+# Expand ${VAR} references
+def expand(s):
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: env.get(m.group(1), m.group(0)), s)
+
+overlay_text = expand(overlay_path.read_text(encoding="utf-8"))
+overlay = yaml.safe_load(overlay_text) or {}
+target_cfg.write_text(
+    yaml.safe_dump(overlay, sort_keys=False, allow_unicode=True, width=4096),
+    encoding="utf-8")
+PYBOOT
             rm -f "$rendered_overlay"
-            pending_merge+=("$profile:needs_bootstrap")
+            echo "[bootstrap] $profile/config.yaml created from config-overlay.yaml (first run)"
         else
             "$PY" - "$target_cfg" "$rendered_overlay" <<'PY'
 import os

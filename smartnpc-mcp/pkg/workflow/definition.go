@@ -28,6 +28,12 @@
 // steps read; foreach binds a fresh scope per iteration.
 package workflow
 
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
 // Definition is one named workflow. Either built-in (loaded from
 // pkg/workflow/builtin) or inline (declared by the LLM in npc_plan_day).
 type Definition struct {
@@ -100,6 +106,11 @@ type ToolStep struct {
 	// "stop" ends the workflow with the tool's reason; "fail" propagates
 	// up as a workflow error.
 	OnNothingToDo string `json:"on_nothing_to_do,omitempty" yaml:"on_nothing_to_do,omitempty"`
+	// TimeoutSeconds is the per-call real-time deadline. 0 (default) uses the
+	// engine default of 60 s. Set to a positive value to override. The engine
+	// creates a context.WithTimeout for this tool call only; the parent
+	// context's deadline still bounds the overall workflow run.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty" yaml:"timeout_seconds,omitempty"`
 }
 
 // BranchStep is an if/else. `When` is evaluated against the current
@@ -164,4 +175,60 @@ type WaitStep struct {
 // StopStep ends the workflow early. Reason is recorded in the run log.
 type StopStep struct {
 	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
+}
+
+// ── JSON unmarshaling for Step (tagged union) ────────────────────────────
+//
+// Go's encoding/json does not support the ,inline option on regular struct
+// fields, so we decode Step manually: read `kind`, then dispatch the rest
+// to the matching sub-struct.
+
+// stepJSONRaw is the intermediate form used to read the `kind` discriminator
+// before decoding the full step payload.
+type stepJSONRaw struct {
+	Kind  StepKind `json:"kind"`
+	Label string   `json:"label,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler for Step. It reads the `kind`
+// field first, then decodes the full JSON into the matching sub-struct.
+func (s *Step) UnmarshalJSON(data []byte) error {
+	var raw stepJSONRaw
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Kind == "" {
+		return errors.New("step missing kind")
+	}
+	s.Kind = raw.Kind
+	s.Label = raw.Label
+
+	switch s.Kind {
+	case StepKindTool:
+		s.Tool = &ToolStep{}
+		return json.Unmarshal(data, s.Tool)
+	case StepKindBranch:
+		s.Branch = &BranchStep{}
+		return json.Unmarshal(data, s.Branch)
+	case StepKindRandom:
+		s.Random = &RandomStep{}
+		return json.Unmarshal(data, s.Random)
+	case StepKindForEach:
+		s.ForEach = &ForEachStep{}
+		return json.Unmarshal(data, s.ForEach)
+	case StepKindSkillCall:
+		s.SkillCall = &SkillCallStep{}
+		return json.Unmarshal(data, s.SkillCall)
+	case StepKindLLMChoice:
+		s.LLMChoice = &LLMChoiceStep{}
+		return json.Unmarshal(data, s.LLMChoice)
+	case StepKindWait:
+		s.Wait = &WaitStep{}
+		return json.Unmarshal(data, s.Wait)
+	case StepKindStop:
+		s.Stop = &StopStep{}
+		return json.Unmarshal(data, s.Stop)
+	default:
+		return fmt.Errorf("unknown step kind %q", raw.Kind)
+	}
 }

@@ -13,6 +13,8 @@ package scheduler
 import (
 	"sync"
 	"time"
+
+	"github.com/OmniStormX/SmartNPC/pkg/workflow"
 )
 
 // Entry is one slot in an NPC's daily schedule.
@@ -34,6 +36,14 @@ type Entry struct {
 	Reason      string    `json:"reason,omitempty"     jsonschema:"LLM's reasoning (for debugging / display)"`
 	Fired       bool      `json:"fired"                jsonschema:"set true once dispatched"`
 	FiredAt     time.Time `json:"fired_at,omitempty"`
+
+	// ── P3 workflow fields ────────────────────────────────────────────
+	// Every entry carries either WorkflowID (built-in), Workflow (inline), or
+	// both (legacy action auto-wrapped as a 1-step Workflow). The scheduler
+	// itself treats these as opaque payload — the engine (P4) interprets them.
+	WorkflowID string               `json:"workflow_id,omitempty"`
+	Workflow   *workflow.Definition `json:"workflow,omitempty"`
+	Args       map[string]any       `json:"args,omitempty"`
 }
 
 // MinutesOfDay returns the entry's fire time as a minute-of-day count
@@ -63,6 +73,10 @@ type FiredEntry struct {
 	GameMinutes int    `json:"game_minutes"`
 	Action      string `json:"action"`
 	Reason      string `json:"reason,omitempty"`
+	// ── P3 workflow fields ────────────────────────────────────────────
+	WorkflowID string               `json:"workflow_id,omitempty"`
+	Workflow   *workflow.Definition `json:"workflow,omitempty"`
+	Args       map[string]any       `json:"args,omitempty"`
 }
 
 // Scheduler manages daily schedules for all NPCs. Thread-safe.
@@ -190,6 +204,9 @@ func (s *Scheduler) Tick(gameMinutes int) []FiredEntry {
 				GameMinutes: e.MinutesOfDay(),
 				Action:      e.Action,
 				Reason:      e.Reason,
+				WorkflowID:  e.WorkflowID,
+				Workflow:    e.Workflow,
+				Args:        e.Args,
 			})
 		}
 	}

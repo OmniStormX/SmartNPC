@@ -1,0 +1,55 @@
+id: resource_gather
+description: 资源采集：巡视 → 捡野生物品 + 砍树砸石 → 存箱 → 气泡
+version: "3"
+inputs:
+  - name: inspect_radius
+    description: 巡视半径
+    default: 20
+steps:
+  # 1. 观测
+  - kind: tool
+    name: npc_inspect_object
+    args:
+      what: farm_actions
+      radius: "$inspect_radius"
+    save_as: obs
+
+  # 2. 采集野生物品
+  - kind: branch
+    when: "$obs.actions_available.forage.count > 0"
+    then:
+      - kind: tool
+        name: npc_forage_collect
+        args:
+          x1: "$obs.actions_available.forage.bbox.x1"
+          y1: "$obs.actions_available.forage.bbox.y1"
+          x2: "$obs.actions_available.forage.bbox.x2"
+          y2: "$obs.actions_available.forage.bbox.y2"
+        on_nothing_to_do: skip
+
+  # 3. 砍树 / 砸石
+  - kind: branch
+    when: "$obs.actions_available.break.count > 0"
+    then:
+      - kind: tool
+        name: npc_break_resource
+        args:
+          what: all
+          x1: "$obs.actions_available.break.bbox.x1"
+          y1: "$obs.actions_available.break.bbox.y1"
+          x2: "$obs.actions_available.break.bbox.x2"
+          y2: "$obs.actions_available.break.bbox.y2"
+        on_nothing_to_do: skip
+
+  # 4. 存箱
+  - kind: tool
+    name: npc_deposit_items
+    args:
+      auto_find: true
+    on_nothing_to_do: skip
+
+  # 5. 收尾气泡
+  - kind: tool
+    name: npc_show_text_bubble
+    args:
+      text: "[采集收获满满~]"

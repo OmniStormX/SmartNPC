@@ -1,9 +1,10 @@
-package workflow
+﻿package workflow
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"strings"
 	"time"
@@ -182,6 +183,12 @@ func (s *StopStep) reasonOr(fallback string) string {
 
 // ── tool ────────────────────────────────────────────────────────────────
 
+// defaultToolTimeout is the per-tool-call real-time deadline applied when
+// a ToolStep does not set an explicit timeout_seconds. Heavy actions
+// (clear_debris, break_resource, etc.) should get an explicit value in the
+// YAML so the intent is visible; this is the safety net.
+const defaultToolTimeout = 60 * time.Second
+
 func (e *engine) runTool(ctx context.Context, t *ToolStep, scope *Scope) (bool, error) {
 	if t == nil || t.Name == "" {
 		return true, errors.New("tool step missing name")
@@ -190,7 +197,18 @@ func (e *engine) runTool(ctx context.Context, t *ToolStep, scope *Scope) (bool, 
 	if err != nil {
 		return true, fmt.Errorf("tool %s args: %w", t.Name, err)
 	}
-	out, err := e.runner.CallTool(ctx, e.npc, t.Name, args)
+		slog.Info("workflow: runTool", "npc", e.npc, "tool", t.Name, "args", args)
+
+
+	// Per-tool timeout: explicit value wins, otherwise 60 s default.
+	timeout := time.Duration(t.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = defaultToolTimeout
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	out, err := e.runner.CallTool(callCtx, e.npc, t.Name, args)
 	if err != nil {
 		return true, fmt.Errorf("tool %s: %w", t.Name, err)
 	}

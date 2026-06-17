@@ -204,6 +204,12 @@ namespace SmartNPC.Bridge
                     {
                         npc.showTextAboveHead(bubble);
 
+                        // Register persistent bubble for long-running actions.
+                        // FollowSystem.PumpOnGameTick will refresh it every ~1s
+                        // with an elapsed-seconds counter, and clear it on Idle.
+                        if (RefuseWhileBusy && _follow != null)
+                            _follow.SetActionBubble(captured, bubble);
+
                         string npcMap = npc.currentLocation?.Name ?? "<null>";
                         string playerMap = Game1.player?.currentLocation?.Name ?? "<null>";
                         bool sameMap = string.Equals(npcMap, playerMap, StringComparison.Ordinal);
@@ -406,6 +412,13 @@ namespace SmartNPC.Bridge
                         LogLevel.Warn);
                 }
             }
+        }
+
+        /// <summary>Discard all queued tasks for a single NPC. Called by
+        /// FollowSystem.ForceIdle when an action is cancelled by timeout.</summary>
+        public static void Clear(string npcName)
+        {
+            lock (_lock) { _queues.Remove(npcName); }
         }
 
         /// <summary>Diagnostic snapshot for debug commands.</summary>

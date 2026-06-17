@@ -22,7 +22,11 @@ func logDir() string {
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Join(filepath.Dir(exe), "..", "logs")
 		if abs, err := filepath.Abs(dir); err == nil {
-			os.MkdirAll(abs, 0755)
+			if err := os.MkdirAll(abs, 0755); err != nil {
+				slog.Default().Warn("failed to create log dir", "path", abs, "err", err)
+			} else {
+				slog.Default().Info("log directory created", "path", abs)
+			}
 			return abs
 		}
 	}
@@ -131,8 +135,12 @@ func LogScheduleTriggers(hour int, fired []scheduler.FiredEntry) {
 	b = fmt.Appendf(b, "[Schedule] [%s] hour=%02d:00 fired=%d\n",
 		time.Now().Format("2006-01-02 15:04:05"), hour, len(fired))
 	for i, e := range fired {
+		action := e.Action
+		if e.WorkflowID != "" {
+			action = "W:" + e.WorkflowID
+		}
 		b = fmt.Appendf(b, "  %2d  %-12s %02d:%02d  %-30s  %s\n",
-			i+1, e.NPC, e.GameHour, e.GameMinute, e.Action, e.Reason)
+			i+1, e.NPC, e.GameHour, e.GameMinute, action, e.Reason)
 	}
 	if _, err := f.Write(b); err != nil {
 		slog.Default().Warn("schedule_triggers.log write failed", "err", err)
@@ -151,7 +159,11 @@ func logSchedule(npc string, day int, season string, year int, entries []schedul
 
 	lines := make([]string, 0, len(entries))
 	for i, e := range entries {
-		lines = append(lines, fmt.Sprintf("  [%2d] %02d:%02d  %-28s  %s\n", i+1, e.GameHour, e.GameMinute, e.Action, e.Reason))
+		action := e.Action
+		if e.WorkflowID != "" {
+			action = "W:" + e.WorkflowID
+		}
+		lines = append(lines, fmt.Sprintf("  [%2d] %02d:%02d  %-28s  %s\n", i+1, e.GameHour, e.GameMinute, action, e.Reason))
 	}
 	footer := "----------------------------------------------\n"
 

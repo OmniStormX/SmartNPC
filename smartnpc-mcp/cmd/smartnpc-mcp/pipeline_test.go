@@ -20,8 +20,9 @@ import (
 
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/scheduler"
-	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/tools"
+	"github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
+	"github.com/OmniStormX/SmartNPC/pkg/workflow"
 )
 
 // TestPipeline_ChatMessageReachesHermes wires the full server-side
@@ -92,11 +93,11 @@ func TestPipeline_ChatMessageReachesHermes(t *testing.T) {
 
 	// Bridge ws client, with the same makeRouter the production main() uses.
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false))
 
 	// Register tools so the MCP server is realistic — they aren't
 	// exercised in this test but ensure RegisterAll didn't change shape.
-	_ = tools.RegisterAll(mcpServer, br, nil, nil, logger, false)
+	_ = tools.RegisterAll(mcpServer, br, nil, nil, logger, nil, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -175,7 +176,7 @@ func TestPipeline_NonMatchingNPCDropped(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -224,7 +225,7 @@ func TestPipeline_RelayOff(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", nil, nil, nil, nil, false)) // ← relay disabled
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", nil, nil, nil, nil, nil, false, false)) // ← relay disabled
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -295,7 +296,7 @@ func TestPipeline_AudibleChatReceivedSynthesizesChatMessage(t *testing.T) {
 
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", relay.HandleEvent, nil, nil, nil, nil, false, false))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -468,7 +469,7 @@ func TestPipeline_GameTimeTickFiresScheduleTrigger(t *testing.T) {
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
 
 	// Create scheduler and pre-populate a schedule for XiaMi.
-	sched := tools.RegisterAll(mcpServer, nil, nil, nil, logger, false)
+	sched := tools.RegisterAll(mcpServer, nil, nil, nil, logger, nil, false)
 	sched.SetSchedule(scheduler.DaySchedule{
 		NPC:    "XiaMi",
 		Day:    15,
@@ -481,7 +482,7 @@ func TestPipeline_GameTimeTickFiresScheduleTrigger(t *testing.T) {
 
 	// Wire the router with the scheduler.
 	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
-	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, nil, sched, false))
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, nil, sched, nil, false, false))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -536,4 +537,256 @@ func TestPipeline_GameTimeTickFiresScheduleTrigger(t *testing.T) {
 	if len(pending) != 0 {
 		t.Errorf("expected 0 pending after tick, got %d", len(pending))
 	}
+}
+
+// TestPipeline_WorkflowPump_PlanDayToEngine verifies the complete workflow-driven
+// chain: npc_plan_day with workflow_id → scheduler stores entries → game_time_tick
+// fires → workflow worker runs engine → skill_call relayed → tool calls dispatched.
+func TestPipeline_WorkflowPump_PlanDayToEngine(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// ── 1. Fake Hermes gateway that captures skill_call events ──────────
+	var mu sync.Mutex
+	var skillCalls []struct {
+		Skill string
+		NPC   string
+	}
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req struct {
+			Input        string `json:"input"`
+			Conversation string `json:"conversation_id"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		mu.Lock()
+		skillCalls = append(skillCalls, struct {
+			Skill string
+			NPC   string
+		}{Skill: "", NPC: req.Conversation})
+		mu.Unlock()
+		// Log the raw input for debugging — check for workflow_skill_call markers.
+		t.Logf("hermes received: conv=%s input_len=%d", req.Conversation, len(req.Input))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gw.Close()
+
+	// ── 2. Relay config ─────────────────────────────────────────────────
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	cfgContent := fmt.Sprintf(`profiles:
+  - npc_filter: Abigail
+    gateway_url: %s/v1/responses
+    api_key: test
+    conversation: abigail
+    model: test-model
+`, gw.URL)
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfgs, err := hermesrelay.LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	group, err := hermesrelay.NewGroup(cfgs, logger)
+	if err != nil {
+		t.Fatalf("new group: %v", err)
+	}
+
+	// ── 3. Workflow registry with built-in YAMLs ────────────────────────
+	workflowReg := workflow.NewRegistry()
+	if err := workflowReg.Init(""); err != nil {
+		t.Fatalf("init workflow registry: %v", err)
+	}
+	t.Logf("workflow registry: %d built-in(s)", len(workflowReg.List()))
+
+	// ── 4. Fake SMAPI mod ws server ─────────────────────────────────────
+	mod := bridge.NewTestServer(func(ctx context.Context, action string, params json.RawMessage) (any, error) {
+		t.Logf("mod received action: %s", action)
+		return map[string]any{"ok": true}, nil
+	})
+	defer mod.Close()
+
+	// ── 5. Build MCP server with scheduler + workflow tools ─────────────
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
+
+	// Dummy chat guard needed by RegisterAll.
+	chatGuard := tools.NewChatSayGuard()
+	sched := tools.RegisterAll(mcpServer, nil, nil, chatGuard, logger, workflowReg, false)
+	sched.SetAgentNPCs([]string{"Abigail"})
+
+	// ── 6. Wire the bridge router with workflow pump ON ─────────────────
+	br := bridge.NewWSClient(bridge.WSClientOptions{URL: mod.URL_WS(), Logger: logger})
+	br.SetEventHandler(makeRouter(mcpServer, logger, br, false, "", group.HandleEvent, nil, chatGuard, sched, workflowReg, true, false))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := br.Connect(ctx); err != nil {
+		t.Fatalf("bridge connect: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// ── 7. Call npc_plan_day via MCP client with workflow_id entries ────
+	t1, t2 := mcp.NewInMemoryTransports()
+	if _, err := mcpServer.Connect(ctx, t1, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	cs, err := client.Connect(ctx, t2, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "npc_plan_day",
+		Arguments: map[string]any{
+			"npc":    "Abigail",
+			"day":    2,
+			"season": "spring",
+			"entries": []any{
+				map[string]any{
+					"game_hour":   6,
+					"game_minute": 30,
+					"workflow_id": "farm_extension",
+					"args":        map[string]any{"target_seed": "(O)472"},
+					"reason":      "开垦新地",
+				},
+				map[string]any{
+					"game_hour":   9,
+					"workflow_id": "farm_care",
+					"reason":      "日常养护",
+				},
+				map[string]any{
+					"game_hour":   14,
+					"workflow_id": "social_interact",
+					"reason":      "找玩家聊天",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("npc_plan_day call: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("npc_plan_day IsError: %v", res.Content)
+	}
+
+	// ── 8. Verify schedule was stored correctly ─────────────────────────
+	pending := sched.PendingEntries("Abigail")
+	if len(pending) != 3 {
+		t.Fatalf("expected 3 pending entries; got %d", len(pending))
+	}
+	for i, e := range pending {
+		if e.WorkflowID == "" {
+			t.Errorf("entry %d: WorkflowID is empty — should be a workflow_id entry", i)
+		}
+		if e.Action != "" {
+			t.Errorf("entry %d: Action=%q — should be empty, use workflow_id", i, e.Action)
+		}
+		t.Logf("entry %d: %02d:%02d workflow_id=%s reason=%s", i, e.GameHour, e.GameMinute, e.WorkflowID, e.Reason)
+	}
+
+	// ── 9. Fire game_time_tick for 06:30 (first entry) ──────────────────
+	if err := mod.PushEvent(bridge.EventGameTimeTick, map[string]any{
+		"hour": 6, "minute": 30, "minutes": 390,
+	}); err != nil {
+		t.Fatalf("push tick event: %v", err)
+	}
+
+	// ── 10. Wait for the workflow engine to process ─────────────────────
+	// The workflow pump should pick up the entry, resolve the built-in
+	// farm_extension YAML, and run it. Step 2 is a skill_call — it will
+	// be sent through the relay to the fake Hermes gateway.
+	deadline := time.After(3 * time.Second)
+	var firedCount int
+	for {
+		pending = sched.PendingEntries("Abigail")
+		firedCount = 3 - len(pending)
+		if firedCount >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout: schedule entry never fired; %d pending", len(pending))
+		default:
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	t.Logf("fired entries: %d, pending: %d", firedCount, len(pending))
+
+	// ── 11. Verify: pending entries should now be 2 (first one fired) ───
+	if len(pending) != 2 {
+		t.Errorf("expected 2 pending after firing 06:30 entry; got %d", len(pending))
+	}
+	// The fired entry should be the farm_extension at 06:30.
+	if len(pending) > 0 && pending[0].GameHour == 6 {
+		t.Error("entry at hour 6 should have been fired")
+	}
+}
+
+// TestPipeline_WorkflowPump_RejectsLegacyAction verifies that entries
+// with `action` field (no workflow_id) are rejected by npc_plan_day.
+func TestPipeline_WorkflowPump_RejectsLegacyAction(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	workflowReg := workflow.NewRegistry()
+	if err := workflowReg.Init(""); err != nil {
+		t.Fatalf("init workflow registry: %v", err)
+	}
+
+	// In-memory MCP transport — no ws bridge needed for this test.
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
+	tools.RegisterAll(mcpServer, nil, nil, nil, logger, workflowReg, false)
+
+	t1, t2 := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := mcpServer.Connect(ctx, t1, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	cs, err := client.Connect(ctx, t2, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "npc_plan_day",
+		Arguments: map[string]any{
+			"npc":    "Abigail",
+			"day":    1,
+			"season": "spring",
+			"entries": []any{
+				map[string]any{
+					"game_hour":   6,
+					"workflow_id": "farm_care",
+				},
+				map[string]any{
+					"game_hour": 9,
+					"action":    "npc_water_crops", // ← legacy, should be rejected
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+
+	b, _ := json.Marshal(res.StructuredContent)
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
+
+	// Only 1 entry should be accepted (the workflow_id one).
+	accepted, _ := out["accepted"].(float64)
+	if accepted != 1 {
+		t.Errorf("accepted = %v; want 1 (only workflow_id entry; action entry rejected)", accepted)
+	}
+
+	// The message should warn about the rejected action.
+	msg, _ := out["message"].(string)
+	if msg == "" {
+		t.Error("message should not be empty")
+	}
+	t.Logf("npc_plan_day message: %s", msg)
 }

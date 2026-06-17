@@ -152,6 +152,14 @@ type DebugProactiveTrigger struct {
 	NPC string `json:"npc"` // PascalCase internal name, e.g. "Abigail"
 }
 
+// WorkflowLLMChoice is the payload for EventWorkflowLLMChoice — the engine
+// asks the NPC's LLM to pick one option from a fixed list.
+type WorkflowLLMChoice struct {
+	RequestID string   `json:"request_id"`
+	Prompt    string   `json:"prompt"`
+	Options   []string `json:"options"`
+}
+
 // EventDescriptor is the uniform envelope all consumers see (identical to
 // the payload tools.MakeEventForwarder writes into MCP logging notifications).
 // Re-declared here so consumers don't need to import internal/tools.

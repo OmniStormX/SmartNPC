@@ -193,6 +193,32 @@ func FormatForHermes(name string, data json.RawMessage) string {
 					"or skip — but briefly note why in your reasoning.",
 				p.GameHour, p.GameMinute, p.Action, hint, p.Action)
 		}
+	case "workflow_skill_call":
+		// Synthetic event from the workflow engine's `kind: skill_call` step.
+		// The engine ran deterministic pre-steps (e.g. npc_inspect_object),
+		// now hands control to the LLM to make dynamic tool decisions.
+		var p struct {
+			NPC   string         `json:"npc"`
+			Skill string         `json:"skill"`
+			Args  map[string]any `json:"args"`
+		}
+		if err := json.Unmarshal(data, &p); err == nil && p.Skill != "" {
+			argsHint := ""
+			if len(p.Args) > 0 {
+				b, _ := json.Marshal(p.Args)
+				argsHint = fmt.Sprintf("\nWorkflow args: %s", string(b))
+			}
+			return fmt.Sprintf(
+				"[workflow_skill_call skill=%q] The workflow engine requests that you "+
+					"execute this skill NOW.%s\n\n"+
+					"1. Call skill_view to load %q.\n"+
+					"2. Follow the skill's instructions strictly — inspect, match examples, "+
+					"compose a dynamic sequence of tool calls.\n"+
+					"3. Do NOT call chat_say — the player has not spoken to you.\n"+
+					"4. When done, call one npc_show_text_bubble with a brief summary.",
+				p.Skill, argsHint, p.Skill)
+		}
+
 	case bridge.EventDebugProactiveTrigger:
 		var p DebugProactiveTrigger
 		if err := json.Unmarshal(data, &p); err == nil && p.NPC != "" {

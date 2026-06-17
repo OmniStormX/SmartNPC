@@ -502,6 +502,195 @@ func TestRun_InputsAndDefaults(t *testing.T) {
 	}
 }
 
+// ── skill_call step tests ────────────────────────────────────────────────
+
+func TestRun_SkillCall(t *testing.T) {
+	def := &Definition{
+		ID: "skill-call",
+		Steps: []Step{
+			{Kind: StepKindSkillCall, SkillCall: &SkillCallStep{Skill: "smartnpc-farm-maintenance"}},
+		},
+	}
+	runner := &stubRunner{}
+	res, err := Run(context.Background(), runner, "Abigail", def, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(runner.skillCalls) != 1 {
+		t.Errorf("expected 1 skill call; got %d", len(runner.skillCalls))
+	}
+	if runner.skillCalls[0] != "smartnpc-farm-maintenance" {
+		t.Errorf("skill = %q; want smartnpc-farm-maintenance", runner.skillCalls[0])
+	}
+	if res.StepCount != 1 {
+		t.Errorf("step count = %d; want 1", res.StepCount)
+	}
+}
+
+func TestRun_SkillCallWithArgs(t *testing.T) {
+	def := &Definition{
+		ID: "skill-call-args",
+		Inputs: []InputSpec{
+			{Name: "radius", Default: float64(12)},
+		},
+		Steps: []Step{
+			{Kind: StepKindSkillCall, SkillCall: &SkillCallStep{
+				Skill: "smartnpc-farm-maintenance",
+				Args:  map[string]any{"inspect_radius": "$radius"},
+			}},
+		},
+	}
+	runner := &stubRunner{}
+	_, err := Run(context.Background(), runner, "Abigail", def, map[string]any{"radius": float64(20)})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(runner.skillCalls) != 1 {
+		t.Fatalf("expected 1 skill call; got %d", len(runner.skillCalls))
+	}
+}
+
+func TestRun_SkillCall_NoRelayIsGraceful(t *testing.T) {
+	def := &Definition{
+		ID: "skill-call-noop",
+		Steps: []Step{
+			{Kind: StepKindSkillCall, SkillCall: &SkillCallStep{Skill: "any-skill"}},
+		},
+	}
+	// stubRunner.CallSkill always returns nil (mimics nil relay behavior).
+	runner := &stubRunner{}
+	res, err := Run(context.Background(), runner, "Abigail", def, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Stopped {
+		t.Errorf("skill_call without relay should not stop the workflow")
+	}
+}
+
+func TestRun_SkillCallMissingSkillName(t *testing.T) {
+	def := &Definition{
+		ID: "bad-skill",
+		Steps: []Step{
+			{Kind: StepKindSkillCall, SkillCall: &SkillCallStep{Skill: ""}},
+		},
+	}
+	runner := &stubRunner{}
+	_, err := Run(context.Background(), runner, "Abigail", def, nil)
+	if err == nil {
+		t.Fatal("expected error for empty skill name")
+	}
+	if !strings.Contains(err.Error(), "missing skill") {
+		t.Errorf("error = %v; want 'missing skill'", err)
+	}
+}
+
+// ── built-in YAML round-trip tests ────────────────────────────────────────
+
+func TestRun_BuiltinYAMLs_ParseAndValidate(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Init(""); err != nil {
+		t.Fatalf("Init registry: %v", err)
+	}
+	ids := reg.List()
+	if len(ids) < 5 {
+		t.Errorf("expected >= 5 built-in workflows; got %d: %v", len(ids), ids)
+	}
+	coreIDs := []string{"farm_extension", "farm_care", "farm_cleanup", "resource_gather", "social_interact"}
+	for _, id := range coreIDs {
+		d := reg.Get(id)
+		if d == nil {
+			t.Errorf("built-in workflow %q not found in registry", id)
+			continue
+		}
+		if err := Validate(d); err != nil {
+			t.Errorf("built-in workflow %q fails validation: %v", id, err)
+		}
+	}
+}
+
+func TestRun_BuiltinFarmExtension_HasSkillCall(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Init(""); err != nil {
+		t.Fatalf("Init registry: %v", err)
+	}
+	def := reg.Get("farm_extension")
+	if def == nil {
+		t.Fatal("farm_extension not found")
+	}
+	hasSkillCall := false
+	var walk func([]Step)
+	walk = func(steps []Step) {
+		for _, s := range steps {
+			if s.Kind == StepKindSkillCall {
+				hasSkillCall = true
+			}
+			if s.Kind == StepKindBranch {
+				if s.Branch != nil {
+					walk(s.Branch.Then)
+					walk(s.Branch.Else)
+				}
+			}
+		}
+	}
+	walk(def.Steps)
+	if !hasSkillCall {
+		t.Error("farm_extension should contain at least one skill_call step")
+	}
+}
+
+func TestRun_BuiltinFarmCare_HasSkillCall(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Init(""); err != nil {
+		t.Fatalf("Init registry: %v", err)
+	}
+	def := reg.Get("farm_care")
+	if def == nil {
+		t.Fatal("farm_care not found")
+	}
+	hasSkillCall := false
+	var walk func([]Step)
+	walk = func(steps []Step) {
+		for _, s := range steps {
+			if s.Kind == StepKindSkillCall {
+				hasSkillCall = true
+			}
+			if s.Kind == StepKindBranch {
+				if s.Branch != nil {
+					walk(s.Branch.Then)
+					walk(s.Branch.Else)
+				}
+			}
+		}
+	}
+	walk(def.Steps)
+	if !hasSkillCall {
+		t.Error("farm_care should contain at least one skill_call step")
+	}
+}
+
+func TestRun_AllBuiltins_RunWithStubRunner(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Init(""); err != nil {
+		t.Fatalf("Init registry: %v", err)
+	}
+	for _, def := range reg.List() {
+		if def == nil {
+			continue
+		}
+		runner := &stubRunner{}
+		res, err := Run(context.Background(), runner, "TestNPC", def, nil)
+		if err != nil {
+			t.Errorf("%s: Run failed: %v", def.ID, err)
+			continue
+		}
+		if res.StepCount < 1 {
+			t.Errorf("%s: step count = %d; want >= 1", def.ID, res.StepCount)
+		}
+		t.Logf("%s: steps=%d tools=%d skills=%d stopped=%v", def.ID, res.StepCount, res.ToolCalls, len(runner.skillCalls), res.Stopped)
+	}
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────
 
 func toolNames(calls []toolCallRecord) []string {

@@ -1,4 +1,4 @@
-﻿// Command smartnpc-mcp is the MCP server bridging the Stardew Valley SMAPI mod
+// Command smartnpc-mcp is the MCP server bridging the Stardew Valley SMAPI mod
 // to MCP clients (Claude Desktop, Hermes, ...).
 //
 // Two transports are supported:
@@ -37,6 +37,7 @@ import (
 	"github.com/OmniStormX/SmartNPC/pkg/agentbridge"
 	hermesrelay "github.com/OmniStormX/SmartNPC/pkg/relay/hermes"
 	"github.com/OmniStormX/SmartNPC/pkg/transport"
+	"github.com/OmniStormX/SmartNPC/pkg/workflow"
 )
 
 var version = "0.1.0-dev"
@@ -190,7 +191,26 @@ func main() {
 		br = bridge.NewWSClient(bridge.WSClientOptions{URL: *wsURL, Logger: logger})
 	}
 
-	dayScheduler := tools.RegisterAll(server, br, hermesHandler, chatGuard, logger, *logLevel == "debug")
+	// Initialise the workflow registry from embedded builtins. Allow an
+	// external directory (SMARTNPC_WORKFLOW_DIR) to overlay custom definitions
+	// without rebuilding the binary.
+	workflowReg := workflow.NewRegistry()
+	if err := workflowReg.Init(os.Getenv("SMARTNPC_WORKFLOW_DIR")); err != nil {
+		logger.Error("workflow registry init failed", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("workflow registry initialised", "count", len(workflowReg.List()))
+
+	// ── Workflow pump (P4): when enabled, schedule entries with workflow
+	// defs are run locally by the workflow engine rather than forwarded
+	// to Hermes as schedule_trigger events. This eliminates one LLM call
+	// per tool step. Set SMARTNPC_WORKFLOW_PUMP=1 to enable.
+	workflowPump := os.Getenv("SMARTNPC_WORKFLOW_PUMP") != "0"
+	if workflowPump {
+		logger.Info("workflow pump ENABLED — schedule entries will run through local workflow engine")
+	}
+
+	dayScheduler := tools.RegisterAll(server, br, hermesHandler, chatGuard, logger, workflowReg, *logLevel == "debug")
 	// Populate agent NPC list from relay configs so npc_plan_day supports "*".
 	if len(hermesRelays) > 0 {
 		names := make([]string, 0, len(hermesRelays))
@@ -207,7 +227,7 @@ func main() {
 	agentbridge.RegisterMeta(server)
 
 	if br != nil {
-		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, hermesRelays, chatGuard, dayScheduler, *logLevel == "debug"))
+		br.SetEventHandler(makeRouter(server, logger, br, *echoMode, *echoSpeaker, hermesHandler, hermesRelays, chatGuard, dayScheduler, workflowReg, workflowPump, *logLevel == "debug"))
 		if err := br.Connect(ctx); err != nil {
 			// Mod may not be running yet. The ws client retries in the
 			// background; meanwhile non-mod tools (ping) still work.
@@ -302,6 +322,10 @@ type schedTriggerMsg struct {
 	triggerData json.RawMessage
 	action      string
 	reason      string
+	// ── P4 workflow fields ────────────────────────────────────────────
+	workflowID string
+	workflow   *workflow.Definition
+	args       map[string]any
 }
 
 // npcWorkerQueueSize is the buffer depth of each per-NPC trigger channel.
@@ -319,6 +343,8 @@ func makeRouter(
 	relays []*hermesrelay.Relay,
 	chatGuard *tools.ChatSayGuard,
 	sched *scheduler.Scheduler,
+	workflowReg *workflow.Registry,
+	workflowPump bool,
 	schedDebug bool,
 ) bridge.EventHandler {
 	forward := tools.MakeEventForwarder(server, logger)
@@ -340,10 +366,18 @@ func makeRouter(
 		for _, npc := range sched.AgentNPCs() {
 			ch := make(chan schedTriggerMsg, npcWorkerQueueSize)
 			npcQueues[npc] = ch
-			go npcTriggerWorker(ch, logger, br, relay, schedDebug)
+			if workflowPump {
+				go npcWorkflowWorker(ch, logger, br, relay, workflowReg, schedDebug)
+			} else {
+				go npcTriggerWorker(ch, logger, br, relay, schedDebug)
+			}
 		}
 		if len(npcQueues) > 0 {
-			logger.Info("scheduler: per-NPC trigger workers started", "count", len(npcQueues))
+			mode := "schedule_trigger"
+			if workflowPump {
+				mode = "workflow engine"
+			}
+			logger.Info("scheduler: per-NPC workers started", "count", len(npcQueues), "mode", mode)
 		}
 	}
 
@@ -401,6 +435,9 @@ func makeRouter(
 					gameMinutes = tick.Hour*60 + tick.Minute
 				}
 				fired := sched.Tick(gameMinutes)
+				logger.Debug("scheduler: tick",
+				"game_minutes", gameMinutes,
+				"fired", len(fired))
 				// When schedule entries fire, suppress the game_time_tick
 				// relay so the LLM doesn't receive two concurrent turns
 				// (schedule_trigger + tick) for the same instant.
@@ -420,6 +457,8 @@ func makeRouter(
 						"game_minute":  entry.GameMinute,
 						"game_minutes": entry.GameMinutes,
 						"action":       entry.Action,
+						"workflow_id":  entry.WorkflowID,
+						"args":         entry.Args,
 						"reason":       entry.Reason,
 					})
 					if err != nil {
@@ -427,7 +466,8 @@ func makeRouter(
 						continue
 					}
 					logger.Info("scheduler: firing schedule_trigger",
-						"npc", entry.NPC, "hour", entry.GameHour, "minute", entry.GameMinute, "action", entry.Action)
+						"npc", entry.NPC, "hour", entry.GameHour, "minute", entry.GameMinute,
+						"action", entry.Action, "workflow_id", entry.WorkflowID)
 					// Forward to MCP clients for observability.
 					forward(ctx, bridge.EventScheduleTrigger, triggerData)
 
@@ -438,6 +478,9 @@ func makeRouter(
 						triggerData: triggerData,
 						action:      entry.Action,
 						reason:      entry.Reason,
+						workflowID:  entry.WorkflowID,
+						workflow:    entry.Workflow,
+						args:        entry.Args,
 					}
 					if ch, ok := npcQueues[entry.NPC]; ok {
 						select {
@@ -479,11 +522,15 @@ func makeRouter(
 			if relay != nil {
 				relay(ctx, bridge.EventChatMessage, synthData)
 			}
-		case relay != nil && !(name == bridge.EventGameTimeTick && time.Now().Before(suppressTickRelayUntil)):
+		case relay != nil && !(name == bridge.EventGameTimeTick && (workflowPump || time.Now().Before(suppressTickRelayUntil))):
 			relay(ctx, name, data)
 		case relay != nil && name == bridge.EventGameTimeTick:
-			logger.Info("relay: suppressing game_time_tick after day_started",
-				"suppress_until", suppressTickRelayUntil.Format("15:04:05.000"))
+			reason := "after day_started"
+			if workflowPump {
+				reason = "workflow pump enabled (ticks handled locally)"
+			}
+			logger.Debug("relay: suppressing game_time_tick",
+				"reason", reason, "suppress_until", suppressTickRelayUntil.Format("15:04:05.000"))
 		}
 
 		if !echo || br == nil || name != bridge.EventChatReceived {
@@ -516,7 +563,8 @@ func makeRouter(
 
 // npcTriggerWorker is the persistent goroutine that consumes schedule_trigger
 // messages for a single NPC. It serializes execution so ws calls for the same
-// NPC never race.
+// NPC never race. (Legacy path — replaced by npcWorkflowWorker when the
+// workflow pump is enabled.)
 func npcTriggerWorker(
 	ch <-chan schedTriggerMsg,
 	logger *slog.Logger,
@@ -525,8 +573,6 @@ func npcTriggerWorker(
 	schedDebug bool,
 ) {
 	for msg := range ch {
-		// Debug mode: show bubble for visual feedback AND relay to LLM.
-		// Previously debug hijacked the trigger and skipped the LLM entirely.
 		if schedDebug && br != nil {
 			dispatchSchedDebug(msg.ctx, logger, br, msg.npc, msg.action, msg.reason)
 		}
@@ -534,6 +580,88 @@ func npcTriggerWorker(
 			relay(msg.ctx, bridge.EventScheduleTrigger, msg.triggerData)
 		}
 	}
+}
+
+// npcWorkflowWorker is the P4 persistent goroutine that consumes schedule
+// messages for a single NPC. When the entry carries a workflow definition,
+// it runs the workflow engine locally (no per-step LLM call). Falls back to
+// schedule_trigger relay when the entry has no workflow definition.
+func npcWorkflowWorker(
+	ch <-chan schedTriggerMsg,
+	logger *slog.Logger,
+	br *bridge.WSClient,
+	relay bridge.EventHandler,
+	workflowReg *workflow.Registry,
+	schedDebug bool,
+) {
+	for msg := range ch {
+		logger.Debug("workflow worker: received trigger",
+			"npc", msg.npc,
+			"workflow_id", msg.workflowID,
+			"action", msg.action,
+			"has_inline", msg.workflow != nil,
+		)
+
+		// Resolve the workflow definition.
+		def := resolveDefinition(workflowReg, msg.workflowID, msg.workflow)
+		if def == nil {
+			// No workflow — fall back to old schedule_trigger path.
+			logger.Warn("workflow worker: no workflow definition, dispatching as schedule_trigger",
+				"npc", msg.npc, "workflow_id", msg.workflowID, "action", msg.action)
+			if schedDebug && br != nil {
+				dispatchSchedDebug(msg.ctx, logger, br, msg.npc, msg.action, msg.reason)
+			}
+			if relay != nil {
+				relay(msg.ctx, bridge.EventScheduleTrigger, msg.triggerData)
+			}
+			continue
+		}
+
+		logger.Info("workflow worker: starting workflow",
+			"npc", msg.npc, "workflow_id", def.ID, "steps", len(def.Steps))
+
+		// Run the workflow engine.
+		runner := workflow.NewMCPRunner(workflow.MCPRunnerOptions{
+			Bridge: br,
+			Logger: logger.With("npc", msg.npc, "workflow", def.ID),
+			Relay:  relay,
+		})
+
+		runCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		started := time.Now()
+		res, err := workflow.Run(runCtx, runner, msg.npc, def, msg.args)
+		elapsed := time.Since(started)
+		cancel()
+
+		// Persist the run result to logs/mcp/workflow_runs/.
+		// Season/day/year default to 0/"unknown" since the schedule entry
+		// doesn't carry game date info — the player can filter later.
+		tools.LogWorkflowRun(msg.npc, "unknown", 0, 0, res, err, elapsed, msg.args)
+
+		if err != nil {
+			logger.Warn("workflow run failed",
+				"npc", msg.npc, "workflow", def.ID, "elapsed_ms", elapsed.Milliseconds(), "err", err)
+		} else {
+			logger.Info("workflow run completed",
+				"npc", msg.npc, "workflow", def.ID,
+				"steps", res.StepCount, "tools", res.ToolCalls,
+				"nothing", res.NothingToDoCt, "stopped", res.Stopped,
+				"elapsed_ms", elapsed.Milliseconds())
+		}
+	}
+}
+
+// resolveDefinition returns the workflow.Definition for the given entry,
+// resolving a built-in ID from the registry or using an inline definition.
+// Returns nil when neither is set.
+func resolveDefinition(reg *workflow.Registry, workflowID string, inline *workflow.Definition) *workflow.Definition {
+	if inline != nil {
+		return inline
+	}
+	if workflowID != "" && reg != nil {
+		return reg.Get(workflowID)
+	}
+	return nil
 }
 
 // dispatchSchedDebug sends the schedule action as game chat + text bubble for

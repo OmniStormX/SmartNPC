@@ -1,0 +1,36 @@
+id: weather_bookkeeping
+description: 雨天室内活动：整理库存 → 闲逛 → 原地待机
+version: "1"
+steps:
+  # 1. 检查库存
+  - kind: tool
+    name: npc_inventory_get
+    args: {}
+    save_as: inv
+    on_nothing_to_do: skip
+
+  # 2. 有物品时尝试整理（随机动作）
+  - kind: random
+    weighted:
+      - weight: 3
+        do:
+          - kind: tool
+            name: npc_deposit_items
+            args:
+              auto_find: true
+            on_nothing_to_do: skip
+      - weight: 2
+        do:
+          - kind: tool
+            name: npc_idle_activity
+            args:
+              duration_ticks: 300
+            on_nothing_to_do: skip
+      - weight: 1
+        do: []
+
+  # 3. 室内活动气泡
+  - kind: tool
+    name: npc_show_text_bubble
+    args:
+      text: "[下雨天，在家待着也不错]"

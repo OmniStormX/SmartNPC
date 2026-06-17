@@ -1,0 +1,32 @@
+id: social_round_robin
+description: 拜访 NPC：走近聊天或随机表情 —— 三选一社交动作
+version: "1"
+steps:
+  # 随机选择社交动作
+  - kind: random
+    weighted:
+      - weight: 3
+        do:
+          - kind: tool
+            name: npc_approach_and_speak
+            args: {}
+            on_nothing_to_do: skip
+      - weight: 2
+        do:
+          - kind: tool
+            name: npc_express_emotion
+            args:
+              emotion: happy
+      - weight: 2
+        do:
+          - kind: tool
+            name: npc_dance_happy
+            args: {}
+      - weight: 1
+        do:
+          - kind: tool
+            name: npc_wander
+            args:
+              duration_ticks: 150
+              radius: 6
+            on_nothing_to_do: skip

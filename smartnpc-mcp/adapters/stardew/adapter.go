@@ -112,7 +112,7 @@ func (a *Adapter) Register(srv *agentbridge.Server) error {
 	srv.AttachEventSource(a)
 	chatGuard := tools.NewChatSayGuard()
 	if err := srv.Mount("stardew/tools", func(s *mcp.Server) error {
-		_ = tools.RegisterAll(s, a.client, nil /* hermes EventHandler */, chatGuard, a.logger, false)
+		_ = tools.RegisterAll(s, a.client, nil /* hermes EventHandler */, chatGuard, a.logger, nil, false)
 		return nil
 	}); err != nil {
 		return err

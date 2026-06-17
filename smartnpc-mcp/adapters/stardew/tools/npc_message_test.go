@@ -85,7 +85,7 @@ func TestMailbox_PeekMax(t *testing.T) {
 func TestNpcSendMessage_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, nil, nil, nil, false)
+	RegisterAll(server, nil, nil, nil, nil, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {
@@ -174,7 +174,7 @@ func TestNpcSendMessage_EndToEnd(t *testing.T) {
 func TestNpcSendMessage_Validation(t *testing.T) {
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, nil, nil, nil, false)
+	RegisterAll(server, nil, nil, nil, nil, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {
@@ -211,7 +211,7 @@ func TestNpcSendMessage_Validation(t *testing.T) {
 func TestNpcBroadcast_Ack(t *testing.T) {
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, nil, nil, nil, false)
+	RegisterAll(server, nil, nil, nil, nil, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {
@@ -293,7 +293,7 @@ func TestNpcSendMessage_FeedsHermesRelay(t *testing.T) {
 
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, hermes, nil, nil, false)
+	RegisterAll(server, nil, hermes, nil, nil, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {
@@ -377,7 +377,7 @@ func TestNpcSendMessage_DetachesContext(t *testing.T) {
 
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, hermes, nil, nil, false)
+	RegisterAll(server, nil, hermes, nil, nil, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {
@@ -423,7 +423,7 @@ func TestNpcSendMessage_DetachesContext(t *testing.T) {
 func TestNpcSendMessage_NilHermesDoesNotPanic(t *testing.T) {
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, nil, nil, nil, false)
+	RegisterAll(server, nil, nil, nil, nil, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {
@@ -505,7 +505,7 @@ func TestNpcSendMessage_StillEmitsMCPNotification(t *testing.T) {
 
 	ctx := context.Background()
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "t"}, nil)
-	RegisterAll(server, nil, hermes, nil, nil, false)
+	RegisterAll(server, nil, hermes, nil, nil, nil, false)
 
 	t1, t2 := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, t1, nil); err != nil {

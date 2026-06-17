@@ -72,7 +72,7 @@ Agent ──行为分类+bbox──→ 决策 ──行为类型+bbox──→ M
 {
   "npc": "Abigail",
   "what": "farm_actions",
-  "radius": 25
+  "radius": 40
 }
 ```
 
@@ -83,7 +83,7 @@ Agent ──行为分类+bbox──→ 决策 ──行为类型+bbox──→ M
   "ok": true,
   "npc": "Abigail",
   "map": "Farm",
-  "radius": 25,
+  "radius": 40,
   "tiles_scanned": 2028,
   "summary": "5 株成熟作物, 8 块未浇水, 3 垃圾, 2 采集物, 4 块空地",
   "actions_available": {
@@ -133,7 +133,7 @@ Agent ──行为分类+bbox──→ 决策 ──行为类型+bbox──→ M
 
 | 参数 | 旧 | 新 |
 |------|----|----|
-| `radius` max | 10 | **30** |
+| `radius` max | 10 | **40** |
 
 ### 4.5 兼容性
 
@@ -149,11 +149,11 @@ Agent ──行为分类+bbox──→ 决策 ──行为类型+bbox──→ M
 
 | 工具 | 新增参数 | radius 上限 |
 |------|---------|-------------|
-| `npc_harvest_crops` | `x1, y1, x2, y2` | 10 → **30** |
-| `npc_water_crops` | `x1, y1, x2, y2` | 10 → **30** |
-| `npc_clear_debris` | `x1, y1, x2, y2` | 10 → **30** |
-| `npc_till_soil` | `x1, y1, x2, y2` | 8 → **30** |
-| `npc_forage_collect` | `x1, y1, x2, y2` | 15 → **30** |
+| `npc_harvest_crops` | `x1, y1, x2, y2` | 10 → **40** |
+| `npc_water_crops` | `x1, y1, x2, y2` | 10 → **40** |
+| `npc_clear_debris` | `x1, y1, x2, y2` | 10 → **40** |
+| `npc_till_soil` | `x1, y1, x2, y2` | 8 → **40** |
+| `npc_forage_collect` | `x1, y1, x2, y2` | 15 → **40** |
 
 ### 5.2 行为工具 Input 示例（改后）
 
@@ -199,7 +199,7 @@ Agent ──行为分类+bbox──→ 决策 ──行为类型+bbox──→ M
 ```
 Agent                          MCP Tools                         Mod (C#)
   │                               │                                 │
-  ├─ npc_inspect_object(what=farm_actions,r=25) ──→          扫描25×25,分类聚合,算bbox
+  ├─ npc_inspect_object(what=farm_actions,r=40) ──→          扫描25×25,分类聚合,算bbox
   │  ← {actions_available:{harvest:{bbox:(2,3)-(8,7),...},    │
   │       water:{bbox:(1,1)-(9,9)}, clear:{...}, ...}}          │
   │                               │                                 │
@@ -275,9 +275,9 @@ Agent                          MCP Tools                         Mod (C#)
 **文件：** `smartnpc-mcp/adapters/stardew/tools/npc_world_action.go`
 
 - 新增类型：`BBox`、`CropSummary`、`ActionGroup`
-- `NpcInspectObjectInput`：radius 上限 10→30，what 增加 `farm_actions`
+- `NpcInspectObjectInput`：radius 上限 10→40，what 增加 `farm_actions`
 - `NpcInspectObjectOutput`：新增 `ActionsAvailable map[string]ActionGroup`
-- 5 个行为 Input：各加 `X1/Y1/X2/Y2`，radius 上限放宽到 30
+- 5 个行为 Input：各加 `X1/Y1/X2/Y2`，radius 上限放宽到 40
 - 更新所有相关 tool Description
 
 ### Phase 2：C# 端观测改造
@@ -285,7 +285,7 @@ Agent                          MCP Tools                         Mod (C#)
 **文件：** `smapi-mod/Behavior/WorldActionHandlers.cs`
 
 - `InspectObjectHandler.GetResult`：
-  - radius 上限 10→30
+  - radius 上限 10→40
   - 新增 `farm_actions` 扫描逻辑（6 类目标 + bbox 计算）
   - 新增 `AddActionGroup` 辅助方法
   - `farm_actions` 模式直接 return，不走 legacy 路径
@@ -298,7 +298,7 @@ Agent                          MCP Tools                         Mod (C#)
 修改 5 个 handler 的 `Execute` 方法：
 - 解析 `x1/y1/x2/y2` 参数
 - 若 4 个参数全 > 0，在该矩形内扫描（代替 radius 圆形扫描）
-- Radius 上限放宽到 30
+- Radius 上限放宽到 40
 
 ### Phase 4：验证
 

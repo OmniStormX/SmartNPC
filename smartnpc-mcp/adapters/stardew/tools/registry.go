@@ -13,6 +13,7 @@ import (
 
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/bridge"
 	"github.com/OmniStormX/SmartNPC/adapters/stardew/scheduler"
+	"github.com/OmniStormX/SmartNPC/pkg/workflow"
 )
 
 // RegisterAll wires every Stardew-specific tool group onto the given server.
@@ -39,16 +40,20 @@ import (
 // The returned *scheduler.Scheduler is the shared instance managing NPC
 // daily schedules. The caller should wire it into the event router so
 // game_time_tick events trigger sched.Tick(hour). Nil is never returned.
-func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler, chatGuard *ChatSayGuard, logger *slog.Logger, schedDebug bool) *scheduler.Scheduler {
+func RegisterAll(s *mcp.Server, br *bridge.WSClient, hermes bridge.EventHandler, chatGuard *ChatSayGuard, logger *slog.Logger, workflowReg *workflow.Registry, schedDebug bool) *scheduler.Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	sched := scheduler.New()
 
+	// Workflow discovery / debug tools — independent of mod bridge.
+	// workflow_run_inline is only registered when schedDebug is true.
+	RegisterWorkflow(s, workflowReg, schedDebug)
+
 	registerNpcMessage(s, logger, hermes)
 	// Schedule tools — NPC daily planning. Independent of mod bridge.
-	registerNpcSchedule(s, sched, br, schedDebug)
+	registerNpcSchedule(s, sched, br, workflowReg, schedDebug)
 
 	if br != nil {
 		// agent_register_self installs first so profiles see it at the top
