@@ -1,0 +1,40 @@
+id: social_interact
+description: 玩家互动：可选摸宠物 → 可选送货 → 走近聊天 → 气泡
+version: "2"
+inputs:
+  - name: pet_first
+    description: 是否先摸宠物再找玩家
+    default: true
+  - name: deliver_first
+    description: 是否先送货再聊天
+    default: false
+steps:
+  # 可选先摸宠物
+  - kind: branch
+    when: "$pet_first"
+    then:
+      - kind: tool
+        name: npc_pet_animal
+        args: {}
+        on_nothing_to_do: skip
+
+  # 可选先送货
+  - kind: branch
+    when: "$deliver_first"
+    then:
+      - kind: tool
+        name: npc_deliver_items
+        args: {}
+        on_nothing_to_do: skip
+
+  # 走近聊天
+  - kind: tool
+    name: npc_approach_and_speak
+    args: {}
+    on_nothing_to_do: skip
+
+  # 收尾气泡
+  - kind: tool
+    name: npc_show_text_bubble
+    args:
+      text: "[今天过得不错~]"

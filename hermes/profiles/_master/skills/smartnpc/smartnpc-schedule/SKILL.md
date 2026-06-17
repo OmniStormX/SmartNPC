@@ -60,8 +60,8 @@ metadata:
 | `farm_extension` | 巡视 → 清杂物 → 翻新地 → 重新巡视 → 播种 → 施肥 → 浇水 → 气泡 | `target_seed`, `fertilizer_id`, `inspect_radius` | ~3-5 min |
 | `farm_cleanup` | 扫描农田 → 在农田+外围清杂物 → 存箱 → 气泡 | `inspect_radius`（默认 18）, `extend_bbox`（默认 3, 最大 10） | ~2-3 min |
 | `resource_gather` | 巡视 → 采集 → 砍树碎石 → 存箱 → 气泡 | `inspect_radius`（默认 20） | ~3-5 min |
-| `social_interact` | [可选 送货] → 走近和玩家说话 → 气泡 | `deliver_first`（默认 false） | ~1-2 min |
-| `pet_routine` | 走向农场宠物 → 抚摸 → 气泡 | — | ~1 min |
+| `social_interact` | [可选摸宠] → [可选送货] → 走近聊天 → 气泡 | `pet_first`（默认 true）, `deliver_first`（默认 false） | ~1-3 min |
+| `farm_evening_close` | 收割 → 补种 → 存箱 → 养护 → 气泡 | `replant_seed_id`, `fertilizer_id` | ~3-5 min |
 
 ### 每日配额
 
@@ -71,8 +71,7 @@ metadata:
 | `farm_care` | **3-4** | farm_extension 之后（8-9），午间（11-13），下午（15-17） |
 | `farm_cleanup` | **2-3** | farm_care 轮次之后，分散在全天 |
 | `resource_gather` | **2-3** | 农场轮次之间，移动到森林/山区 |
-| `social_interact` | **1-2** | 午间、傍晚。如背包有物品用 `deliver_first: true`。 |
-| `pet_routine` | **0-1** | 早晨或傍晚，如果玩家有宠物 |
+| `social_interact` | **1-2** | 午间、傍晚。**自动含摸宠物（pet_first=true）**——如果无宠物会自动跳过。背包有物品时追加 `deliver_first: true`。 |
 
 **总计：每天 10-15 条。** 每条 workflow 捆绑了 3-6 个工具调用。
 
@@ -89,8 +88,7 @@ metadata:
 15:30  resource_gather       第二轮采集+砍树
 17:00  farm_cleanup          extend_bbox=3  傍晚清理
 18:00  farm_care             只浇水不收了
-19:00  social_interact       傍晚闲聊
-19:40  pet_routine           摸摸宠物
+19:00  social_interact       pet_first=true  傍晚闲聊+摸宠
 ```
 
 ### 优先级规则
