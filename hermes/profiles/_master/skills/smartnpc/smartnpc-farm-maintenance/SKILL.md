@@ -28,7 +28,7 @@ metadata:
 | `npc_clear_debris` | 清除地面的杂草、树枝、石头 | 边界框内存在物体 |
 | `npc_till_soil` | 将空地变为可耕种土壤 | 未耕种的空地砖格，可挖掘，非冬季 |
 | `npc_water_crops` | 浇灌干燥的作物 / 干燥的已耕土壤 | 边界框内存在干燥的 HoeDirt |
-| `npc_fertilize` | 对已耕土壤施肥。**不需要肥料**（免费模式）。 | 空置已耕土壤，未施过肥 |
+| `npc_fertilize` | 对已耕土壤施肥。| 空置已耕土壤（dirt.crop == null），未施过肥。**播种前调用——品质肥必须在种子发芽前施加。** |
 | `npc_inspect_object` | 调查周围的土地状态 | —（始终可用） |
 | `npc_show_text_bubble` | 显示一句符合角色性格的简短想法 | —（始终可用） |
 
@@ -45,14 +45,14 @@ metadata:
 
 ```
 clear_debris ──→ till_soil       （无法在杂草/石头中耕种）
-till_soil    ──→ plant_seeds     （无法在未耕种地面上种植）
-till_soil    ──→ fertilize       （无法对未耕种地面施肥）
+till_soil    ──→ fertilize       （品质肥必须在播种前施加）
+fertilize    ──→ plant_seeds     （施肥后播种）
+till_soil    ──→ plant_seeds     （不施肥时直接播种）
 plant_seeds  ──→ water_crops     （新种下的种子应该浇水）
-fertilize    在种植之后进行，或单独进行（不阻塞任何操作）
 water_crops  可随时对干燥砖格进行
 ```
 
-不确定时：**清除 → 耕种 → 种植 → 浇水 → 施肥** 是完整链条。
+不确定时：**清除 → 耕种 → 施肥 → 种植 → 浇水** 是完整链条。
 当 inspect 显示这些类别计数不为零时，执行完整链条；只有当某类计数确实为 0 时才跳过该环节。
 
 ---
@@ -82,14 +82,22 @@ npc_till_soil(x1,y1,x2,y2 = till.bbox)
   → 不要在 till_soil 前用 till.bbox 调 clear_debris —— till.bbox 跨度过大。
   → 如果返回 nothing_to_do=true，用更小的 patch_w/patch_h 或更大的 radius 重试。
 
+npc_fertilize(fertilizer_id = 当季肥料, x1,y1,x2,y2 = till.bbox)
+  → **在播种前施肥。** 品质肥料必须在种子发芽前施加——翻耕后立即施肥是最稳妥的做法。
+  → 常用肥料：(O)368 基础肥料 / (O)369 优质肥料 / (O)465 生长激素 / (O)370 保湿土
+  → 没有肥料时跳过此步（免费模式不适用施肥）。
+
 npc_plant_seeds(seed_id = 当季种子, x1,y1,x2,y2 = till.bbox 或 plant.bbox)
-  → 在新耕地上种植。背包为空则使用免费种植模式。
+  → 施肥后播种。背包为空则使用免费种植模式。
 
 npc_water_crops(x1,y1,x2,y2 = plant.bbox)
   → 浇灌新种子（覆盖你刚刚种植的砖格）
 ```
 
 **关键决策：**
+- **先施肥再播种。** 品质肥料（基础/优质/豪华）必须在种子发芽前施加。翻耕后立即施肥是最稳妥的做法。
+- 常用 `fertilizer_id`：(O)368 基础肥料 / (O)369 优质肥料 / (O)465 生长激素 / (O)370 保湿土
+- 没有肥料时跳过 npc_fertilize——不要用免费模式（施肥不支持免费模式，会报错）。
 - 选择匹配季节的 `seed_id`：
   - 春：`(O)472` 防风草 / `(O)474` 花椰菜 / `(O)475` 土豆
   - 夏：`(O)485` 红甘蓝 / `(O)487` 玉米 / `(O)491` 甜瓜
