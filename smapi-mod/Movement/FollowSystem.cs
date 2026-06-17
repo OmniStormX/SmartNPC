@@ -1334,6 +1334,24 @@ namespace SmartNPC.Bridge
                     location.terrainFeatures.Remove(targetV2);
                     cleared = true;
                 }
+                else if (location.resourceClumps != null)
+                {
+                    // Check if the target tile falls within a clearable ResourceClump.
+                    for (int ri = location.resourceClumps.Count - 1; ri >= 0; ri--)
+                    {
+                        var rc = location.resourceClumps[ri];
+                        if (rc is null || !ClearDebrisHandler.IsResourceClumpDebris(rc)) continue;
+                        var rct = rc.Tile;
+                        if (target.X >= rct.X && target.X < rct.X + rc.width.Value
+                            && target.Y >= rct.Y && target.Y < rct.Y + rc.height.Value)
+                        {
+                            dropId = ClearDebrisHandler.ResourceClumpDebrisDropId(rc);
+                            location.resourceClumps.RemoveAt(ri);
+                            cleared = true;
+                            break;
+                        }
+                    }
+                }
 
                 if (cleared)
                 {
@@ -1819,6 +1837,25 @@ namespace SmartNPC.Bridge
                     _log.Log(
                         $"[FollowSystem/TillSoil] {npcName}: cleared terrain debris at ({target.X},{target.Y})",
                         LogLevel.Debug);
+                }
+                else if (location.resourceClumps != null)
+                {
+                    for (int ri = location.resourceClumps.Count - 1; ri >= 0; ri--)
+                    {
+                        var rc = location.resourceClumps[ri];
+                        if (rc is null || !ClearDebrisHandler.IsResourceClumpDebris(rc)) continue;
+                        var rct = rc.Tile;
+                        if (target.X >= rct.X && target.X < rct.X + rc.width.Value
+                            && target.Y >= rct.Y && target.Y < rct.Y + rc.height.Value)
+                        {
+                            location.resourceClumps.RemoveAt(ri);
+                            debrisCleared = true;
+                            _log.Log(
+                                $"[FollowSystem/TillSoil] {npcName}: cleared resource clump at ({target.X},{target.Y})",
+                                LogLevel.Debug);
+                            break;
+                        }
+                    }
                 }
                 else if (location.terrainFeatures.TryGetValue(targetV2, out var treeTf)
                     && treeTf is StardewValley.TerrainFeatures.Tree tree

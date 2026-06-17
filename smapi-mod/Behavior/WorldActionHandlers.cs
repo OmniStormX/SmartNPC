@@ -256,6 +256,28 @@ namespace SmartNPC.Bridge
                 targets.Add(tile);
             }
 
+            // 2c. Scan resourceClumps for large stumps and hollow logs.
+            if (location.resourceClumps != null)
+            {
+                for (int ci = location.resourceClumps.Count - 1; ci >= 0; ci--)
+                {
+                    var clump = location.resourceClumps[ci];
+                    if (clump is null || !IsResourceClumpDebris(clump)) continue;
+                    var ct = clump.Tile;
+                    // Check if the clump's origin tile is within the search area.
+                    bool inScope = false;
+                    if (bboxOn)
+                        inScope = ct.X >= x1 && ct.X <= x2 && ct.Y >= y1 && ct.Y <= y2;
+                    else if (farmlandFound)
+                        inScope = ct.X >= fx1 && ct.X <= fx2 && ct.Y >= fy1 && ct.Y <= fy2;
+                    else
+                        inScope = Microsoft.Xna.Framework.Vector2.Distance(npcTile,
+                            new Microsoft.Xna.Framework.Vector2(ct.X, ct.Y)) <= radius;
+                    if (inScope)
+                        targets.Add(new Microsoft.Xna.Framework.Vector2(ct.X, ct.Y));
+                }
+            }
+
             targets.Sort((a, b) =>
                 Microsoft.Xna.Framework.Vector2.Distance(npcTile, a)
                     .CompareTo(Microsoft.Xna.Framework.Vector2.Distance(npcTile, b)));
@@ -334,6 +356,24 @@ namespace SmartNPC.Bridge
             if (tf is StardewValley.TerrainFeatures.Tree tree && tree.stump.Value)
                 return "(O)709"; // Hardwood
             return "(O)388"; // Wood
+        }
+
+        /// <summary>
+        /// Check if a ResourceClump is clearable debris (stump, hollow log).
+        /// parentSheetIndex 600 = stump, 602 = hollow log.
+        /// Boulders (622, 672, 752) and meteorites are break_resource targets, not debris.
+        /// </summary>
+        internal static bool IsResourceClumpDebris(StardewValley.TerrainFeatures.ResourceClump clump)
+        {
+            if (clump is null) return false;
+            return clump.parentSheetIndex.Value == 600   // stump
+                || clump.parentSheetIndex.Value == 602;  // hollow log
+        }
+
+        /// <summary>Drop id for resource clump debris.</summary>
+        internal static string ResourceClumpDebrisDropId(StardewValley.TerrainFeatures.ResourceClump clump)
+        {
+            return "(O)709"; // Hardwood
         }
 
         private static int ParseInt(JsonElement p, string key, int def, int min, int max)
@@ -1148,6 +1188,55 @@ namespace SmartNPC.Bridge
 
             _lastPlan = plan;
             var rect = plan.Value.Rect;
+
+            // ── Pre-clear phase: remove ALL debris within the patch rect ─
+            // before the NPC starts walking. This guarantees the till area
+            // is clean regardless of what farm_actions reported. Runs
+            // synchronously on the game thread — safe for world mutation.
+            var preClearCount = 0;
+            for (int dx = 0; dx < rect.Width; dx++)
+            {
+                for (int dy = 0; dy < rect.Height; dy++)
+                {
+                    var tv = new Microsoft.Xna.Framework.Vector2(rect.X + dx, rect.Y + dy);
+                    if (location.Objects.TryGetValue(tv, out var dobj) && dobj != null
+                        && ClearDebrisHandler.IsDebris(dobj))
+                    {
+                        location.Objects.Remove(tv);
+                        preClearCount++;
+                    }
+                    if (location.terrainFeatures.TryGetValue(tv, out var dtf) && dtf != null
+                        && ClearDebrisHandler.IsTerrainDebris(dtf))
+                    {
+                        location.terrainFeatures.Remove(tv);
+                        preClearCount++;
+                    }
+                }
+            }
+            // ResourceClumps that overlap the patch rect.
+            if (location.resourceClumps != null)
+            {
+                for (int ri = location.resourceClumps.Count - 1; ri >= 0; ri--)
+                {
+                    var rc = location.resourceClumps[ri];
+                    if (rc is null || !ClearDebrisHandler.IsResourceClumpDebris(rc)) continue;
+                    var rct = rc.Tile;
+                    // Check if the clump bounding box intersects the patch rect.
+                    if (rct.X + rc.width.Value > rect.X && rct.X < rect.X + rect.Width
+                        && rct.Y + rc.height.Value > rect.Y && rct.Y < rect.Y + rect.Height)
+                    {
+                        location.resourceClumps.RemoveAt(ri);
+                        preClearCount++;
+                    }
+                }
+            }
+            if (preClearCount > 0)
+            {
+                Log.Log(
+                    $"[npc_till_soil] {npcName}: pre-cleared {preClearCount} debris in patch " +
+                    $"({rect.X},{rect.Y})-({rect.X + rect.Width - 1},{rect.Y + rect.Height - 1})",
+                    LogLevel.Info);
+            }
 
             // Materialise patch tiles and TSP-order them so the NPC walks
             // a clean serpentine through the rectangle instead of zigzagging.
