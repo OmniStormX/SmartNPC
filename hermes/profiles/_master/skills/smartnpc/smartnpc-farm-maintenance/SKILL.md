@@ -291,15 +291,15 @@ npc_inspect_object(radius=15, what="farm_actions")
 
 | 优先级 | 条件 | 你必须做的事 | 你禁止做的事 |
 |--------|------|-------------|-------------|
-| **P0** | `till.count > 0` | 执行示例 A（开垦新地）完整链路：clear → till → re-inspect → plant → water → fertilize | **禁止**调用 npc_water_crops（无作物可浇）、**禁止**调用 npc_break_resource（不是采集轮）、**禁止**调用 npc_harvest_crops |
-| **P0.5** | `fill_blocked.count > 0` 或 `fill.count > 0` | 执行示例 F（农田形状修正）：先清 fill_blocked → 再 fill_gaps fill | **禁止**在清 fill_blocked 之前调 npc_fill_gaps（会被杂物挡住） |
-| P1 | `harvest.count >= 3` | 切换到 `smartnpc-farm-harvest` skill |
+| **P0** | `harvest.count > 0` | **最高优先级——成熟作物不收就烂。** 立即停止当前维护，切换到 `smartnpc-farm-harvest` skill 执行收获。收完后再回来继续维护。 | **禁止**跳过 harvest 去做 till/water/plant——作物烂了损失远超开一块新地 |
+| **P1** | `till.count > 0` | 执行示例 A（开垦新地）完整链路：clear → till → re-inspect → plant → water → fertilize | **禁止**调用 npc_water_crops（无作物可浇）、**禁止**调用 npc_break_resource（不是采集轮） |
+| **P1.5** | `fill_blocked.count > 0` 或 `fill.count > 0` | 执行示例 F（农田形状修正）：先清 fill_blocked → 再 fill_gaps fill | **禁止**在清 fill_blocked 之前调 npc_fill_gaps（会被杂物挡住） |
 | P2 | `water.count > 0` **且** `till.count == 0` | 执行示例 B（日常养护）：water → clear → plant（如有空地） | 禁止 break_resource，这不是采集轮 |
 | P3 | `plant.count > 0` **且** `till.count == 0` | 执行示例 C（补种轮作）：plant → water | |
 | P4 | 各项计数都很低（< 3）| 执行示例 E（轻量路过）：最多 1 个动作 | |
 | P5 | 所有计数为 0 | 气泡 "[今天没什么要弄的]"，写入记忆，停止 | |
 
-**⚠️ 核心原则：till.count > 0 时，你只做开垦。浇水、砍树、采集全部禁止。till→plant→water 中的 water 是浇你刚种下的种子，不是浇已有的作物。**
+**⚠️ 核心原则：harvest > 0 时立即切换到收获 skill——成熟作物优先于一切。till.count > 0 时只做开垦，不浇水不砍树。till→plant→water 中的 water 是浇刚种下的种子。**
 
 ### 3. 匹配示例
 按 P0-P5 找到唯一匹配项后，严格按该示例的步骤顺序执行。
