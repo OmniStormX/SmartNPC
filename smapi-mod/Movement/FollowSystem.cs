@@ -49,6 +49,7 @@ namespace SmartNPC.Bridge
         WithdrawItems,
         BreakResource,
         Fertilize,
+        FillGaps,
         PetAnimal,
     }
 
@@ -182,6 +183,12 @@ namespace SmartNPC.Bridge
         public string?       FertilizeID        { get; set; }
         public bool          FertilizePathed    { get; set; }
         public int           FertilizedCount    { get; set; }
+
+        // FillGaps: walk to gap tiles and create HoeDirt.
+        public Queue<Point>? FillGapsQueue  { get; set; }
+        public Point         FillGapsTarget { get; set; }
+        public bool          FillGapsPathed { get; set; }
+        public int           FillGapsCount  { get; set; }
 
         // Tick scheduler: only repath on these boundaries.
         public uint LastPathTick { get; set; }
@@ -327,6 +334,7 @@ namespace SmartNPC.Bridge
             st.HarvestQueue         = null;
             st.BreakResourceQueue   = null;
             st.FertilizeQueue       = null;
+            st.FillGapsQueue        = null;
 
             // ── Discard single-target action state ─────────────────────
             st.DepositChestTile     = Point.Zero;
@@ -872,6 +880,32 @@ namespace SmartNPC.Bridge
             _log.Log($"[FollowSystem/Fertilize] {npcName}: started, fert={fertilizerId}, {st.FertilizeQueue.Count + 1} targets", LogLevel.Debug);
         }
 
+        // ── StartFillGaps ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// Queue up empty gap tiles within existing farmland bbox for the NPC
+        /// to walk to and till one by one. Only tills empty passable Diggable
+        /// tiles — does NOT clear debris or chop trees (agent must pre-clear).
+        /// </summary>
+        public void StartFillGaps(string npcName, IEnumerable<Point> targets)
+        {
+            var st = this.GetOrCreate(npcName);
+            st.FillGapsQueue  = new Queue<Point>(targets);
+            st.FillGapsPathed = false;
+            st.FillGapsCount  = 0;
+
+            if (st.FillGapsQueue.Count == 0)
+            {
+                _log.Log($"[FollowSystem/FillGaps] {npcName}: no targets, nothing to do", LogLevel.Debug);
+                return;
+            }
+
+            st.FillGapsTarget = st.FillGapsQueue.Dequeue();
+            st.Mode           = NpcBehaviorMode.FillGaps;
+            st.LastPathTick   = 0;
+            _log.Log($"[FollowSystem/FillGaps] {npcName}: started, {st.FillGapsQueue.Count + 1} targets", LogLevel.Debug);
+        }
+
         // ── StartHarvestCrops ──────────────────────────────────────────────
 
         /// <summary>
@@ -1047,6 +1081,9 @@ namespace SmartNPC.Bridge
                             break;
                         case NpcBehaviorMode.Fertilize:
                             this.TickFertilize(npc, name, st);
+                            break;
+                        case NpcBehaviorMode.FillGaps:
+                            this.TickFillGaps(npc, name, st);
                             break;
                         case NpcBehaviorMode.PetAnimal:
                             this.TickPetAnimal(npc, name, st);
@@ -3163,6 +3200,120 @@ namespace SmartNPC.Bridge
                     st.FertilizeTarget = st.FertilizeQueue.Dequeue();
                     st.FertilizePathed = false;
                     st.LastPathTick    = 0;
+                }
+            }
+        }
+
+        private void TickFillGaps(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            var location = npc.currentLocation;
+            if (location is null || st.FillGapsQueue is null)
+            {
+                st.Mode = NpcBehaviorMode.Idle;
+                return;
+            }
+
+            Point target = st.FillGapsTarget;
+            var targetV2 = new Vector2(target.X, target.Y);
+
+            float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
+            bool pathDone = npc.controller == null
+                            || npc.controller.pathToEndPoint == null
+                            || npc.controller.pathToEndPoint.Count == 0;
+
+            if (dist <= 1.5f && pathDone)
+            {
+                // Check if tile is still fillable (empty, no HoeDirt yet, no new obstacles).
+                bool occupied = location.Objects.ContainsKey(targetV2)
+                             || location.terrainFeatures.ContainsKey(targetV2);
+
+                if (!occupied
+                    && location.isTilePassable(new xTile.Dimensions.Location(target.X, target.Y), Game1.viewport)
+                    && location.doesTileHaveProperty(target.X, target.Y, "Diggable", "Back") == "T")
+                {
+                    try
+                    {
+                        npc.faceDirection(2);
+                        location.terrainFeatures.Add(targetV2, new HoeDirt());
+                        st.FillGapsCount++;
+
+                        _log.Log(
+                            $"[FollowSystem/FillGaps] {npcName}: filled ({target.X},{target.Y})",
+                            LogLevel.Debug);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Log(
+                            $"[FollowSystem/FillGaps] {npcName}: fill ({target.X},{target.Y}) failed: {ex.Message}",
+                            LogLevel.Warn);
+                    }
+                }
+                else
+                {
+                    _log.Log(
+                        $"[FollowSystem/FillGaps] {npcName}: tile ({target.X},{target.Y}) occupied, skipping",
+                        LogLevel.Debug);
+                }
+
+                // Advance to next target.
+                if (st.FillGapsQueue.Count == 0)
+                {
+                    _log.Log(
+                        $"[FollowSystem/FillGaps] {npcName}: done, filled={st.FillGapsCount} → Idle",
+                        LogLevel.Info);
+                    npc.doEmote(32);
+                    st.Mode = NpcBehaviorMode.Idle;
+                    return;
+                }
+
+                st.FillGapsTarget = st.FillGapsQueue.Dequeue();
+                st.FillGapsPathed = false;
+                st.LastPathTick   = 0;
+                return;
+            }
+
+            // ── Pathing phase ──
+            if ((!st.FillGapsPathed || npc.controller == null) && this.ShouldReplan(st))
+            {
+                Point[] candidates = {
+                    new(target.X,     target.Y + 1),
+                    new(target.X,     target.Y - 1),
+                    new(target.X + 1, target.Y),
+                    new(target.X - 1, target.Y),
+                };
+                bool ok = false;
+                foreach (var adj in candidates)
+                {
+                    if (this.TryStartPath(npc, location, adj)) { ok = true; break; }
+                }
+                st.FillGapsPathed = ok;
+                st.LastPathTick   = _tickCounter;
+                if (ok)
+                {
+                    st.PathFailCount = 0;
+                }
+                else
+                {
+                    st.PathFailCount++;
+                }
+                _log.Log(
+                    $"[FollowSystem/FillGaps] {npcName}: pathing to ({target.X},{target.Y}) ok={ok} fails={st.PathFailCount}",
+                    LogLevel.Debug);
+
+                if (!ok && st.PathFailCount >= MaxPathFailures)
+                {
+                    _log.Log(
+                        $"[FollowSystem/FillGaps] {npcName}: giving up on ({target.X},{target.Y}) after {st.PathFailCount} failures",
+                        LogLevel.Warn);
+                    st.PathFailCount = 0;
+                    if (st.FillGapsQueue.Count == 0)
+                    {
+                        st.Mode = NpcBehaviorMode.Idle;
+                        return;
+                    }
+                    st.FillGapsTarget = st.FillGapsQueue.Dequeue();
+                    st.FillGapsPathed = false;
+                    st.LastPathTick   = 0;
                 }
             }
         }

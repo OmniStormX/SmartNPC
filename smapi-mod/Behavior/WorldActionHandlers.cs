@@ -2395,10 +2395,7 @@ namespace SmartNPC.Bridge
                 .Select(t => new Microsoft.Xna.Framework.Point((int)t.X, (int)t.Y))
                 .ToList();
             var ordered = PathPlanner.PlanBy(startPt, tilePoints, p => p);
-            // TODO(Task 3): _follow.StartFillGaps(npcName, ordered);
-            Log.Log(
-                $"[npc_fill_gaps] {npcName}: TODO(Task 3) PathPlanner ordered {ordered.Count()} tiles, FollowSystem hook pending",
-                LogLevel.Warn);
+            _follow.StartFillGaps(npcName, ordered);
 
             Log.Log(
                 $"[npc_fill_gaps] {npcName}: queued {targets.Count} gap tiles in bbox ({x1},{y1})-({x2},{y2}), skipped={skipped}",

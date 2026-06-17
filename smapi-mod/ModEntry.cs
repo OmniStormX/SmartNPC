@@ -145,6 +145,7 @@ namespace SmartNPC.Bridge
                     new PlaceObjectHandler(this.Monitor, showBubble),
                     new BreakResourceHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new FertilizeHandler(this.Monitor, showBubble, _npcInventory, _follow),
+                    new FillGapsHandler(this.Monitor, showBubble, _follow),
                     new WithdrawFromChestHandler(this.Monitor, showBubble, _npcInventory, _follow),
                     new TransferItemHandler(this.Monitor, showBubble, _npcInventory),
                     // Social actions.
