@@ -1771,10 +1771,6 @@ namespace SmartNPC.Bridge
             Point target = st.TillTarget;
             var targetV2 = new Vector2(target.X, target.Y);
 
-            // Check if tile is still tillable (empty ground, no HoeDirt yet).
-            bool occupied = location.Objects.ContainsKey(targetV2)
-                         || location.terrainFeatures.ContainsKey(targetV2);
-
             float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
             bool pathDone = npc.controller == null
                             || npc.controller.pathToEndPoint == null
@@ -1782,6 +1778,35 @@ namespace SmartNPC.Bridge
 
             if (dist <= 1.5f && pathDone)
             {
+                // ── Clear debris before tilling ──────────────────────
+                // If the tile has clearable debris on it, remove it now
+                // so the HoeDirt can be placed. Drops are discarded
+                // (TickTillSoil has no inventory reference).
+                bool debrisCleared = false;
+
+                if (location.Objects.TryGetValue(targetV2, out var tillObj) && tillObj != null
+                    && ClearDebrisHandler.IsDebris(tillObj))
+                {
+                    location.Objects.Remove(targetV2);
+                    debrisCleared = true;
+                    _log.Log(
+                        $"[FollowSystem/TillSoil] {npcName}: cleared debris object at ({target.X},{target.Y})",
+                        LogLevel.Debug);
+                }
+                else if (location.terrainFeatures.TryGetValue(targetV2, out var tillTf) && tillTf != null
+                    && ClearDebrisHandler.IsTerrainDebris(tillTf))
+                {
+                    location.terrainFeatures.Remove(targetV2);
+                    debrisCleared = true;
+                    _log.Log(
+                        $"[FollowSystem/TillSoil] {npcName}: cleared terrain debris at ({target.X},{target.Y})",
+                        LogLevel.Debug);
+                }
+
+                // Re-check occupancy after potential debris removal.
+                bool occupied = location.Objects.ContainsKey(targetV2)
+                             || location.terrainFeatures.ContainsKey(targetV2);
+
                 // ── Till phase ──────────────────────────────────────────
                 if (!occupied)
                 {
@@ -1793,7 +1818,8 @@ namespace SmartNPC.Bridge
                         st.TillCount++;
 
                         _log.Log(
-                            $"[FollowSystem/TillSoil] {npcName}: tilled ({target.X},{target.Y}) frame={frame}",
+                            $"[FollowSystem/TillSoil] {npcName}: tilled ({target.X},{target.Y}) frame={frame}" +
+                            (debrisCleared ? " (debris cleared first)" : ""),
                             LogLevel.Debug);
                     }
                     catch (Exception ex)
@@ -1806,7 +1832,7 @@ namespace SmartNPC.Bridge
                 else
                 {
                     _log.Log(
-                        $"[FollowSystem/TillSoil] {npcName}: tile ({target.X},{target.Y}) occupied, skipping",
+                        $"[FollowSystem/TillSoil] {npcName}: tile ({target.X},{target.Y}) occupied by non-debris, skipping",
                         LogLevel.Debug);
                 }
 
