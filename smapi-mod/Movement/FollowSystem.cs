@@ -1353,7 +1353,9 @@ namespace SmartNPC.Bridge
 
             if (dist <= 1.5f && pathDone)
             {
-                // Destroy debris — check Objects first, then terrainFeatures.
+                // Destroy debris — check all three layers independently.
+                // A tile may have both an Object (weed/stone on top) and a
+                // terrainFeature (stump underneath) or overlapping ResourceClump.
                 bool cleared = false;
                 string dropId = "(O)390"; // default: Stone
 
@@ -1364,16 +1366,15 @@ namespace SmartNPC.Bridge
                     location.Objects.Remove(targetV2);
                     cleared = true;
                 }
-                else if (location.terrainFeatures.TryGetValue(targetV2, out var tf) && tf != null
+                if (location.terrainFeatures.TryGetValue(targetV2, out var tf) && tf != null
                     && ClearDebrisHandler.IsTerrainDebris(tf))
                 {
-                    dropId = ClearDebrisHandler.TerrainDebrisDropId(tf);
+                    if (!cleared) dropId = ClearDebrisHandler.TerrainDebrisDropId(tf);
                     location.terrainFeatures.Remove(targetV2);
                     cleared = true;
                 }
-                else if (location.resourceClumps != null)
+                if (location.resourceClumps != null)
                 {
-                    // Check if the target tile falls within a clearable ResourceClump.
                     for (int ri = location.resourceClumps.Count - 1; ri >= 0; ri--)
                     {
                         var rc = location.resourceClumps[ri];
@@ -1382,7 +1383,7 @@ namespace SmartNPC.Bridge
                         if (target.X >= rct.X && target.X < rct.X + rc.width.Value
                             && target.Y >= rct.Y && target.Y < rct.Y + rc.height.Value)
                         {
-                            dropId = ClearDebrisHandler.ResourceClumpDebrisDropId(rc);
+                            if (!cleared) dropId = ClearDebrisHandler.ResourceClumpDebrisDropId(rc);
                             location.resourceClumps.RemoveAt(ri);
                             cleared = true;
                             break;
@@ -1866,7 +1867,7 @@ namespace SmartNPC.Bridge
                         $"[FollowSystem/TillSoil] {npcName}: cleared debris object at ({target.X},{target.Y})",
                         LogLevel.Debug);
                 }
-                else if (location.terrainFeatures.TryGetValue(targetV2, out var tillTf) && tillTf != null
+                if (location.terrainFeatures.TryGetValue(targetV2, out var tillTf) && tillTf != null
                     && ClearDebrisHandler.IsTerrainDebris(tillTf))
                 {
                     location.terrainFeatures.Remove(targetV2);
@@ -1875,7 +1876,7 @@ namespace SmartNPC.Bridge
                         $"[FollowSystem/TillSoil] {npcName}: cleared terrain debris at ({target.X},{target.Y})",
                         LogLevel.Debug);
                 }
-                else if (location.resourceClumps != null)
+                if (location.resourceClumps != null)
                 {
                     for (int ri = location.resourceClumps.Count - 1; ri >= 0; ri--)
                     {
@@ -1894,7 +1895,7 @@ namespace SmartNPC.Bridge
                         }
                     }
                 }
-                else if (location.terrainFeatures.TryGetValue(targetV2, out var treeTf)
+                if (location.terrainFeatures.TryGetValue(targetV2, out var treeTf)
                     && treeTf is StardewValley.TerrainFeatures.Tree tree
                     && tree.growthStage.Value >= 5
                     && !tree.tapped.Value)
