@@ -210,6 +210,12 @@ namespace SmartNPC.Bridge
         // Tick cadence for Following / Leading re-evaluation.
         private const int ReplanIntervalTicks = 30;
 
+        // NPC movement speed while the agent is driving (vanilla walk = 2, run = 4).
+        private const int WorkSpeed = 5;
+
+        // Default speed restored when the NPC returns to Idle.
+        private const int DefaultSpeed = 2;
+
         // Max consecutive TryStartPath failures before skipping the target.
         private const int MaxPathFailures = 5;
 
@@ -282,6 +288,7 @@ namespace SmartNPC.Bridge
             {
                 try { npc.Halt(); } catch { /* non-fatal */ }
                 if (npc.controller != null) npc.controller = null;
+                npc.speed = DefaultSpeed;
             }
         }
 
@@ -300,6 +307,7 @@ namespace SmartNPC.Bridge
             {
                 try { npc.Halt(); } catch { /* non-fatal */ }
                 if (npc.controller != null) npc.controller = null;
+                npc.speed = DefaultSpeed;
             }
         }
 
@@ -353,6 +361,7 @@ namespace SmartNPC.Bridge
             try { npc.Halt(); } catch { /* non-fatal */ }
             try { npc.Sprite.StopAnimation(); } catch { /* non-fatal */ }
             if (npc.controller != null) npc.controller = null;
+            npc.speed = DefaultSpeed;
 
             // Clear the per-NPC serial queue so queued tool calls don't
             // immediately re-trigger work on a now-cancelled premise.
@@ -962,6 +971,7 @@ namespace SmartNPC.Bridge
 
                 if (st.Mode == NpcBehaviorMode.Idle)
                 {
+                    npc.speed = DefaultSpeed;     // restore walk speed
                     st.ActionBubble = null;  // clear on idle
                     continue;
                 }
@@ -2948,6 +2958,8 @@ namespace SmartNPC.Bridge
                     endPoint: endPoint,
                     finalFacingDirection: -1,
                     endBehaviorFunction: null);
+                // Boost NPC movement speed while the agent is driving.
+                npc.speed = WorkSpeed;
             }
             catch (Exception ex)
             {
