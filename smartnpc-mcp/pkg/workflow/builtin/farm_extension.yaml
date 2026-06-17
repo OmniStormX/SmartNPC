@@ -1,0 +1,38 @@
+id: farm_extension
+description: 农场开垦：巡视 → LLM 动态决策（清杂物→翻地→施肥→播种→浇水）→ 收尾气泡
+version: "3"
+inputs:
+  - name: inspect_radius
+    description: 巡视半径
+    default: 20
+  - name: target_seed
+    description: 要种的种子 Qualified ID
+    default: "(O)472"
+  - name: fertilizer_id
+    description: 肥料 Qualified ID
+    default: "(O)368"
+steps:
+  # 1. 观测农场 → 获取 farm_actions 全貌
+  - kind: tool
+    name: npc_inspect_object
+    args:
+      what: farm_actions
+      radius: "$inspect_radius"
+    save_as: obs
+
+  # 2. 交给 LLM 动态决策。加载 smartnpc-farm-maintenance skill，
+  #    LLM 根据实时 farm_actions 结果自行决定：
+  #    clear → till → fertilize → re-inspect → plant → water 的完整链路
+  #    ⚠️ fertilize 必须在 plant 之前——品质肥只能在种子发芽前施加。
+  - kind: skill_call
+    skill: smartnpc-farm-maintenance
+    args:
+      inspect_radius: "$inspect_radius"
+      target_seed: "$target_seed"
+      fertilizer_id: "$fertilizer_id"
+
+  # 3. 收尾气泡
+  - kind: tool
+    name: npc_show_text_bubble
+    args:
+      text: "[地翻好了，肥也施了，种子种下去了~]"
