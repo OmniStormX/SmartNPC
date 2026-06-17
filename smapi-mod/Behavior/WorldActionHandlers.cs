@@ -1,4 +1,4 @@
-﻿// Per-action handler files for world actions.
+// Per-action handler files for world actions.
 // Each is a minimal subclass of NpcActionHandlerBase. Override Execute
 // when ready to implement real game logic.
 
