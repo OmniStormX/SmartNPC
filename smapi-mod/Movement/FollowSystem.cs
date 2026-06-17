@@ -182,6 +182,12 @@ namespace SmartNPC.Bridge
         // Tick scheduler: only repath on these boundaries.
         public uint LastPathTick { get; set; }
 
+        // Persistent action bubble: base text (e.g. "[清理]") set by the handler
+        // when the action starts. PumpOnGameTick refreshes it every 60 ticks (~1s)
+        // appending elapsed seconds so the player sees "[清理] 12s" counting up.
+        public string? ActionBubble    { get; set; }
+        public int    ActionStartedAt  { get; set; }  // _tickCounter value at start
+
         // Path failure guard: track consecutive TryStartPath failures for the
         // same target so we can skip unreachable tiles instead of retrying
         // every tick forever.
@@ -202,6 +208,13 @@ namespace SmartNPC.Bridge
 
         // Max consecutive TryStartPath failures before skipping the target.
         private const int MaxPathFailures = 5;
+
+        // Max real-time duration for any single FollowSystem action (in ticks).
+        // At ~60 ticks/s this is 60 real seconds. When exceeded the NPC is
+        // force-idled and the action queue is discarded — this prevents an NPC
+        // from spending 3+ real minutes on a single break_resource or clear_debris
+        // sweep that the workflow engine already considered timed out.
+        private const int MaxActionTicks = 3600;
 
         // Follow radius: stay within this many tiles of the player. If farther,
         // the NPC is repathed behind the player.
@@ -284,6 +297,62 @@ namespace SmartNPC.Bridge
                 try { npc.Halt(); } catch { /* non-fatal */ }
                 if (npc.controller != null) npc.controller = null;
             }
+        }
+
+        /// <summary>
+        /// Force-idle an NPC whose action exceeded MaxActionTicks. Discards
+        /// all pending action queues (debris, harvest, break, etc.) so the
+        /// next tool call starts from a clean state.
+        /// </summary>
+        private void ForceIdle(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            // ── Discard all queue-based action state ───────────────────
+            st.DebrisQueue          = null;
+            st.ForageQueue          = null;
+            st.TillQueue            = null;
+            st.PlantSeedQueue       = null;
+            st.WaterCropQueue       = null;
+            st.HarvestQueue         = null;
+            st.BreakResourceQueue   = null;
+            st.FertilizeQueue       = null;
+
+            // ── Discard single-target action state ─────────────────────
+            st.DepositChestTile     = Point.Zero;
+            st.DepositChestMap      = null;
+            st.DepositItemIds       = null;
+            st.DepositInventory     = null;
+            st.DepositPathed        = false;
+            st.DepositedCount       = 0;
+            st.DeliverInventory     = null;
+            st.DeliverPathed        = false;
+            st.DeliveredCount       = 0;
+            st.WithdrawChestTile    = Point.Zero;
+            st.WithdrawChestMap     = null;
+            st.WithdrawInventory    = null;
+            st.WithdrawItemID       = null;
+            st.WithdrawCount        = 0;
+            st.WithdrawnTotal       = 0;
+            st.WithdrawPathed       = false;
+            st.ApproachReason       = null;
+            st.ApproachPathed       = false;
+            st.PetAnimalName        = null;
+            st.PetAnimalPathed      = false;
+
+            // ── Reset counters and bubble ──────────────────────────────
+            st.PathFailCount        = 0;
+            st.LastPathTick         = 0;
+            st.ActionBubble         = null;
+            st.ActionStartedAt      = 0;
+
+            // ── Stop the NPC ───────────────────────────────────────────
+            st.Mode = NpcBehaviorMode.Idle;
+            try { npc.Halt(); } catch { /* non-fatal */ }
+            try { npc.Sprite.StopAnimation(); } catch { /* non-fatal */ }
+            if (npc.controller != null) npc.controller = null;
+
+            // Clear the per-NPC serial queue so queued tool calls don't
+            // immediately re-trigger work on a now-cancelled premise.
+            NpcActionQueue.Clear(npcName);
         }
 
         public void LeadTo(string npcName, int x, int y, string? map)
@@ -824,6 +893,34 @@ namespace SmartNPC.Bridge
             return copy;
         }
 
+        // ── persistent action bubble ─────────────────────────────────────────
+
+        /// <summary>
+        /// Record the action bubble text so PumpOnGameTick can refresh it with
+        /// an elapsed-seconds counter. Call this right after the initial
+        /// showTextAboveHead inside the handler.
+        /// </summary>
+        public void SetActionBubble(string npcName, string bubble)
+        {
+            if (!_states.TryGetValue(npcName, out var st)) return;
+            st.ActionBubble   = bubble;
+            st.ActionStartedAt = (int)_tickCounter;
+        }
+
+        /// <summary>
+        /// Refresh the persistent bubble for one non-Idle NPC. Called from
+        /// PumpOnGameTick every tick; the actual refresh is rate-limited to
+        /// every 60 ticks (~1 real second at 60 fps).
+        /// </summary>
+        private void RefreshPersistentBubble(NPC npc, string npcName, NpcBehaviorState st)
+        {
+            if (string.IsNullOrEmpty(st.ActionBubble)) return;
+            // Refresh at most once per 60 ticks.
+            if ((_tickCounter - (uint)st.ActionStartedAt) % 60 != 0) return;
+            int elapsed = ((int)_tickCounter - st.ActionStartedAt) / 60;
+            npc.showTextAboveHead($"{st.ActionBubble} {elapsed}s");
+        }
+
         // ── tick pump ─────────────────────────────────────────────────────
 
         public void PumpOnGameTick()
@@ -855,7 +952,31 @@ namespace SmartNPC.Bridge
                     continue;
                 }
 
-                if (st.Mode == NpcBehaviorMode.Idle) continue;
+                if (st.Mode == NpcBehaviorMode.Idle)
+                {
+                    st.ActionBubble = null;  // clear on idle
+                    continue;
+                }
+
+                // Refresh the persistent action bubble with elapsed seconds.
+                RefreshPersistentBubble(npc, name, st);
+
+                // Per-action wall-clock timeout: if the action has run too long,
+                // force-idle the NPC and discard the action queue. This is the
+                // C#-side counterpart to the Go engine's per-tool timeout —
+                // the engine's context deadline only covers the ws round-trip
+                // (~100 ms); the real work lives here in game ticks.
+                if (st.ActionStartedAt > 0 &&
+                    (int)(_tickCounter - (uint)st.ActionStartedAt) > MaxActionTicks)
+                {
+                    int elapsed = (int)(_tickCounter - (uint)st.ActionStartedAt) / 60;
+                    _log.Log(
+                        $"[FollowSystem/Timeout] {name}: {st.Mode} ran {elapsed}s, " +
+                        $"exceeded {MaxActionTicks / 60}s limit — force-idle",
+                        LogLevel.Warn);
+                    ForceIdle(npc, name, st);
+                    continue;
+                }
 
                 try
                 {
@@ -1167,9 +1288,7 @@ namespace SmartNPC.Bridge
 
             Point target = st.DebrisTarget;
 
-            // Check if target object still exists (may have been cleared by something else).
             var targetV2 = new Vector2(target.X, target.Y);
-            bool objectPresent = location.Objects.ContainsKey(targetV2);
 
             // If arrived (≤ 1.5 tiles) and path finished → destroy + collect → advance queue.
             float dist = Vector2.Distance(npc.Tile, new Vector2(target.X, target.Y));
@@ -1179,26 +1298,38 @@ namespace SmartNPC.Bridge
 
             if (dist <= 1.5f && pathDone)
             {
-                // Destroy object if still present.
-                if (objectPresent && location.Objects.TryGetValue(targetV2, out var obj))
-                {
-                    string dropId = obj.IsTwig()  ? "(O)388"
-                                  : obj.IsWeeds() ? "(O)771"
-                                  : "(O)390";
+                // Destroy debris — check Objects first, then terrainFeatures.
+                bool cleared = false;
+                string dropId = "(O)390"; // default: Stone
 
+                if (location.Objects.TryGetValue(targetV2, out var obj) && obj != null
+                    && ClearDebrisHandler.IsDebris(obj))
+                {
+                    dropId = ClearDebrisHandler.DebrisDropId(obj);
                     location.Objects.Remove(targetV2);
+                    cleared = true;
+                }
+                else if (location.terrainFeatures.TryGetValue(targetV2, out var tf) && tf != null
+                    && ClearDebrisHandler.IsTerrainDebris(tf))
+                {
+                    dropId = ClearDebrisHandler.TerrainDebrisDropId(tf);
+                    location.terrainFeatures.Remove(targetV2);
+                    cleared = true;
+                }
+
+                if (cleared)
+                {
                     st.DebrisInventory.Add(npcName, dropId, 1);
                     npc.doEmote(16); // "!"
                     _log.Log(
-                        $"[FollowSystem/ClearDebris] {npcName}: cleared {obj.Name} " +
-                        $"at ({target.X},{target.Y}) → {dropId}",
+                        $"[FollowSystem/ClearDebris] {npcName}: cleared at ({target.X},{target.Y}) → {dropId}",
                         LogLevel.Debug);
                 }
                 else
                 {
                     _log.Log(
-                        $"[FollowSystem/ClearDebris] {npcName}: object at ({target.X},{target.Y}) " +
-                        $"already gone, skipping",
+                        $"[FollowSystem/ClearDebris] {npcName}: tile ({target.X},{target.Y}) " +
+                        $"already cleared, skipping",
                         LogLevel.Debug);
                 }
 
