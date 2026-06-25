@@ -90,7 +90,7 @@ docker info
 docker compose version
 ```
 
-> 如果你的 WSL 发行版不叫 `Ubuntu-22.04`，在 `.env` 里设 `WSL_DISTRO=你的发行版名`。
+> 如果你的 WSL 发行版不是 `Ubuntu-22.04`，在 `.env` 里设 `WSL_DISTRO=你的发行版名`。
 
 ---
 

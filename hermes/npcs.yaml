@@ -18,7 +18,7 @@ npcs:
     game_name: Abigail
     display_name: 阿比盖尔
     gateway_port: 8643
-    enabled: true
+    enabled: false
     kind: vanilla
     peer_a_name: Penny
     peer_a_display: 潘妮

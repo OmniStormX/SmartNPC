@@ -63,6 +63,8 @@ C:\Users\synchen\go\bin\task.exe --list          # 列出所有可用 task
 ```powershell
 cd D:\SmartNPC\smartnpc-mcp; go test -run TestPing ./pkg/agentbridge/...
 cd D:\SmartNPC\smartnpc-mcp; go test -run TestChatSay ./adapters/stardew/tools/...
+cd D:\SmartNPC\smartnpc-mcp; go test -run TestRun ./pkg/workflow/...       # 工作流引擎
+cd D:\SmartNPC\smartnpc-mcp; go test -run TestValidate ./pkg/workflow/...  # 工作流校验
 ```
 
 **Echo 模式（不接 LLM，验证游戏往返）：** 请求直接回声返回，用于验证 ws 连接 + MCP 工具注册是否正常，无需 Hermes/LLM 在线。
@@ -146,6 +148,7 @@ smartnpc-mcp/
 │   ├── agentbridge/              ← Server, EventSource, Backend, ToolGroup, registry
 │   ├── eventbus/                 ← 通用 Event{Kind, Source, Subject, Payload, Timestamp}
 │   ├── transport/                ← MCP transport（HTTP today）
+│   ├── workflow/                 ← 工作流引擎 DSL（8 种 step）+ Runner 接口 + builtin YAML registry
 │   └── relay/
 │       ├── hermes/               ← Hermes Gateway Backend（转发 + 路由）
 │       └── echo/                 ← dev/smoke 回声 Backend
@@ -153,7 +156,8 @@ smartnpc-mcp/
 │   ├── adapter.go                ← factory 注册 + EventSource 实现
 │   ├── bridge/                   ← ws 客户端 + mock + protocol DTO
 │   ├── events/                   ← SDV 事件 typed structs + Hermes prompt format
-│   └── tools/                    ← MCP 工具按 domain 一文件（chat / game_query / mail / npc_* / player_query）
+│   ├── scheduler/                ← 游戏时间感知的每日 schedule；Entry→workflow 映射 + Tick 驱动
+│   └── tools/                    ← MCP 工具按 domain 一文件（chat / game_query / mail / npc_* / player_query / workflow / agent）
 ├── cmd/
 │   ├── smartnpc-mcp/             ← 日常 SDV 启动入口（run.bat 调用）
 │   └── agent-bridge/             ← 通用 CLI，bridge.yaml 驱动
@@ -162,17 +166,18 @@ smartnpc-mcp/
 
 **关键目录（详细）：**
 - `smartnpc-mcp/pkg/agentbridge/` — 组合根 `Server`、`EventSource`/`Backend` 接口、`ToolGroup` 注册、`meta.go`（ping tool）
-- `smartnpc-mcp/pkg/relay/hermes/` — Hermes Gateway Backend：runtime-config 加载、事件路由、group 逻辑
-- `smartnpc-mcp/adapters/stardew/tools/` — MCP 工具实现（chat / game_query / mail / npc_behavior / npc_movement / npc_perception / npc_message / player_query / npc_inventory）；`registry.go` → `RegisterAll`
+- `smartnpc-mcp/pkg/workflow/` — **工作流引擎**（ADR-0005）：8 种 step 的 DSL（`tool` / `branch` / `random` / `foreach` / `skill_call` / `llm_choice` / `wait` / `stop`）、`Runner` 接口、`MCPRunner` 生产实现、`Registry`（embedded builtin + extraDir overlay）。内置 9 个 workflow 见 `builtin/*.yaml`。详见 [`docs/workflow-authoring.md`](docs/workflow-authoring.md) + [`docs/adr/0005-schedule-as-workflow.md`](docs/adr/0005-schedule-as-workflow.md)。
+- `smartnpc-mcp/adapters/stardew/scheduler/` — 游戏时间感知的每日 schedule：`Entry` 三形态（`workflow_id` / `workflow` / `action`）、`Tick(hour)` 驱动 + synthetic `schedule_trigger` 事件转发。Entry 支持 `LoopConfig`（循环 + auto-stop 检测）。
+- `smartnpc-mcp/adapters/stardew/tools/` — MCP 工具实现（chat / game_query / mail / npc_behavior / npc_movement / npc_perception / npc_message / player_query / npc_inventory / npc_world_action / npc_social_action / workflow / agent / npc_schedule）；`registry.go` → `RegisterAll`
 - `smartnpc-mcp/adapters/stardew/bridge/` — ws 客户端 + testserver mock
 - `smartnpc-mcp/adapters/stardew/events/` — 游戏事件 typed structs（`ChatMessage` / `NpcInteract` 等）+ format 工具
 - `hermes/npcs.yaml` — **NPC 元数据唯一真相源**（id / game_name / display_name / gateway_port / peer 关系）。增删 NPC 必须从这个文件开始，`render_profiles.sh` 和 `runtime-config.yaml` 都从它生成。
-- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `critical-policy.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。Skills：`smartnpc-core` / `smartnpc-farm` / `smartnpc-farm-harvest` / `smartnpc-farm-maintenance` / `smartnpc-farm-manager` / `smartnpc-farm-worker` / `smartnpc-gift` / `smartnpc-greeting` / `smartnpc-group-chat` / `smartnpc-inter-npc` / `smartnpc-memory` / `smartnpc-schedule` / `smartnpc-visit`。
+- `hermes/profiles/_master/` — **共享 SKILL 模板母本**（`config-overlay.yaml` + `cron-recipes.md` + `critical-policy.md` + `skills/`，不含 `SOUL.md`）。通过 `scripts/render_profiles.sh` 用 `{{NPC_NAME}}` 等 8 个占位符渲染到 6 个 NPC 目录。**不要直接编辑非 `_master/` 下的渲染产物——会被 render 覆盖。** 详见 [ADR-0003](docs/adr/0003-npc-name-placeholder-cloning.md)。Skills：`smartnpc-core` / `smartnpc-farm-care` / `smartnpc-farm-cleanup` / `smartnpc-farm-evening-close` / `smartnpc-farm-extension` / `smartnpc-farm-gather` / `smartnpc-farm-harvest` / `smartnpc-gift` / `smartnpc-greeting` / `smartnpc-group-chat` / `smartnpc-inter-npc` / `smartnpc-memory` / `smartnpc-schedule` / `smartnpc-social-interact` / `smartnpc-social-round-robin` / `smartnpc-visit`。
 - `hermes/profiles/<npc>/` — 单个 NPC profile。`SOUL.md` 手写保留，`critical-policy.md` 手写保留，其余由 `_master/` 渲染生成。6 个 NPC：`xiami` / `abigail` / `haley` / `harvey` / `penny` / `sebastian`。
 - `smapi-mod/Bridge/` — C# 侧 ws server + 协议 DTO
 - `smapi-mod/NPC/` — 多 NPC 路由（`AudibleNPCResolver.cs` + `TurnQueue.cs`）
 - `smapi-mod/{Query,Perception,Movement,Mail,Chat,UI}/` — 按 domain 拆分的游戏侧 handler
-- `smapi-mod/Behavior/` — NPC 世界行为 handler（`WorldActionHandlers.cs`：deposit / clear_debris / till_soil / forage_collect / wander 等；`SocialActionHandlers.cs`：deliver / approach_and_speak 等）。跨模块数据流：C# FollowSystem（`Movement/FollowSystem.cs`）触发 → ws action → MCP tool → Go handler → ws response → C# Tick 执行。**行为可实现性规划**详见 [`report-behavior.md`](report-behavior.md)（20 个 NPC 行为 + 三层优先级）。已实现：`npc_wander` / `npc_clear_debris` / `npc_deposit_items` / `npc_deliver_items` / `npc_till_soil` / `npc_approach_and_speak` / `npc_forage_collect`
+- `smapi-mod/Behavior/` — NPC 世界行为 handler（`WorldActionHandlers.cs`：wander / clear_debris / till_soil / forage_collect / deposit_items / plant_seeds / water_crops / harvest_crops / withdraw_items / break_resource / fertilize / fill_gaps / pet_animal；`SocialActionHandlers.cs`：deliver / approach_and_speak 等）。跨模块数据流：C# FollowSystem（`Movement/FollowSystem.cs`）触发 → ws action → MCP tool → Go handler → ws response → C# Tick 执行。**行为可实现性规划**详见 [`report-behavior.md`](report-behavior.md)（20 个 NPC 行为 + 三层优先级）。已实现：全部 13 个 `WorldAction` + 2 个 `SocialAction`。FollowSystem `NpcBehaviorMode` 枚举含 19 种模式。
 - `smapi-mod/Debug/` — 游戏内调试命令入口（`smartnpc_deposit_items` 等）
 - `smapi-mod/assets/xiami/` — NPC sprite 资产 + 构建脚本
 - `scripts/` — Hermes 管理脚本：`render_profiles.sh`（渲染模板）、`start_hermes_profiles.sh`（启动指定 NPC gateway）、`detect_wsl_ips.sh`（自动探测 WSL/Windows IP）、`apply_hermes_tuning.sh`（调参）、`lib/npc_registry.sh`（从 `hermes/npcs.yaml` 读 NPC 列表的公共库）
@@ -260,7 +265,7 @@ Go 部分在 Windows/Linux 均可运行；C# mod 仅 Windows（依赖 SMAPI + SD
 
 **格式：** `<type>(<scope>): <subject>`
 - type: `feat`/`fix`/`refactor`/`test`/`docs`/`chore`/`ci`/`build`
-- scope: `mcp`/`mod`/`hermes`/`docs`/`ci`/`tools`/`bridge`
+- scope: `mcp`/`mod`/`hermes`/`docs`/`ci`/`tools`/`bridge`/`workflow`
 - subject: 祈使句、小写、≤60 字
 
 **流程：**
@@ -298,6 +303,7 @@ git tag v0.x.0; git push origin v0.x.0
 | M3 NPC 行为工具集（query/perception/movement/mail/chat/behavior） | ✅ |
 | M4 OpenAI provider + 旧 Go agent loop（已删除） | ✅ → 移除 |
 | M5 (Hermes-first) smartnpc-mcp 强化 + Hermes profile per NPC | ✅ 代码 + 6 NPC 配置就绪 — 待实机端到端验证（默认起 xiami + abigail） |
+| M6 Schedule-as-workflow（ADR-0005） | ✅ P1-P5 代码落地；P6 清理进行中 |
 
 每个 milestone 完成后等用户验证再进入下一个。
 
@@ -305,3 +311,15 @@ git tag v0.x.0; git push origin v0.x.0
 
 全部代码已就绪；5.6 / 5.7（实机端到端）待用户验证。关键路径见上方「agent-bridge 框架分层」。
 详见 [`REFACTOR.md`](REFACTOR.md)、[`docs/architecture.md`](docs/architecture.md)、[ADR-0001](docs/adr/0001-synthetic-events-go-through-hermesrelay.md)。
+
+## 开发指南
+
+新增 NPC 行为 / Workflow / Skill / Schedule 的完整流程、代码模板、检查清单见 [`docs/development-guide.md`](docs/development-guide.md)。关键约定：Skill（Markdown）是真相源，AI 在 precompile 阶段读 SKILL → RecordingRunner 拦截写工具 → 生成 `Definition`（concrete steps）→ 触发时本地引擎重放（零 LLM）。内置 `builtin/*.yaml` 全是 `skill_call` 薄包装，不含手写步骤。
+
+## 项目启动文档
+
+新成员上手或重装环境时，按 [`docs/startup-guide.md`](docs/startup-guide.md) 逐步操作。
+
+## 技术方案
+
+NPC Agent 自运转的系统架构、Schedule 流程、网络拓扑见 [`docs/technical-architecture.md`](docs/technical-architecture.md)（图文简明版）和 [`docs/npc-agent-autonomy.md`](docs/npc-agent-autonomy.md)（完整技术方案）。可视化图表在 [`docs/diagrams/`](docs/diagrams/)。

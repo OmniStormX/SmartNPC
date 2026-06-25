@@ -325,6 +325,26 @@ namespace SmartNPC.Bridge
         }
 
         /// <summary>
+        /// Debug-command entry point: same as Handle but synchronous —
+        /// shows the bubble and calls Execute on the game thread immediately
+        /// without ws request/response and without queueing. Useful for SMAPI
+        /// console debug commands that want visual feedback.
+        /// </summary>
+        public object? HandleDebug(NPC npc, string npcName, JsonElement @params)
+        {
+            string bubble = ResolveBubble(@params);
+            if (_showBubble())
+                npc.showTextAboveHead(bubble);
+
+            // Persistent bubble for long-running actions.
+            if (RefuseWhileBusy && _follow != null)
+                _follow.SetActionBubble(npcName, bubble);
+
+            Execute(npc, npcName, @params);
+            return GetResult(npc, npcName, @params);
+        }
+
+        /// <summary>
         /// Drain queued game-thread work for THIS handler. Called from
         /// OnUpdateTicked. Per-NPC serial queue is drained separately by
         /// NpcActionQueue.DrainReadyTasks (called once per tick from

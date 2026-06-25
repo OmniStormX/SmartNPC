@@ -56,6 +56,7 @@ for npc in $NPC_IDS; do
     [ -f "$SRC/SOUL.md" ] && cp "$SRC/SOUL.md" "$DST/"
     [ -d "$SRC/skills" ] && cp -r "$SRC/skills" "$DST/"
     [ -f "$SRC/cron-recipes.md" ] && cp "$SRC/cron-recipes.md" "$DST/"
+    [ -f "$SRC/critical-policy.md" ] && cp "$SRC/critical-policy.md" "$DST/"
 
     echo "  OK: $npc"
 done

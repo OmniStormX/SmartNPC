@@ -57,6 +57,9 @@ mcp_servers:
         # schedule
         - npc_plan_day
         - npc_get_schedule
+        # workflow discovery
+        - workflow_list
+        - workflow_get
         # world actions
         - npc_wander
         - npc_clear_debris
@@ -77,6 +80,7 @@ mcp_servers:
         - npc_express_emotion
         - npc_shy_retreat
         - npc_show_text_bubble
+        - npc_inventory_get
         - npc_idle_activity
         - npc_dance_happy
         - npc_react_surprise

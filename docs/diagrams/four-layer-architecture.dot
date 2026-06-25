@@ -1,0 +1,187 @@
+digraph SmartNPC {
+    rankdir=TB
+    fontname="Helvetica,Arial,sans-serif"
+    fontsize=16
+    label="SmartNPC — NPC Agent 自运转四层架构"
+    labelloc=t
+    fontcolor="#1a1a2e"
+
+    compound=true
+    nodesep=0.6
+    ranksep=0.8
+    splines=ortho
+
+    // ═══ Global node defaults ═══
+    node [fontname="Helvetica,Arial,sans-serif", fontsize=9, style=filled, penwidth=1.3, margin=0.15]
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=8]
+
+    // ═══ WSL2 Cluster ═══
+    subgraph cluster_wsl {
+        label="🐧 WSL2 — Ubuntu-22.04"
+        style="filled,dashed"
+        color="#10b981"
+        fillcolor="#ecfdf5"
+        fontsize=13
+        fontcolor="#065f46"
+        penwidth=2
+
+        subgraph cluster_decision {
+            label="🧠 决策层 — Hermes Agent (6× NPC Profile)"
+            style=filled
+            color="#059669"
+            fillcolor="#d1fae5"
+            fontsize=11
+            fontcolor="#065f46"
+            penwidth=1.5
+
+            node [shape=box, style="filled,rounded", color="#10b981", fillcolor="#ecfdf5", fontsize=9, penwidth=1.2]
+
+            xiami [label="xiami\n:8642\nSOUL + 16 SKILLs", fillcolor="#d1fae5", color="#059669", penwidth=1.8]
+            abigail [label="abigail :8643"]
+            haley [label="haley :8644"]
+            harvey [label="harvey :8645"]
+            penny [label="penny :8646"]
+            sebastian [label="sebastian :8647"]
+
+            llm_model [label="LLM Provider\nOpenAI-compatible", shape=ellipse, fillcolor="#a7f3d0", fontsize=8]
+            state_db [label="state.db\n长期记忆", shape=cylinder, fillcolor="#a7f3d0", fontsize=8]
+
+            { rank=same; haley; harvey; penny; }
+        }
+
+        node [shape=note, style=filled, fillcolor="#fef3c7", color="#f59e0b", fontsize=8]
+        llm_out [label="→ api.deepseek.com\nHTTPS"]
+    }
+
+    // ═══ Windows Cluster ═══
+    subgraph cluster_win {
+        label="🖥️ Windows 主机 — Stardew Valley + SMAPI"
+        style=filled
+        color="#0ea5e9"
+        fillcolor="#f0f9ff"
+        fontsize=13
+        fontcolor="#075985"
+        penwidth=2
+
+        // ── Orchestration Layer ──
+        subgraph cluster_orchestration {
+            label="⚙️ 编排层 — smartnpc-mcp (Go)"
+            style=filled
+            color="#d97706"
+            fillcolor="#fffbeb"
+            fontsize=11
+            fontcolor="#92400e"
+            penwidth=1.5
+
+            node [shape=box, style="filled,rounded", color="#f59e0b", fillcolor="#fef3c7", fontsize=9, penwidth=1.2]
+
+            sched [label="Scheduler\nTick→FiredEntry[]\nper-NPC DaySchedule", fillcolor="#fef3c7", color="#d97706", penwidth=1.8]
+            engine [label="Workflow Engine\n8 step types\nPrecompileSkill", fillcolor="#fef3c7", color="#d97706", penwidth=1.8]
+            relay [label="hermesrelay\nPOST /v1/responses\ninstructions 注入", fillcolor="#fef3c7", color="#d97706", penwidth=1.8]
+            runner [label="MCPRunner\nCallTool/CallSkill\nLLMChoice/WaitIdle"]
+            worker [label="npcWorkflowWorker\nper-NPC goroutine\n串行消费+取消", shape=hexagon, fillcolor="#fde68a"]
+
+            // Worker → Engine flow
+            worker -> engine [label="run workflow", style=bold, color="#d97706", weight=2]
+            engine -> runner [label="execute\nsteps", style=bold, color="#d97706"]
+        }
+
+        // ── Protocol Layer ──
+        subgraph cluster_protocol {
+            label="🔌 协议层 — WebSocket + MCP HTTP"
+            style=filled
+            color="#db2777"
+            fillcolor="#fdf2f8"
+            fontsize=11
+            fontcolor="#9d174d"
+            penwidth=1.5
+
+            node [shape=box, style="filled,rounded", color="#ec4899", fillcolor="#fce7f3", fontsize=9, penwidth=1.2]
+
+            mcp_http [label="MCP HTTP\n:3000/mcp\ntools/list tools/call", fillcolor="#fce7f3", color="#be185d", penwidth=1.8]
+            ws_conn [label="WebSocket\nws://127.0.0.1:18745/ws\nrequest(id)↔response(id)", fillcolor="#fce7f3", color="#be185d", penwidth=1.8]
+            event_push [label="Event Push\nchat_message\nnpc_interact\nday_started\ngame_time_tick", shape=parallelogram]
+        }
+
+        // ── Execution Layer ──
+        subgraph cluster_execution {
+            label="🎮 执行层 — C# SMAPI Mod (StardewMCPBridge)"
+            style=filled
+            color="#0284c7"
+            fillcolor="#f0f9ff"
+            fontsize=11
+            fontcolor="#075985"
+            penwidth=1.5
+
+            node [shape=box, style="filled,rounded", color="#0ea5e9", fillcolor="#e0f2fe", fontsize=9, penwidth=1.2]
+
+            follow [label="FollowSystem\n19 NpcBehaviorMode\nPumpOnGameTick", fillcolor="#e0f2fe", color="#0284c7", penwidth=1.8]
+            action_q [label="NpcActionQueue\nper-NPC FIFO\n三模型排队"]
+            router [label="MessageRouter\naction→handler\n分发"]
+            handlers [label="行为 Handler\nWander/ClearDebris\nWaterCrops/Harvest\nDeposit/Deliver\nTillSoil/PlantSeeds\nFertilize/FillGaps\n... 18 个 Handler", shape=folder, fillcolor="#bae6fd"]
+            game_ui [label="Chat UI\nTab/F2/Esc\n面板+气泡", shape=component, fillcolor="#bae6fd"]
+        }
+    }
+
+    // ═══ External ═══
+    node [shape=cloud, style=filled, fillcolor="#e0e7ff", color="#6366f1", fontsize=9]
+    llm_api [label="🌐 LLM API\napi.deepseek.com"]
+
+    // ═══ Cross-boundary edges ═══
+
+    // Win → WSL: hermesrelay POST
+    relay -> xiami [label="  POST /v1/responses  ", color="#d97706", style=dashed, penwidth=1.8, fontcolor="#92400e"]
+    relay -> abigail [label="  POST  ", color="#d97706", style=dashed, penwidth=1, fontcolor="#92400e"]
+
+    // WSL → Win: MCP tool call back
+    xiami -> mcp_http [label="  MCP tool call  ", color="#10b981", style=dashed, penwidth=1.8, fontcolor="#065f46"]
+    abigail -> mcp_http [label="  MCP call  ", color="#10b981", style=dashed, penwidth=1, fontcolor="#065f46"]
+
+    // WSL → Internet: LLM API
+    xiami -> llm_api [label="LLM request", color="#6366f1", style=dotted, penwidth=1.2]
+    abigail -> llm_api [color="#6366f1", style=dotted, penwidth=0.8]
+
+    // ═══ Intra-Windows edges ═══
+
+    // Protocol ↔ Orchestration
+    mcp_http -> runner [label="tool call\nroute", style=bold, color="#db2777", weight=2]
+    runner -> ws_conn [label="ws request", style=bold, color="#db2777", weight=2]
+
+    // Protocol ↔ Execution
+    ws_conn -> router [label="dispatch", style=bold, color="#0284c7", weight=2]
+    router -> handlers [color="#0284c7"]
+    router -> follow [label="start action", style=dashed, color="#0284c7", weight=1.5]
+
+    // Internal execution flows
+    handlers -> action_q [label="enqueue\n(long-running)", style=dashed, color="#0ea5e9"]
+    action_q -> follow [label="drain\nwhen Idle", style=dashed, color="#0ea5e9"]
+    follow -> game_ui [label="bubble+\npanel", color="#0ea5e9", style=dotted]
+
+    // Schedule flow annotations
+    sched -> relay [label="schedule\ntrigger", color="#d97706", style=bold, penwidth=1.5]
+
+    // Event flow annotations
+    router -> event_push [label="game\nevents", color="#ec4899", style=dashed, dir=both]
+    event_push -> relay [label="forward\nevents", color="#ec4899", style=dashed]
+
+    // ═══ Legend ═══
+    subgraph cluster_legend {
+        label="图 例"
+        style=filled
+        color="#94a3b8"
+        fillcolor="#f8fafc"
+        fontsize=10
+        fontcolor="#475569"
+        penwidth=1
+
+        node [shape=plaintext, fontsize=9, fillcolor=none, style=""]
+        l1 [label="──── 实线 = 直接调用 / 关键数据流", fontcolor="#1e293b"]
+        l2 [label="- - - 虚线 = 跨边界 MCP/HTTP", fontcolor="#1e293b"]
+        l3 [label="···· 点线 = 事件推送 / UI 更新", fontcolor="#1e293b"]
+        l4 [label="⏰ Schedule 驱动: day_started → npc_plan_day → Scheduler → Tick → Worker → skill_call → Hermes → LLM → tool call → ws → FollowSystem", fontcolor="#92400e"]
+        l5 [label="📡 Event 驱动: chat_message/npc_interact → hermesrelay → POST /v1/responses → LLM 决策 → MCP tool call → ws → C# 执行", fontcolor="#9d174d"]
+    }
+
+    // Force external API to top
+    { rank=min; llm_api; }
+}

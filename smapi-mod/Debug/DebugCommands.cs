@@ -38,14 +38,30 @@ namespace SmartNPC.Bridge
         private const string CmdWaterCrops   = "smartnpc_water_crops";
         private const string CmdHarvestCrops = "smartnpc_harvest_crops";
         private const string CmdInspect      = "smartnpc_inspect_object";
+        private const string CmdPetAnimal    = "smartnpc_pet_animal";
+        private const string CmdBreakResource = "smartnpc_break_resource";
+        private const string CmdFertilize     = "smartnpc_fertilize";
+        private const string CmdFillGaps      = "smartnpc_fill_gaps";
+        private const string CmdWithdrawChest = "smartnpc_withdraw_from_chest";
+        private const string CmdPlaceObject   = "smartnpc_place_object";
+        private const string CmdTransfer      = "smartnpc_transfer_item";
+        private const string CmdExpress       = "smartnpc_express_emotion";
+        private const string CmdDance         = "smartnpc_dance";
+        private const string CmdReact         = "smartnpc_react_surprise";
+        private const string CmdPace          = "smartnpc_pace";
+        private const string CmdShyRetreat    = "smartnpc_shy_retreat";
+        private const string CmdIdleActivity  = "smartnpc_idle_activity";
+        private const string CmdTextBubble    = "smartnpc_text_bubble";
         private const string CmdGiveChest    = "smartnpc_give_chest";
         private const string CmdGet          = "smartnpc_get";
 
         private static readonly Random s_rng = new();
         private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(5) };
+        private static Func<bool> s_showBubble = () => true;
 
-        public static void Register(ICommandHelper commands, IMonitor log, WebSocketServer ws, FollowSystem follow, NpcInventory inventory)
+        public static void Register(ICommandHelper commands, IMonitor log, WebSocketServer ws, FollowSystem follow, NpcInventory inventory, Func<bool> showBubble)
         {
+            s_showBubble = showBubble;
             commands.Add(
                 name: CmdFriendship,
                 documentation:
@@ -218,6 +234,126 @@ namespace SmartNPC.Bridge
                 callback: (_, args) => HandleHarvestCrops(args, log, inventory, follow));
 
             commands.Add(
+                name: CmdPetAnimal,
+                documentation:
+                    "Force an NPC to walk to the player's current pet and pet it.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdPetAnimal} <NpcName>",
+                callback: (_, args) => HandlePetAnimal(args, log, follow));
+
+            commands.Add(
+                name: CmdBreakResource,
+                documentation:
+                    "Force an NPC to chop trees or break stones within a radius.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdBreakResource} <NpcName>                    radius=5 max=3\n" +
+                    $"  {CmdBreakResource} <NpcName> <radius> <max>    e.g. Abigail 8 5",
+                callback: (_, args) => HandleBreakResource(args, log, inventory, follow));
+
+            commands.Add(
+                name: CmdFertilize,
+                documentation:
+                    "Force an NPC to fertilize tilled soil within a radius.\n" +
+                    "Fertilizer must be in the NPC's backpack (default: Basic Fertilizer).\n" +
+                    $"Usage:\n" +
+                    $"  {CmdFertilize} <NpcName>                        radius=5 max=5, Basic Fertilizer\n" +
+                    $"  {CmdFertilize} <NpcName> (O)369                 Quality Fertilizer\n" +
+                    $"  {CmdFertilize} <NpcName> (O)368 <r> <m>        specify fertilizer_id + radius + max",
+                callback: (_, args) => HandleFertilize(args, log, inventory, follow));
+
+            commands.Add(
+                name: CmdFillGaps,
+                documentation:
+                    "Force an NPC to fill empty gaps in farmland with crops.\n" +
+                    "Seeds must be in the NPC's backpack.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdFillGaps} <NpcName>                    radius=5 max=5\n" +
+                    $"  {CmdFillGaps} <NpcName> <radius> <max>    e.g. Abigail 5 8",
+                callback: (_, args) => HandleFillGaps(args, log, inventory, follow));
+
+            commands.Add(
+                name: CmdWithdrawChest,
+                documentation:
+                    "Force an NPC to withdraw items from a chest into backpack.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdWithdrawChest} <NpcName>                         auto-find nearest chest\n" +
+                    $"  {CmdWithdrawChest} <NpcName> <item_id> <count>      withdraw specific items",
+                callback: (_, args) => HandleWithdrawChest(args, log, inventory, follow));
+
+            commands.Add(
+                name: CmdPlaceObject,
+                documentation:
+                    "Force an NPC to place a carried object on the ground.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdPlaceObject} <NpcName>                place at NPC's current tile\n" +
+                    $"  {CmdPlaceObject} <NpcName> <x> <y>        place at specific tile",
+                callback: (_, args) => HandlePlaceObject(args, log, follow));
+
+            commands.Add(
+                name: CmdTransfer,
+                documentation:
+                    "Transfer an item from one NPC's backpack to another.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdTransfer} <fromNpc> <toNpc> <itemId> <count>",
+                callback: (_, args) => HandleTransferItem(args, log, inventory));
+
+            commands.Add(
+                name: CmdExpress,
+                documentation:
+                    "Force an NPC to show an emotion emote (heart / exclamation / question / ...).\n" +
+                    $"Usage:\n" +
+                    $"  {CmdExpress} <NpcName> <emotion>",
+                callback: (_, args) => HandleExpressEmotion(args, log));
+
+            commands.Add(
+                name: CmdDance,
+                documentation:
+                    "Force an NPC to do a happy dance animation.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdDance} <NpcName>",
+                callback: (_, args) => HandleDance(args, log));
+
+            commands.Add(
+                name: CmdReact,
+                documentation:
+                    "Force an NPC to show a surprise reaction.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdReact} <NpcName>",
+                callback: (_, args) => HandleReactSurprise(args, log));
+
+            commands.Add(
+                name: CmdPace,
+                documentation:
+                    "Force an NPC to pace back and forth anxiously.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdPace} <NpcName>",
+                callback: (_, args) => HandlePace(args, log, follow));
+
+            commands.Add(
+                name: CmdShyRetreat,
+                documentation:
+                    "Force an NPC to do a shy retreat.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdShyRetreat} <NpcName>",
+                callback: (_, args) => HandleShyRetreat(args, log));
+
+            commands.Add(
+                name: CmdIdleActivity,
+                documentation:
+                    "Force an NPC to perform a random idle activity.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdIdleActivity} <NpcName>",
+                callback: (_, args) => HandleIdleActivity(args, log));
+
+            commands.Add(
+                name: CmdTextBubble,
+                documentation:
+                    "Force an NPC to show a custom text bubble above their head.\n" +
+                    $"Usage:\n" +
+                    $"  {CmdTextBubble} <NpcName> <text>",
+                callback: (_, args) => HandleTextBubble(args, log));
+
+            commands.Add(
                 name: CmdInspect,
                 documentation:
                     "NPC scans the surrounding area and reports crops/objects/terrain.\n" +
@@ -248,7 +384,7 @@ namespace SmartNPC.Bridge
                     $"  {CmdGet} --npc Abigail <name> <N>   Give N to Abigail's backpack.",
                 callback: (_, args) => HandleGet(args, log, inventory));
 
-            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}, {CmdWander}, {CmdClearDebris}, {CmdDeposit}, {CmdDeliver}, {CmdTillSoil}, {CmdApproach}, {CmdForage}, {CmdPlantSeeds}, {CmdWaterCrops}, {CmdInspect}, {CmdGiveChest}, {CmdGet}", LogLevel.Trace);
+            log.Log($"[DebugCommands] registered: {CmdFriendship}, {CmdDebug}, {CmdTeleport}, {CmdProactive}, {CmdStatus}, {CmdTick}, {CmdGoto}, {CmdGather}, {CmdWander}, {CmdClearDebris}, {CmdDeposit}, {CmdDeliver}, {CmdTillSoil}, {CmdApproach}, {CmdForage}, {CmdPlantSeeds}, {CmdWaterCrops}, {CmdHarvestCrops}, {CmdPetAnimal}, {CmdBreakResource}, {CmdFertilize}, {CmdFillGaps}, {CmdWithdrawChest}, {CmdPlaceObject}, {CmdTransfer}, {CmdExpress}, {CmdDance}, {CmdReact}, {CmdPace}, {CmdShyRetreat}, {CmdIdleActivity}, {CmdTextBubble}, {CmdInspect}, {CmdGiveChest}, {CmdGet}", LogLevel.Trace);
         }
 
         // ── smartnpc_friendship ────────────────────────────────────────
@@ -877,7 +1013,10 @@ namespace SmartNPC.Bridge
                 }
             }
 
-            WanderHandler.DoWander(npc, name, radius, follow, log);
+            using var doc = JsonDocument.Parse(
+                $"{{\"npc\":\"{name}\",\"radius\":{radius}}}");
+            var handler = new WanderHandler(log, s_showBubble, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
             log.Log($"[smartnpc_wander] triggered wander for {name} radius={radius}", LogLevel.Info);
         }
 
@@ -928,8 +1067,8 @@ namespace SmartNPC.Bridge
             string json = System.Text.Json.JsonSerializer.Serialize(paramsDict);
             var paramsEl = System.Text.Json.JsonDocument.Parse(json).RootElement;
 
-            var handler = new ClearDebrisHandler(log, () => false, inventory, follow);
-            handler.ExecuteDebug(npc, name, paramsEl);
+            var handler = new ClearDebrisHandler(log, s_showBubble, inventory, follow);
+            handler.HandleDebug(npc, name, paramsEl);
             log.Log($"[smartnpc_clear_debris] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
         }
 
@@ -961,8 +1100,8 @@ namespace SmartNPC.Bridge
 
             using var doc = JsonDocument.Parse(
                 $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new ForageCollectHandler(log, () => false, inventory, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
+            var handler = new ForageCollectHandler(log, s_showBubble, inventory, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
             log.Log($"[smartnpc_forage_collect] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
         }
 
@@ -1103,8 +1242,8 @@ namespace SmartNPC.Bridge
 
             using var doc = JsonDocument.Parse(
                 $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new TillSoilHandler(log, () => false, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
+            var handler = new TillSoilHandler(log, s_showBubble, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
             log.Log($"[smartnpc_till_soil] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
         }
 
@@ -1138,8 +1277,8 @@ namespace SmartNPC.Bridge
 
             using var doc = JsonDocument.Parse(
                 $"{{\"npc\":\"{name}\"{(reason is not null ? $",\"reason\":\"{reason}\"" : "")}}}");
-            var handler = new ApproachAndSpeakHandler(log, () => false, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
+            var handler = new ApproachAndSpeakHandler(log, s_showBubble, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
             log.Log(
                 $"[smartnpc_approach_speak] triggered for {name}{(reason is not null ? $" reason=\"{reason}\"" : "")}",
                 LogLevel.Info);
@@ -1178,8 +1317,8 @@ namespace SmartNPC.Bridge
 
             using var doc = JsonDocument.Parse(
                 $"{{\"npc\":\"{name}\",\"seed_id\":\"{seedId}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new PlantSeedsHandler(log, () => false, inventory, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
+            var handler = new PlantSeedsHandler(log, s_showBubble, inventory, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
             log.Log($"[smartnpc_plant_seeds] triggered for {name} seed={seedId} radius={radius} max={maxCount}", LogLevel.Info);
         }
 
@@ -1214,9 +1353,247 @@ namespace SmartNPC.Bridge
 
             using var doc = JsonDocument.Parse(
                 $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new WaterCropsHandler(log, () => false, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
+            var handler = new WaterCropsHandler(log, s_showBubble, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
             log.Log($"[smartnpc_water_crops] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
+        }
+
+        // ── smartnpc_pet_animal ──────────────────────────────────────────
+
+        private static void HandlePetAnimal(string[] args, IMonitor log, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady)
+            {
+                log.Log("no save loaded; start or load a save first.", LogLevel.Error);
+                return;
+            }
+            if (args.Length < 1)
+            {
+                log.Log($"usage: {CmdPetAnimal} <NpcName>", LogLevel.Error);
+                return;
+            }
+
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null)
+            {
+                log.Log($"NPC '{name}' not found.", LogLevel.Warn);
+                return;
+            }
+
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\"}}");
+            var handler = new PetAnimalHandler(log, s_showBubble, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_pet_animal] triggered for {name}", LogLevel.Info);
+        }
+
+        // ── smartnpc_break_resource ───────────────────────────────────────
+
+        private static void HandleBreakResource(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdBreakResource} <NpcName> [radius] [max_count]", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            int radius = args.Length > 1 && int.TryParse(args[1], out int pr) ? Math.Clamp(pr, 1, 10) : 5;
+            int maxCount = args.Length > 2 && int.TryParse(args[2], out int pm) ? Math.Clamp(pm, 1, 10) : 3;
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
+            var handler = new BreakResourceHandler(log, s_showBubble, inventory, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_break_resource] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
+        }
+
+        // ── smartnpc_fertilize ────────────────────────────────────────────
+
+        private static void HandleFertilize(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdFertilize} <NpcName> [radius] [max_count]", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            string fertilizerId = args.Length > 1 && args[1].StartsWith("(O)") ? args[1] : "(O)368"; // default: Basic Fertilizer
+            int argOffset = args.Length > 1 && args[1].StartsWith("(O)") ? 1 : 0;
+            int radius = args.Length > 1 + argOffset && int.TryParse(args[1 + argOffset], out int pr) ? Math.Clamp(pr, 1, 10) : 5;
+            int maxCount = args.Length > 2 + argOffset && int.TryParse(args[2 + argOffset], out int pm) ? Math.Clamp(pm, 1, 10) : 5;
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\",\"fertilizer_id\":\"{fertilizerId}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
+            var handler = new FertilizeHandler(log, s_showBubble, inventory, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_fertilize] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
+        }
+
+        // ── smartnpc_fill_gaps ────────────────────────────────────────────
+
+        private static void HandleFillGaps(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdFillGaps} <NpcName> [radius] [max_count]", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            int radius = args.Length > 1 && int.TryParse(args[1], out int pr) ? Math.Clamp(pr, 1, 10) : 5;
+            int maxCount = args.Length > 2 && int.TryParse(args[2], out int pm) ? Math.Clamp(pm, 1, 10) : 5;
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
+            var handler = new FillGapsHandler(log, s_showBubble, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_fill_gaps] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
+        }
+
+        // ── smartnpc_withdraw_from_chest ───────────────────────────────────
+
+        private static void HandleWithdrawChest(string[] args, IMonitor log, NpcInventory inventory, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdWithdrawChest} <NpcName> [item_id] [count]", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            string itemId = args.Length > 1 ? args[1] : "(O)390"; // default: Stone
+            int count = args.Length > 2 && int.TryParse(args[2], out int pc) ? pc : 1;
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\",\"item_id\":\"{itemId}\",\"count\":{count}}}");
+            var handler = new WithdrawFromChestHandler(log, s_showBubble, inventory, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_withdraw_from_chest] triggered for {name}", LogLevel.Info);
+        }
+
+        // ── smartnpc_place_object ─────────────────────────────────────────
+
+        private static void HandlePlaceObject(string[] args, IMonitor log, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdPlaceObject} <NpcName> [x] [y]", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            int tx = args.Length > 1 && int.TryParse(args[1], out int px) ? px : (int)npc.Tile.X;
+            int ty = args.Length > 2 && int.TryParse(args[2], out int py) ? py : (int)npc.Tile.Y;
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\",\"x\":{tx},\"y\":{ty}}}");
+            var handler = new PlaceObjectHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_place_object] triggered for {name} at ({tx},{ty})", LogLevel.Info);
+        }
+
+        // ── smartnpc_transfer_item ────────────────────────────────────────
+
+        private static void HandleTransferItem(string[] args, IMonitor log, NpcInventory inventory)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 4) { log.Log($"usage: {CmdTransfer} <fromNpc> <toNpc> <itemId> <count>", LogLevel.Error); return; }
+            string fromNpc = args[0], toNpc = args[1], itemId = args[2];
+            if (!int.TryParse(args[3], out int count) || count < 1) { log.Log("invalid count", LogLevel.Error); return; }
+            NPC? fromNpcObj = Game1.getCharacterFromName(fromNpc);
+            if (fromNpcObj is null) { log.Log($"NPC '{fromNpc}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse(
+                $"{{\"npc\":\"{fromNpc}\",\"to_npc\":\"{toNpc}\",\"item_id\":\"{itemId}\",\"count\":{count}}}");
+            var handler = new TransferItemHandler(log, s_showBubble, inventory);
+            handler.HandleDebug(fromNpcObj, fromNpc, doc.RootElement);
+            log.Log($"[smartnpc_transfer_item] {fromNpc} → {toNpc}: {itemId} x{count}", LogLevel.Info);
+        }
+
+        // ── smartnpc_express_emotion ──────────────────────────────────────
+
+        private static void HandleExpressEmotion(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 2) { log.Log($"usage: {CmdExpress} <NpcName> <emotion>", LogLevel.Error); return; }
+            string name = args[0], emotion = args[1];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\",\"emotion\":\"{emotion}\"}}");
+            var handler = new ExpressEmotionHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_express_emotion] {name}: {emotion}", LogLevel.Info);
+        }
+
+        // ── smartnpc_dance ────────────────────────────────────────────────
+
+        private static void HandleDance(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdDance} <NpcName>", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\"}}");
+            var handler = new DanceHappyHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_dance] {name} dancing", LogLevel.Info);
+        }
+
+        // ── smartnpc_react_surprise ───────────────────────────────────────
+
+        private static void HandleReactSurprise(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdReact} <NpcName>", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\"}}");
+            var handler = new ReactSurpriseHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_react_surprise] {name} surprised", LogLevel.Info);
+        }
+
+        // ── smartnpc_pace ─────────────────────────────────────────────────
+
+        private static void HandlePace(string[] args, IMonitor log, FollowSystem follow)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdPace} <NpcName>", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\"}}");
+            var handler = new PaceAnxiouslyHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_pace] {name} pacing", LogLevel.Info);
+        }
+
+        // ── smartnpc_shy_retreat ──────────────────────────────────────────
+
+        private static void HandleShyRetreat(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdShyRetreat} <NpcName>", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\"}}");
+            var handler = new ShyRetreatHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_shy_retreat] {name} retreating", LogLevel.Info);
+        }
+
+        // ── smartnpc_idle_activity ────────────────────────────────────────
+
+        private static void HandleIdleActivity(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 1) { log.Log($"usage: {CmdIdleActivity} <NpcName>", LogLevel.Error); return; }
+            string name = args[0];
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\"}}");
+            var handler = new IdleActivityHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_idle_activity] {name} idle activity", LogLevel.Info);
+        }
+
+        // ── smartnpc_text_bubble ──────────────────────────────────────────
+
+        private static void HandleTextBubble(string[] args, IMonitor log)
+        {
+            if (!Context.IsWorldReady) { log.Log("no save loaded", LogLevel.Error); return; }
+            if (args.Length < 2) { log.Log($"usage: {CmdTextBubble} <NpcName> <text>", LogLevel.Error); return; }
+            string name = args[0], text = string.Join(" ", args, 1, args.Length - 1);
+            NPC? npc = Game1.getCharacterFromName(name);
+            if (npc is null) { log.Log($"NPC '{name}' not found.", LogLevel.Warn); return; }
+            using var doc = JsonDocument.Parse($"{{\"npc\":\"{name}\",\"text\":\"{text}\"}}");
+            var handler = new ShowTextBubbleHandler(log, s_showBubble);
+            handler.HandleDebug(npc, name, doc.RootElement);
+            log.Log($"[smartnpc_text_bubble] {name}: \"{text}\"", LogLevel.Info);
         }
 
         // ── smartnpc_harvest_crops ─────────────────────────────────────────
@@ -1250,8 +1627,8 @@ namespace SmartNPC.Bridge
 
             using var doc = JsonDocument.Parse(
                 $"{{\"npc\":\"{name}\",\"radius\":{radius},\"max_count\":{maxCount}}}");
-            var handler = new HarvestCropsHandler(log, () => false, inventory, follow);
-            handler.ExecuteDebug(npc, name, doc.RootElement);
+            var handler = new HarvestCropsHandler(log, s_showBubble, inventory, follow);
+            handler.HandleDebug(npc, name, doc.RootElement);
             log.Log($"[smartnpc_harvest_crops] triggered for {name} radius={radius} max={maxCount}", LogLevel.Info);
         }
 
@@ -1300,8 +1677,8 @@ namespace SmartNPC.Bridge
 
             using var doc = JsonDocument.Parse(
                 $"{{\"npc\":\"{name}\",\"radius\":{radius},\"what\":\"{what}\"}}");
-            var handler = new InspectObjectHandler(log, () => false);
-            var result = handler.ExecuteDebug(npc, name, doc.RootElement);
+            var handler = new InspectObjectHandler(log, s_showBubble);
+            var result = handler.HandleDebug(npc, name, doc.RootElement);
             string json = System.Text.Json.JsonSerializer.Serialize(result,
                 new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
             log.Log($"[smartnpc_inspect_object] {name} radius={radius} what={what}:\n{json}", LogLevel.Info);

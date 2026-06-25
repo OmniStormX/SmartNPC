@@ -215,7 +215,7 @@ namespace SmartNPC.Bridge
                 _chat.SetGroupManager(_groupMgr);
 
                 // Register SMAPI console debug commands.
-                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws, _follow, _npcInventory);
+                DebugCommands.Register(this.Helper.ConsoleCommands, this.Monitor, _ws, _follow, _npcInventory, showBubble);
 
                 _inventoryHud = new NpcInventoryHud(_npcInventory, OpenInventoryPanel);
 

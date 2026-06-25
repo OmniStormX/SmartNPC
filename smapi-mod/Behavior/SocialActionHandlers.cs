@@ -75,7 +75,55 @@ namespace SmartNPC.Bridge
     {
         protected override string ActionName => "npc_express_emotion";
         public ExpressEmotionHandler(IMonitor log, Func<bool> showBubble) : base(log, showBubble) { }
-        // TODO: play emote animation matching the emotion param
+
+        private static readonly System.Collections.Generic.Dictionary<string, int> s_emotes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["heart"] = 20,
+            ["exclamation"] = 16,
+            ["question"] = 24,
+            ["anger"] = 12,
+            ["sweat"] = 28,
+            ["cry"] = 4,
+            ["note"] = 8,
+            ["sleep"] = 32,
+            ["star"] = 36,
+            ["neutral"] = 0,
+            ["happy"] = 20,
+            ["sad"] = 28,
+            ["surprised"] = 24,
+            ["angry"] = 12,
+        };
+
+        protected override string ResolveBubble(JsonElement @params)
+        {
+            string? emo = ParseEmotion(@params);
+            return emo is not null ? $"[{emo}]" : "[emote]";
+        }
+
+        protected override void Execute(NPC npc, string npcName, JsonElement @params)
+        {
+            string? emo = ParseEmotion(@params);
+            int emoteId = 20; // default: heart
+            if (emo is not null && s_emotes.TryGetValue(emo, out int id))
+                emoteId = id;
+
+            npc.doEmote(emoteId);
+            Log.Log(
+                $"[npc_express_emotion] {npcName}: emote={emo} id={emoteId}",
+                LogLevel.Debug);
+        }
+
+        private static string? ParseEmotion(JsonElement @params)
+        {
+            if (@params.ValueKind != JsonValueKind.Object) return null;
+            if (@params.TryGetProperty("emotion", out JsonElement e) &&
+                e.ValueKind == JsonValueKind.String)
+                return e.GetString();
+            if (@params.TryGetProperty("emote", out JsonElement e2) &&
+                e2.ValueKind == JsonValueKind.String)
+                return e2.GetString();
+            return null;
+        }
     }
 
     internal sealed class ShyRetreatHandler : NpcActionHandlerBase

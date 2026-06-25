@@ -1,0 +1,93 @@
+@startuml
+left to right direction
+
+' === Pools ===
+
+rectangle "🎮 Stardew Valley + SMAPI Mod" as game_pool {
+  rectangle "Game Events" as game_lane {
+    mxgraph.bpmn.event.timerStart "day_started" as day_start
+    mxgraph.bpmn.event.timerCatching "game_time_tick\n(每游戏小时)" as time_tick
+    mxgraph.bpmn.event.timerCatching "entry fire time\nreached" as fire_time
+    rectangle "FollowSystem\nPumpOnGameTick" as follow_tick
+    mxgraph.bpmn.event.end "一天结束" as day_end
+  }
+}
+
+rectangle "🧰 smartnpc-mcp (Go)" as mcp_pool {
+  rectangle "Scheduler 调度" as sched_lane {
+    rectangle "Scheduler\nClearAll()" as clearall
+    mxgraph.bpmn.data2.dataObject "per-NPC\nDaySchedule\nEntry[]" as schedule_db
+    rectangle "scheduler.Tick\n(hm)" as tick_fn
+    mxgraph.eip.splitter "FiredEntry[]\nper-NPC fan-out" as fanout
+  }
+
+  rectangle "Workflow Worker\n(per-NPC goroutine)" as worker_lane {
+    mxgraph.eip.messageChannel "schedTriggerMsg\nchannel" as msg_chan
+    mxgraph.bpmn.gateway2.exclusive "PrecompiledDef?" as precomp_gw
+    rectangle "engine.Run(def)\n本地重放 concrete steps\nzero LLM latency" as engine_run
+    rectangle "resolveDefinition\n(builtin/*.yaml)" as resolve_def
+    rectangle "skill_call step\n→ hermesrelay POST" as skill_call_step
+    mxgraph.eip.messaging_bridge "MCPRunner\nCallTool(args)" as runner_call
+  }
+}
+
+rectangle "🧠 Hermes Agent (WSL)" as hermes_pool {
+  rectangle "NPC Profile" as profile_lane {
+    rectangle "LLM 读 SOUL.md\n+ SKILL.md" as llm_read
+    rectangle "npc_plan_day\n生成全天 Entry[]" as plan_day
+    mxgraph.bpmn.user_task "LLM 实时决策\n调哪些 MCP tools\n传什么参数" as llm_decide
+    mxgraph.bpmn.data2.dataOutput "MCP tool call\nnpc_water_crops(...)" as tool_call
+  }
+}
+
+rectangle "🎮 C# FollowSystem" as follow_pool {
+  rectangle "行为执行" as exec_lane {
+    mxgraph.bpmn.manual_task "NpcActionQueue\nenqueue/dequeue" as action_queue
+    rectangle "Tick 逐帧\n寻路→执行→下一tile" as tick_exec
+    mxgraph.bpmn.event.timerCatching "Wait Idle\n(poll FollowSystem)" as wait_idle
+  }
+}
+
+' === Flows ===
+
+' Day start
+day_start ..> clearall : "hermesrelay\nbroadcast"
+clearall --> day_start
+day_start ..> llm_read : "POST /v1/responses\n+ instructions"
+llm_read --> plan_day
+plan_day ..> schedule_db : "MCP tool call\nnpc_plan_day"
+schedule_db --> tick_fn
+
+' Time tick loop
+time_tick --> tick_fn : "each game hour"
+tick_fn --> fanout
+fanout ..> msg_chan : "per-NPC\nchannel push"
+
+' Worker dispatch
+msg_chan --> precomp_gw
+precomp_gw --> engine_run : "Yes [P]\n预编译路径"
+precomp_gw --> resolve_def : "No [W]\n实时路径"
+
+' Precompiled path
+engine_run --> runner_call
+
+' Real-time path
+resolve_def --> skill_call_step
+skill_call_step ..> llm_decide : "hermesrelay\nworkflow_skill_call"
+llm_decide ..> tool_call : "decide & call"
+tool_call ..> runner_call : "MCP HTTP\n:3000/mcp"
+
+' Execution
+runner_call ..> action_queue : "ws request"
+action_queue --> tick_exec
+tick_exec --> wait_idle
+
+' Loop back or end
+wait_idle ..> msg_chan : "next pending entry\n(maybePrecompileNext)"
+wait_idle ..> day_end : "no more entries"
+
+' precompile background
+engine_run ..> wait_idle
+tool_call ..> wait_idle
+
+@enduml

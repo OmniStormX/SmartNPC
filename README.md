@@ -391,6 +391,10 @@ task agent:test
 
 | 文档 | 内容 |
 |---|---|
+| [`docs/technical-architecture.md`](docs/technical-architecture.md) | **技术架构概要**。四层架构、Schedule 自运转、网络拓扑、行为模型——图文简明版。 |
+| [`docs/npc-agent-autonomy.md`](docs/npc-agent-autonomy.md) | 完整技术方案——四层架构详解、Workflow 引擎、FollowSystem、多 NPC 扇出、记忆模型。 |
+| [`docs/development-guide.md`](docs/development-guide.md) | **开发手册**。新增 NPC 行为/Workflow/Skill/Schedule 的分层流程、代码模板、检查清单。 |
+| [`docs/startup-guide.md`](docs/startup-guide.md) | 完整启动手册：架构拓扑 → 环境安装 → 手动分步 → 一键启动 → 排查决策树。 |
 | [`docs/architecture.md`](docs/architecture.md) | Hermes-first 架构、边界、事件流、profile clone 机制。 |
 | [`docs/protocol.md`](docs/protocol.md) | SMAPI Mod ↔ MCP 的 WebSocket JSON 协议。 |
 | [`docs/mcp-tools.md`](docs/mcp-tools.md) | MCP 工具目录、参数、错误码、副作用说明。 |

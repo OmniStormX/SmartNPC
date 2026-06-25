@@ -9,19 +9,21 @@ set -euo pipefail
 : "${HERMES_AGENT_API_KEY:?HERMES_AGENT_API_KEY is required}"
 : "${SMARTNPC_HERMES_KEY:?SMARTNPC_HERMES_KEY is required (gateway Bearer token)}"
 
-HERMES_AGENT_MODEL="${HERMES_AGENT_MODEL:-deepseek-v4-pro-external}"
+HERMES_AGENT_MODEL="${HERMES_AGENT_MODEL:-deepseek-v4-pro}"
 
 # ── Set up profile directory ──────────────────────────────────────────────
 PROFILE_DIR="/root/.hermes/profiles/${NPC_PROFILE}"
 mkdir -p "$PROFILE_DIR"
 
-# Copy baked profile data (SOUL.md, skills, cron) into Hermes profile location
+# Copy baked profile data (SOUL.md, skills, cron, critical-policy) into Hermes profile location
 SRC="/hermes/profiles/${NPC_PROFILE}"
 if [ -d "$SRC" ]; then
     cp -r "$SRC"/* "$PROFILE_DIR"/ 2>/dev/null || true
 fi
 
 # ── Generate config.yaml from environment variables ───────────────────────
+# Parameters are kept in sync with hermes/profiles/_master/config-overlay.yaml
+# — when that file changes, update this section too.
 cat > "$PROFILE_DIR/config.yaml" <<EOF
 mcp_servers:
   smartnpc_game:
@@ -30,6 +32,7 @@ mcp_servers:
     connect_timeout: 10
     tools:
       include:
+        - agent_register_self
         - chat_say
         - friendship_get
         - game_get_time
@@ -42,6 +45,37 @@ mcp_servers:
         - npc_summon
         - npc_emote
         - npc_give_item
+        # schedule
+        - npc_plan_day
+        - npc_get_schedule
+        # workflow discovery
+        - workflow_list
+        - workflow_get
+        # world actions
+        - npc_wander
+        - npc_clear_debris
+        - npc_water_crops
+        - npc_harvest_crops
+        - npc_deposit_items
+        - npc_deliver_items
+        - npc_forage_collect
+        - npc_pet_animal
+        - npc_plant_seeds
+        - npc_till_soil
+        - npc_inspect_object
+        - npc_place_object
+        - npc_break_resource
+        - npc_fertilize
+        # social actions
+        - npc_approach_and_speak
+        - npc_express_emotion
+        - npc_shy_retreat
+        - npc_show_text_bubble
+        - npc_inventory_get
+        - npc_idle_activity
+        - npc_dance_happy
+        - npc_react_surprise
+        - npc_pace_anxiously
       resources: false
       prompts: false
 
@@ -56,7 +90,7 @@ model:
   default: ${HERMES_AGENT_MODEL}
   base_url: ${HERMES_AGENT_URL}
   api_mode: chat_completions
-  context_length: 64000
+  context_length: 500000
 
 providers:
   smartnpc-agent:
@@ -69,10 +103,10 @@ providers:
 
 compression:
   enabled: true
-  threshold: 0.15
-  target_ratio: 0.10
-  protect_last_n: 8
-  hygiene_hard_message_limit: 60
+  threshold: 0.30
+  target_ratio: 0.25
+  protect_last_n: 12
+  hygiene_hard_message_limit: 80
 
 agent:
   tool_use_enforcement: false
@@ -222,6 +256,27 @@ if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ] && [ -n "${HERMES_LANGFUSE_SECRET_KE
         echo "[diag] ERROR: Langfuse API returned HTTP $HTTP_CODE"
         echo "[diag] Response body: $(cat /tmp/langfuse_resp.txt 2>/dev/null || echo '(empty)')"
     fi
+fi
+
+# ── Fix session_search model (aligns with WSL ensure_hermes_aux.sh) ──────
+# Hermes' built-in session summarizer hardcodes temperature=0.1 which some
+# default models (gpt-5.5) reject. Patch the global config to use gpt-4o-mini
+# instead. The global config is created by Hermes on first gateway run, so we
+# seed it pre-emptively.
+GLOBAL_CONFIG="/root/.hermes/config.yaml"
+if [ ! -f "$GLOBAL_CONFIG" ]; then
+    mkdir -p /root/.hermes
+    cat > "$GLOBAL_CONFIG" <<'GLOBALEOF'
+session_search:
+  provider: custom
+  model: gpt-4o-mini
+GLOBALEOF
+    echo "[diag] Seeded global config with session_search → gpt-4o-mini"
+elif ! grep -q 'model: gpt-4o-mini' "$GLOBAL_CONFIG" 2>/dev/null; then
+    echo "[diag] Patching session_search model → gpt-4o-mini"
+    sed -i.bak \
+        -e '/^  session_search:/,/^  [A-Za-z]/{ s/\(provider: \).*/\1custom/; s/\(model: \).*/\1gpt-4o-mini/; s/\(base_url: \).*//; }' \
+        "$GLOBAL_CONFIG" 2>/dev/null || true
 fi
 
 echo ""
