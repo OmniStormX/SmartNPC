@@ -128,6 +128,9 @@ sequenceDiagram
 
 ## 🚀 快速开始
 
+> 📖 **新机器接入？** 从零配置 Windows + WSL 环境请读 **[`docs/setup.md`](docs/setup.md)**。  
+> 📖 **完整启动手册？** 架构拓扑 → 环境安装 → 手动分步 → 一键启动 → 排查决策树，见 **[`docs/startup-guide.md`](docs/startup-guide.md)**。
+
 ### 0. 前置条件
 
 - Stardew Valley 1.6+
@@ -336,11 +339,7 @@ bash scripts/render_profiles.sh
 bash scripts/test_profile_render.sh
 ```
 
-设计细节见：
-
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/hermes-profiles.md`](docs/hermes-profiles.md)
-- [`docs/adr/0003-npc-name-placeholder-cloning.md`](docs/adr/0003-npc-name-placeholder-cloning.md)
+设计细节见 [`docs/hermes-profiles.md`](docs/hermes-profiles.md)。
 
 ---
 
@@ -364,10 +363,15 @@ task mcp:health
 # SMAPI Mod
 task mod:build
 task mod:install
-
-# 旧 Go Agent（冻结，仅测试/对照）
-task agent:test
 ```
+
+---
+
+## 🧑‍💻 开发流程
+
+新增 NPC 行为 / Workflow / Skill / Schedule 的完整分层流程、代码模板和检查清单见：
+
+> 📖 **[`docs/development-guide.md`](docs/development-guide.md)**
 
 ---
 
@@ -391,17 +395,17 @@ task agent:test
 
 | 文档 | 内容 |
 |---|---|
+| [`docs/setup.md`](docs/setup.md) | **环境配置**。从零配置 Windows + WSL 环境到能跑 `run.bat`。 |
+| [`docs/startup-guide.md`](docs/startup-guide.md) | **完整启动手册**。架构拓扑 → 环境安装 → 手动分步 → 一键启动 → 排查决策树。 |
 | [`docs/technical-architecture.md`](docs/technical-architecture.md) | **技术架构概要**。四层架构、Schedule 自运转、网络拓扑、行为模型——图文简明版。 |
 | [`docs/npc-agent-autonomy.md`](docs/npc-agent-autonomy.md) | 完整技术方案——四层架构详解、Workflow 引擎、FollowSystem、多 NPC 扇出、记忆模型。 |
 | [`docs/development-guide.md`](docs/development-guide.md) | **开发手册**。新增 NPC 行为/Workflow/Skill/Schedule 的分层流程、代码模板、检查清单。 |
-| [`docs/startup-guide.md`](docs/startup-guide.md) | 完整启动手册：架构拓扑 → 环境安装 → 手动分步 → 一键启动 → 排查决策树。 |
-| [`docs/architecture.md`](docs/architecture.md) | Hermes-first 架构、边界、事件流、profile clone 机制。 |
 | [`docs/protocol.md`](docs/protocol.md) | SMAPI Mod ↔ MCP 的 WebSocket JSON 协议。 |
 | [`docs/mcp-tools.md`](docs/mcp-tools.md) | MCP 工具目录、参数、错误码、副作用说明。 |
 | [`docs/events.md`](docs/events.md) | 游戏事件与 synthetic events 的 payload 规范。 |
+| [`docs/hermes-profiles.md`](docs/hermes-profiles.md) | NPC profile 结构、SOUL 设计、skill 渲染机制。 |
 | [`docs/hermes-event-trigger.md`](docs/hermes-event-trigger.md) | 为什么选择 MCP POST Hermes Gateway 的事件触发方案。 |
 | [`docs/manual-e2e-verification.md`](docs/manual-e2e-verification.md) | 人工端到端验证清单。 |
-| [`REFACTOR.md`](REFACTOR.md) | 架构重构背景与设计取舍。 |
 
 ---
 
@@ -413,20 +417,6 @@ task agent:test
 - ✅ 多 profile 配置与 fan-out：XiaMi、Abigail、Haley、Harvey、Penny、Sebastian
 - ✅ 工具能力覆盖聊天、查询、移动、感知、跟随、带路、送礼、NPC 间消息
 - ✅ 旧 `smartnpc-agent/` Go 编排器已移除（历史代码见 git history）
-- 🔜 后续重点：Hermes 侧群聊编排、更多主动行为、profile 打磨与发布流程
-
----
-
-## 🏷️ Release
-
-推送语义化 tag 会触发 GitHub Release 工作流，构建 Go 二进制并生成校验和：
-
-```powershell
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-> SMAPI Mod 依赖本机 Stardew Valley/SMAPI DLL，GitHub-hosted runner 通常无法完整构建发布包；如需发布 Mod zip，请在本机 `task mod:build` 后手动打包 `StardewMCPBridge.dll`、`manifest.json` 等产物。
 
 ---
 
