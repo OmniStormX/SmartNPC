@@ -15,15 +15,15 @@ services:
     container_name: langfuse-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: langfuse
-      POSTGRES_DB: langfuse
+      POSTGRES_USER: ${LANGFUSE_DB_USER:-langfuse}
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD}
+      POSTGRES_DB: ${LANGFUSE_DB_NAME:-langfuse}
     volumes:
       - langfuse-db-data:/var/lib/postgresql/data
     networks:
       - smartnpc-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      test: ["CMD-SHELL", "pg_isready -U ${LANGFUSE_DB_USER:-langfuse} -d ${LANGFUSE_DB_NAME:-langfuse}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,10 +37,10 @@ services:
       langfuse-db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER:-langfuse}:${LANGFUSE_DB_PASSWORD}@langfuse-db:5432/${LANGFUSE_DB_NAME:-langfuse}
       NEXTAUTH_URL: http://localhost:3100
-      NEXTAUTH_SECRET: smartnpc-langfuse-secret-key-change-me
-      SALT: smartnpc-langfuse-salt-change-me
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
       TELEMETRY_ENABLED: "false"
     ports:
       - "3100:3000"
